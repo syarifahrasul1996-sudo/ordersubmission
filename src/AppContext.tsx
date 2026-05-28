@@ -7,6 +7,7 @@ interface AppContextType {
   viewStack: ViewType[];
   pushView: (view: ViewType, updates?: Partial<AppState>) => void;
   popView: () => void;
+  goHome: () => void;
   reset: () => void;
   generatedMessages: string[];
   setGeneratedMessages: (msgs: string[]) => void;
@@ -147,6 +148,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     });
   };
 
+  const goHome = () => {
+    setViewStack(['home']);
+  };
+
   const reset = () => {
     setState(INITIAL_STATE);
     setViewStack(['home']);
@@ -157,7 +162,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AppContext.Provider value={{ state, setState, viewStack, pushView, popView, reset, generatedMessages, setGeneratedMessages, history, saveOrderToHistory, clearHistory, loadOrder, theme, toggleTheme, appLanguage, toggleLanguage }}>
+    <AppContext.Provider value={{ state, setState, viewStack, pushView, popView, goHome, reset, generatedMessages, setGeneratedMessages, history, saveOrderToHistory, clearHistory, loadOrder, theme, toggleTheme, appLanguage, toggleLanguage }}>
       {children}
     </AppContext.Provider>
   );

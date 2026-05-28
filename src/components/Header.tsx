@@ -1,9 +1,9 @@
 import React from 'react';
-import { ChevronLeft, Clock, History, Moon, Sun } from 'lucide-react';
+import { ChevronLeft, Clock, History, Moon, Sun, Home } from 'lucide-react';
 import { useAppContext } from '../AppContext';
 
 export function Header() {
-  const { viewStack, popView, state, pushView, theme, toggleTheme, appLanguage, toggleLanguage } = useAppContext();
+  const { viewStack, popView, goHome, state, pushView, theme, toggleTheme, appLanguage, toggleLanguage } = useAppContext();
   const currentView = viewStack[viewStack.length - 1];
 
   const titles: Record<string, { ms: string, en: string }> = {
@@ -42,7 +42,7 @@ export function Header() {
           +{state.extraHours}h
         </div>
       )}
-      {currentView === 'home' && (
+      {currentView === 'home' ? (
         <div className="flex items-center">
           <button 
             onClick={toggleLanguage}
@@ -67,6 +67,17 @@ export function Header() {
             title="Sejarah"
           >
             <History className="w-5 h-5" />
+          </button>
+        </div>
+      ) : (
+        <div className="flex items-center">
+          <button 
+            onClick={goHome}
+            className="w-10 h-10 flex items-center justify-center rounded-full active:bg-surface text-text active:scale-95 transition-all md:hover:bg-surface"
+            aria-label="Home"
+            title="Home"
+          >
+            <Home className="w-5 h-5" />
           </button>
         </div>
       )}
