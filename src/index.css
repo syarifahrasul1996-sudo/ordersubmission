@@ -1,0 +1,102 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Roboto+Mono:wght@400&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #007AFF;
+  --color-secondary: #34C759;
+  --color-super: #E11D48;
+  --color-urgent: #EA580C;
+  --color-semi: #D97706;
+  --color-noturgent: #059669;
+  --color-background: #FFFFFF;
+  --color-surface: #F2F2F7;
+  --color-text: #1C1C1E;
+  --color-subtext: #8E8E93;
+  --color-border: #C7C7CC;
+  --color-disabled: #D1D1D6;
+
+  --radius-btn: 20px;
+  --radius-input: 16px;
+
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Roboto Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+@layer base {
+  .dark {
+    /* Mappings for explicit utility colors that were hardcoded */
+    --color-gray-50: #2C2C2E;
+    --color-gray-100: #38383A;
+    --color-gray-200: #48484A;
+    --color-gray-400: #A1A1A6;
+    
+    /* Standard logical colors */
+    --color-background: #000000;
+    --color-surface: #1C1C1E;
+    --color-text: #FFFFFF;
+    --color-subtext: #A1A1A6;
+    --color-border: #38383A;
+  }
+}
+
+body.dark-theme-active .bg-white {
+  background-color: #2C2C2E;
+  border-color: #48484A;
+}
+body.dark-theme-active .bg-white\/50 {
+  background-color: rgba(44, 44, 46, 0.5);
+}
+body.dark-theme-active .bg-white\/20 {
+  background-color: rgba(255, 255, 255, 0.15); /* This is for super urgency badges etc, white/20 on dark is still okay */
+}
+body.dark-theme-active .bg-white\/60 {
+  background-color: rgba(255, 255, 255, 0.35); 
+}
+body.dark-theme-active .bg-\[\#1C1C1E\] {
+  background-color: #007AFF; /* Change dark highlight buttons to primary in dark mode for better contrast */
+}
+body.dark-theme-active .text-gray-400 {
+  color: #A1A1A6;
+}
+body.dark-theme-active .border-gray-100 {
+  border-color: #48484A;
+}
+body.dark-theme-active .bg-gray-50 {
+  background-color: #2C2C2E;
+}
+
+body {
+  background-color: #f0f0f5; 
+  -webkit-tap-highlight-color: transparent;
+  min-height: 100vh;
+  overscroll-behavior-y: none;
+  transition: background-color 0.3s;
+}
+
+body.dark-theme-active {
+  background-color: #000000;
+}
+
+:root {
+  --safe-bottom: env(safe-area-inset-bottom);
+}
+
+main::-webkit-scrollbar { display: none; }
+main { -ms-overflow-style: none; scrollbar-width: none; }
+
+@layer utilities {
+  .animate-fade-in-up {
+    animation: fadeInUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
