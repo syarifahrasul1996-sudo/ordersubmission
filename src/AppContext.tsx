@@ -149,7 +149,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   };
 
   const goHome = () => {
-    setViewStack(['home']);
+    reset();
   };
 
   const reset = () => {

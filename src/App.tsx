@@ -1,16 +1,25 @@
-import React, { useState } from 'react';
+import React, { useState, Suspense, lazy } from 'react';
 import { AppProvider, useAppContext } from './AppContext';
 import { Header } from './components/Header';
 import { ViewSection } from './components/ViewSection';
-import { HomeView } from './views/HomeView';
-import { ResumeTypeView } from './views/ResumeTypeView';
-import { ResumeFormFieldsView } from './views/ResumeFormFieldsView';
-import { GeneralFormView } from './views/GeneralFormView';
-import { ConfirmationView } from './views/ConfirmationView';
-import { OutputView } from './views/OutputView';
-import { HistoryView } from './views/HistoryView';
-import { FloatingControls } from './components/FloatingControls';
 import { Toast } from './components/Toast';
+import { FloatingControls } from './components/FloatingControls';
+
+// Lazy load views to improve initial load time
+const HomeView = lazy(() => import('./views/HomeView').then(module => ({ default: module.HomeView })));
+const ResumeTypeView = lazy(() => import('./views/ResumeTypeView').then(module => ({ default: module.ResumeTypeView })));
+const ResumeFormFieldsView = lazy(() => import('./views/ResumeFormFieldsView').then(module => ({ default: module.ResumeFormFieldsView })));
+const GeneralFormView = lazy(() => import('./views/GeneralFormView').then(module => ({ default: module.GeneralFormView })));
+const ConfirmationView = lazy(() => import('./views/ConfirmationView').then(module => ({ default: module.ConfirmationView })));
+const OutputView = lazy(() => import('./views/OutputView').then(module => ({ default: module.OutputView })));
+const HistoryView = lazy(() => import('./views/HistoryView').then(module => ({ default: module.HistoryView })));
+
+// Loading fallback for Suspense
+const ViewLoader = () => (
+  <div className="flex items-center justify-center p-8 text-subtext">
+    <div className="w-8 h-8 rounded-full border-4 border-surface border-t-primary animate-spin"></div>
+  </div>
+);
 
 function AppContent() {
   const { viewStack } = useAppContext();
@@ -40,33 +49,35 @@ function AppContent() {
         <Header />
         
         <main className="flex-1 overflow-y-auto overflow-x-hidden relative">
-          <ViewSection id="view-home" active={currentView === 'home'}>
-            <HomeView />
-          </ViewSection>
-          
-          <ViewSection id="view-resume-type" active={currentView === 'resume-type'}>
-            <ResumeTypeView />
-          </ViewSection>
-          
-          <ViewSection id="view-resume-form-fields" active={currentView === 'resume-form-fields'}>
-            <ResumeFormFieldsView />
-          </ViewSection>
-          
-          <ViewSection id="view-general-form" active={currentView === 'general-form'}>
-            <GeneralFormView />
-          </ViewSection>
-          
-          <ViewSection id="view-confirmation" active={currentView === 'confirmation'}>
-            <ConfirmationView onGenerated={() => {}} />
-          </ViewSection>
-          
-          <ViewSection id="view-output" active={currentView === 'output'}>
-            <OutputView onCopy={handleCopy} />
-          </ViewSection>
+          <Suspense fallback={<ViewLoader />}>
+            <ViewSection id="view-home" active={currentView === 'home'}>
+              <HomeView />
+            </ViewSection>
+            
+            <ViewSection id="view-resume-type" active={currentView === 'resume-type'}>
+              <ResumeTypeView />
+            </ViewSection>
+            
+            <ViewSection id="view-resume-form-fields" active={currentView === 'resume-form-fields'}>
+              <ResumeFormFieldsView />
+            </ViewSection>
+            
+            <ViewSection id="view-general-form" active={currentView === 'general-form'}>
+              <GeneralFormView />
+            </ViewSection>
+            
+            <ViewSection id="view-confirmation" active={currentView === 'confirmation'}>
+              <ConfirmationView onGenerated={() => {}} />
+            </ViewSection>
+            
+            <ViewSection id="view-output" active={currentView === 'output'}>
+              <OutputView onCopy={handleCopy} />
+            </ViewSection>
 
-          <ViewSection id="view-history" active={currentView === 'history'}>
-            <HistoryView />
-          </ViewSection>
+            <ViewSection id="view-history" active={currentView === 'history'}>
+              <HistoryView />
+            </ViewSection>
+          </Suspense>
         </main>
 
         <FloatingControls />
