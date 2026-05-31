@@ -25,7 +25,8 @@ export function ConfirmationView({ onGenerated }: { onGenerated: () => void }) {
   });
 
   const handleGenerate = () => {
-    const messages = generateMessages(state, dlInfo, appLanguage);
+    const finalDlInfo = calculateDeadline(state, appLanguage);
+    const messages = generateMessages(state, finalDlInfo, appLanguage);
     setGeneratedMessages(messages);
     saveOrderToHistory(messages);
     pushView('output');
@@ -54,10 +55,10 @@ export function ConfirmationView({ onGenerated }: { onGenerated: () => void }) {
   let priceMsg = '';
   if (appLanguage === 'en') {
     const duration = isDays ? `${displayVal} days` : `${displayVal} hours`;
-    priceMsg = `${mainPart} RM___, ready in ${duration} after payment.`;
+    priceMsg = `${mainPart} RM XX, ready in ${duration} after payment.`;
   } else {
     const duration = isDays ? `${displayVal} hari` : `${displayVal} jam`;
-    priceMsg = `${mainPart} RM___, siap ${duration} lepas payment.`;
+    priceMsg = `${mainPart} RM XX, siap ${duration} lepas payment.`;
   }
 
   const handleCopy = async () => {
