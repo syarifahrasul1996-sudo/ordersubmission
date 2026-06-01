@@ -6,6 +6,17 @@ import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig(() => {
   return {
+    build: {
+      target: 'esnext',
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            'react-vendor': ['react', 'react-dom'],
+            'lucide-vendor': ['lucide-react']
+          }
+        }
+      }
+    },
     plugins: [
       react(), 
       tailwindcss(),
