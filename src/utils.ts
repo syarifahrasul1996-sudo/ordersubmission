@@ -1,8 +1,8 @@
 export function calculateDeadline(state: any, appLanguage: string) {
   const now = new Date();
   const isSuperUrgent = state.urgency === 'super';
-  const addonHours = (state.mainType === 'Resume' && !state.isEditMode && isSuperUrgent) ? state.addons.length : 0;
-  const total = state.baseHours + state.extraHours + addonHours;
+  const addonHours = (state.mainType === 'Resume' && !state.isEditMode && isSuperUrgent && state.addons) ? state.addons.length : 0;
+  const total = (state.baseHours || 0) + (state.extraHours || 0) + addonHours;
   
   const dl = new Date(now.getTime() + total * 3600000);
   const timeStr = dl.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
@@ -29,13 +29,13 @@ export function calculateDeadline(state: any, appLanguage: string) {
 
 export function generateMessages(state: any, dl: { formatted: string, total: number }, appLanguage: string) {
   const isE = state.isEditMode;
-  const raw = state.mainType === 'Lain-lain' ? (state.customDoc.trim() || 'Dokumen') : state.mainType;
+  const raw = state.mainType === 'Lain-lain' ? ((state.customDoc || '').trim() || 'Dokumen') : state.mainType;
   const docLabel = raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase();
   
-  const addsForDisplay = state.addons.map((a: string) => {
+  const addsForDisplay = (state.addons || []).map((a: string) => {
       if (a === 'Soft Copy Word') return `Soft Copy Word (${state.softcopyLang})`;
       if (a === 'Cover Letter') {
-          const clText = ['Melayu', 'English'].filter(l => state.clLangs.includes(l)).join(' & ');
+          const clText = ['Melayu', 'English'].filter(l => state.clLangs && state.clLangs.includes(l)).join(' & ');
           return `Cover Letter (${clText})`;
       }
       return a;
@@ -60,7 +60,7 @@ export function generateMessages(state: any, dl: { formatted: string, total: num
   const out = [m1];
   if (state.mainType === 'Resume') {
       if (!isE) {
-          let m2 = `${t.template}: ${(state.template.trim() || '-').toUpperCase()}\n${t.language}: ${state.resumeLangs.join(' & ')}\n${t.addon}: ${addsForDisplay.length ? addsForDisplay.join(', ') : '-'}\n\n${t.disc}`;
+          let m2 = `${t.template}: ${((state.template || '').trim() || '-').toUpperCase()}\n${t.language}: ${(state.resumeLangs || []).join(' & ')}\n${t.addon}: ${addsForDisplay.length ? addsForDisplay.join(', ') : '-'}\n\n${t.disc}`;
           out.push(m2);
       } else { out.push(t.disc); }
   }

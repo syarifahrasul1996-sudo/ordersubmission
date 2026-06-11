@@ -3,7 +3,7 @@ import { Check, Copy } from 'lucide-react';
 import { useAppContext } from '../AppContext';
 
 export function OutputView({ onCopy }: { onCopy: (msg: string) => void }) {
-  const { generatedMessages, state, reset, appLanguage } = useAppContext();
+  const { generatedMessages, state, reset, pushView, appLanguage } = useAppContext();
 
   useEffect(() => {
     if (generatedMessages.length > 0) {
@@ -38,7 +38,13 @@ export function OutputView({ onCopy }: { onCopy: (msg: string) => void }) {
         ))}
       </div>
 
-      <div className="pt-4 w-full">
+      <div className="pt-4 w-full space-y-4">
+        <button 
+          onClick={() => pushView('customer-info')}
+          className="w-full h-[64px] sm:h-20 bg-primary text-white font-black text-[15px] sm:text-[16px] rounded-[18px] active:scale-[0.98] md:hover:bg-primary/90 transition-all shadow-md"
+        >
+          {appLanguage === 'ms' ? 'Simpan Maklumat Pelanggan' : 'Save Customer Info'}
+        </button>
         <button 
           onClick={reset}
           className="w-full h-[64px] sm:h-20 bg-surface text-text font-black text-[15px] sm:text-[16px] rounded-[18px] border border-gray-100/80 active:scale-[0.98] md:hover:bg-gray-200 transition-all"

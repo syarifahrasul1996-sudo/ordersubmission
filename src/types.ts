@@ -12,9 +12,10 @@ export interface AppState {
   isEditMode: boolean;
   extraHours: number;
   customDoc: string;
+  spreadsheetId: string;
 }
 
-export type ViewType = 'home' | 'resume-type' | 'resume-form-fields' | 'general-form' | 'confirmation' | 'output' | 'history';
+export type ViewType = 'home' | 'resume-type' | 'resume-form-fields' | 'general-form' | 'confirmation' | 'output' | 'history' | 'customer-info';
 
 export interface OrderHistoryItem {
   id: string;
@@ -36,5 +37,6 @@ export const INITIAL_STATE: AppState = {
   resumeLangs: ['Melayu'],
   isEditMode: false,
   extraHours: 0,
-  customDoc: ''
+  customDoc: '',
+  spreadsheetId: '1kUAJYUVhr9bPYErtpnohpvuGGyhBSvJyEOIyzEFivJo',
 };

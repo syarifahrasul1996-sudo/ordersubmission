@@ -8,19 +8,19 @@ export function ConfirmationView({ onGenerated }: { onGenerated: () => void }) {
   const [copied, setCopied] = useState(false);
 
   const isE = state.isEditMode;
-  const raw = state.mainType === 'Lain-lain' ? (state.customDoc.trim() || 'Dokumen') : state.mainType;
+  const raw = state.mainType === 'Lain-lain' ? ((state.customDoc || '').trim() || 'Dokumen') : state.mainType;
   const typeText = `${raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase()} ${state.subType ? '(' + state.subType + ')' : ''}`;
 
-  const langText = (!isE && state.mainType === 'Resume') ? state.resumeLangs.join(' & ') : '-';
+  const langText = (!isE && state.resumeLangs && state.resumeLangs.length > 0) ? state.resumeLangs.join(' & ') : '-';
   const dlInfo = calculateDeadline(state, appLanguage);
 
-  const adds = state.addons.map(a => {
+  const adds = (state.addons || []).map(a => {
       if (a === 'Soft Copy Word') return `Soft Copy Word (${state.softcopyLang})`;
       if (a === 'Cover Letter') {
-          const clText = ['Melayu', 'English'].filter(l => state.clLangs.includes(l)).join(' & ');
+          const clText = ['Melayu', 'English'].filter(l => state.clLangs && state.clLangs.includes(l)).join(' & ');
           return `Cover Letter (${clText})`;
       }
-      if (a === 'Custom') return state.customDoc.trim() || 'Custom';
+      if (a === 'Custom') return (state.customDoc || '').trim() || 'Custom';
       return a;
   });
 
@@ -43,7 +43,7 @@ export function ConfirmationView({ onGenerated }: { onGenerated: () => void }) {
   
   const priceDocLabel = state.mainType === 'Resume' ? (isE ? 'Edit Resume' : 'Resume') : raw;
 
-  const langTextRaw = (!isE && state.mainType === 'Resume' && state.resumeLangs.length > 0) ? state.resumeLangs.join(' & ') : '';
+  const langTextRaw = (!isE && state.resumeLangs && state.resumeLangs.length > 0) ? state.resumeLangs.join(' & ') : '';
   const docPart = [priceDocLabel, langTextRaw].filter(Boolean).join(' ');
   const addonsPart = adds.length > 0 ? '+ ' + adds.join(' + ') : '';
 
@@ -85,7 +85,7 @@ export function ConfirmationView({ onGenerated }: { onGenerated: () => void }) {
                 <p className="text-[11px] font-black text-subtext uppercase tracking-widest mb-1.5">{appLanguage === 'ms' ? 'Dokumen' : 'Document'}</p>
                 <p className="text-xl font-black text-text tracking-tight leading-none">{typeText}</p>
             </div>
-            {(!isE && state.mainType === 'Resume') && (
+            {(!isE) && (
               <div className="text-right">
                   <p className="text-[11px] font-black text-subtext uppercase tracking-widest mb-1.5">{appLanguage === 'ms' ? 'Bahasa' : 'Language'}</p>
                   <p className="font-bold text-text leading-none">{langText}</p>
