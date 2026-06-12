@@ -547,22 +547,42 @@ export function CustomerInfoView() {
           </div>
         )}
 
-        <div className="pt-6">
-          {needsAuth ? (
-            <div className="space-y-3 p-5 bg-surface border border-gray-100 rounded-2xl flex flex-col items-center">
-              <p className="text-[13px] text-text text-center font-medium">
-                {appLanguage === 'ms' 
-                  ? 'Anda perlu log masuk untuk menyimpan ke dalam Google Sheets.' 
-                  : 'You need to sign in to save into Google Sheets.'}
-              </p>
+        <div className="pt-4 space-y-4">
+          <button
+            onClick={() => {
+              let formattedPhone = phone.trim();
+              if (formattedPhone.startsWith('+')) formattedPhone = formattedPhone.substring(1);
+              else if (formattedPhone.startsWith('0')) formattedPhone = '6' + formattedPhone;
+              let formattedName = name.replace(/\w\S*/g, (txt) => txt.charAt(0).toUpperCase() + txt.substring(1).toLowerCase());
               
+              const textToCopy = `Nama: ${formattedName}\nPhone: ${formattedPhone}\nOrder: ${order}\nTemplate: ${template}\nBahasa: ${bahasa}\nAdd On: ${addOn}\nJenis: ${jenis}\nDue: ${due}`;
+              
+              if (navigator.clipboard) {
+                navigator.clipboard.writeText(textToCopy).then(() => {
+                  alert(appLanguage === 'ms' ? 'Maklumat disalin ke clipboard!' : 'Info copied to clipboard!');
+                }).catch(err => console.error(err));
+              }
+            }}
+            className="w-full h-16 bg-text text-white font-black text-[16px] rounded-[18px] flex items-center justify-center active:scale-[0.98] transition-all shadow-sm"
+          >
+            {appLanguage === 'ms' ? 'Salin Maklumat Sahaja' : 'Copy Info Only'}
+          </button>
+          
+          <div className="relative w-full flex items-center py-2">
+            <div className="flex-grow border-t border-gray-200"></div>
+            <span className="flex-shrink-0 mx-4 text-subtext text-[12px] uppercase tracking-wider">{appLanguage === 'ms' ? 'ATAU SIMPAN KE SHEETS' : 'OR SAVE TO SHEETS'}</span>
+            <div className="flex-grow border-t border-gray-200"></div>
+          </div>
+
+          {needsAuth ? (
+            <div className="space-y-4 p-5 bg-blue-50/50 border border-blue-100 rounded-2xl flex flex-col items-center">
               <button 
                 onClick={handleLogin} 
                 disabled={isLoggingIn}
-                className="gsi-material-button w-full shrink-0 flex items-center justify-center relative bg-white text-[#3c4043] border border-[#dadce0] rounded-[4px] h-[40px] px-3 font-semibold hover:bg-[#f8fafc] cursor-pointer"
+                className="gsi-material-button w-full shrink-0 flex items-center justify-center relative bg-white text-[#3c4043] border border-[#dadce0] rounded-xl h-12 px-3 font-semibold hover:bg-[#f8fafc] cursor-pointer shadow-sm active:scale-[0.98] transition-all"
               >
-                <div className="mr-3 w-[18px] h-[18px]">
-                  <svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" className="w-[18px] h-[18px] block">
+                <div className="mr-3 w-5 h-5">
+                  <svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" className="w-5 h-5 block">
                     <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
                     <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
                     <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
@@ -575,49 +595,40 @@ export function CustomerInfoView() {
                 </span>
               </button>
               
+              <div className="text-center px-1">
+                <p className="text-[11px] text-gray-500 leading-snug">
+                  {appLanguage === 'ms' 
+                    ? 'Jika terdapat ralat "invalid action", pastikan URL web ini telah ditambah ke dalam "Authorized Domains" di Firebase Console anda.'
+                    : 'If you see an "invalid action" error, please make sure this app\'s URL is added to "Authorized Domains" in your Firebase Console.'}
+                </p>
+                <button
+                   onClick={(e) => {
+                     e.preventDefault();
+                     window.open(window.location.href, '_blank', 'noopener,noreferrer');
+                   }}
+                   className="mt-2 text-primary text-[11.5px] font-bold underline hover:text-primary/80"
+                >
+                  {appLanguage === 'ms' ? 'Buka di Tab Baru (Untuk Pengguna Mobile)' : 'Open in New Tab (For Mobile)'}
+                </button>
+              </div>
+              
               {authError && (
-                <p className="text-[12px] text-red-500 font-medium text-center px-2">
+                <p className="text-[12px] text-red-500 font-medium text-center px-2 bg-red-50 py-2 rounded-lg w-full">
                   {authError}
                 </p>
               )}
-              
-              <div className="relative w-full flex items-center py-2">
-                <div className="flex-grow border-t border-gray-200"></div>
-                <span className="flex-shrink-0 mx-4 text-subtext text-[12px] uppercase tracking-wider">{appLanguage === 'ms' ? 'ATAU' : 'OR'}</span>
-                <div className="flex-grow border-t border-gray-200"></div>
-              </div>
-              
-              <button
-                onClick={() => {
-                  let formattedPhone = phone.trim();
-                  if (formattedPhone.startsWith('+')) formattedPhone = formattedPhone.substring(1);
-                  else if (formattedPhone.startsWith('0')) formattedPhone = '6' + formattedPhone;
-                  let formattedName = name.replace(/\w\S*/g, (txt) => txt.charAt(0).toUpperCase() + txt.substring(1).toLowerCase());
-                  
-                  const textToCopy = `Nama: ${formattedName}\nPhone: ${formattedPhone}\nOrder: ${order}\nTemplate: ${template}\nBahasa: ${bahasa}\nAdd On: ${addOn}\nJenis: ${jenis}\nDue: ${due}`;
-                  
-                  if (navigator.clipboard) {
-                    navigator.clipboard.writeText(textToCopy).then(() => {
-                      alert(appLanguage === 'ms' ? 'Maklumat disalin!' : 'Info copied!');
-                    }).catch(err => console.error(err));
-                  }
-                }}
-                className="w-full h-12 bg-gray-100 text-text font-bold text-[14px] rounded-[12px] flex items-center justify-center hover:bg-gray-200 transition-colors"
-              >
-                {appLanguage === 'ms' ? 'Salin Maklumat Secara Manual' : 'Copy Info Manually'}
-              </button>
             </div>
           ) : (
             <button
               onClick={handleSaveInfo}
               disabled={isSaving}
-              className="w-full h-16 bg-primary text-white font-black text-[16px] rounded-[18px] flex items-center justify-center space-x-2 active:scale-[0.98] transition-all disabled:opacity-70 shadow-sm"
+              className="w-full h-16 bg-blue-600 text-white font-black text-[16px] rounded-[18px] flex items-center justify-center space-x-2 active:scale-[0.98] transition-all disabled:opacity-70 shadow-sm"
             >
               {isSaving ? (
                 <RefreshCcw className="w-5 h-5 animate-spin" />
               ) : (
                 <>
-                  <span>{appLanguage === 'ms' ? 'Simpan Data Ke Sheets' : 'Save To Sheets'}</span>
+                  <span>{appLanguage === 'ms' ? 'Simpan Ke Google Sheets' : 'Save To Google Sheets'}</span>
                   <Save className="w-5 h-5 ml-1" />
                 </>
               )}
