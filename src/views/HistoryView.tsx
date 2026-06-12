@@ -25,7 +25,7 @@ export function HistoryView() {
   };
 
   return (
-    <div className="flex flex-col h-full bg-background absolute inset-0 z-50 overflow-y-auto">
+    <div className="flex flex-col bg-background w-full pb-[calc(env(safe-area-inset-bottom)+8rem)]">
       <div className="p-4 sm:p-6 space-y-4">
         {history.length > 0 && (
           <div className="flex justify-end mb-2">
@@ -45,8 +45,8 @@ export function HistoryView() {
             <p className="font-bold">{appLanguage === 'ms' ? 'Tiada sejarah tempahan' : 'No order history'}</p>
           </div>
         ) : (
-          history.map((item) => {
-            const date = new Date(item.timestamp);
+          history.filter(Boolean).map((item) => {
+            const date = new Date(item.timestamp || Date.now());
             const formattedDate = date.toLocaleDateString(appLanguage === 'ms' ? 'ms-MY' : 'en-US', { 
               day: 'numeric', 
               month: 'short', 
@@ -64,7 +64,7 @@ export function HistoryView() {
                       {formattedDate}
                     </div>
                     <p className="font-bold text-[16px] text-text">
-                      {item.state.mainType === 'Lain-lain' ? item.state.customDoc : item.state.mainType} {item.state.isEditMode ? '(Edit)' : ''}
+                      {item.state?.mainType === 'Lain-lain' ? item.state?.customDoc : item.state?.mainType} {item.state?.isEditMode ? '(Edit)' : ''}
                     </p>
                   </div>
                   <div className="flex items-center space-x-2 shrink-0 ml-2">
@@ -77,7 +77,7 @@ export function HistoryView() {
                       {appLanguage === 'ms' ? 'Guna Semula' : 'Reuse'}
                     </button>
                     <button 
-                      onClick={() => handleCopyAll(item.messages)}
+                      onClick={() => handleCopyAll(item.messages || [])}
                       className="w-10 h-10 bg-gray-50 border border-gray-200 rounded-full flex items-center justify-center text-text active:scale-95 transition-all shadow-sm md:hover:bg-gray-100"
                       title={appLanguage === 'ms' ? 'Salin Semua' : 'Copy All'}
                     >
@@ -87,7 +87,7 @@ export function HistoryView() {
                 </div>
                 
                 <div className="space-y-3">
-                  {item.messages.map((msg, i) => (
+                  {(item.messages || []).map((msg, i) => (
                     <div key={i} className="bg-gray-50 rounded-[12px] p-3 text-[13px] text-text whitespace-pre-wrap font-medium">
                       {msg}
                     </div>

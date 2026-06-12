@@ -74,7 +74,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [history, setHistory] = useState<OrderHistoryItem[]>(() => {
     try {
       const saved = localStorage.getItem('orderHistory');
-      return saved ? JSON.parse(saved) : [];
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return Array.isArray(parsed) ? parsed : [];
+      }
+      return [];
     } catch {
       return [];
     }
