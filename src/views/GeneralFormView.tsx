@@ -18,7 +18,7 @@ export function GeneralFormView() {
             placeholder={appLanguage === 'ms' ? 'Contoh: Assignment' : 'Example: Assignment'}
             value={state.customDoc}
             onChange={(e) => setState(prev => ({...prev, customDoc: e.target.value}))} 
-            className="w-full bg-surface border-2 border-transparent rounded-[16px] h-[56px] px-5 sm:px-6 focus:outline-none focus:border-primary font-bold shadow-inner transition-all text-text select-text text-[14px]" 
+            className="w-full bg-surface border-2 border-transparent rounded-[16px] h-[56px] px-5 sm:px-6 focus:outline-none focus:border-primary font-bold shadow-inner transition-all text-text select-text text-[16px]" 
           />
         </section>
       )}

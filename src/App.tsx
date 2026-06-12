@@ -45,8 +45,8 @@ function AppContent() {
   const currentView = viewStack[viewStack.length - 1];
 
   return (
-    <div className="flex justify-center w-full select-none">
-      <div className="w-full max-w-[500px] bg-white min-h-screen flex flex-col relative shadow-2xl overflow-hidden text-[15px]">
+    <div className="flex justify-center w-full select-none bg-black/5 dark:bg-black/40 min-h-[100dvh]">
+      <div className="w-full max-w-[500px] bg-background min-h-[100dvh] flex flex-col relative shadow-2xl overflow-hidden text-[15px]">
         <Header />
         
         <main className="flex-1 overflow-y-auto overflow-x-hidden relative">

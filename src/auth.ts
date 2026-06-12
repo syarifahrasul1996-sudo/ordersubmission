@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User } from 'firebase/auth';
+import { getAuth, signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider, onAuthStateChanged, User } from 'firebase/auth';
 import firebaseConfig from '../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
@@ -27,6 +27,20 @@ export const initAuth = (
   onAuthSuccess?: (user: User, token: string) => void,
   onAuthFailure?: () => void
 ) => {
+  // Catch redirect results if returning from signInWithRedirect
+  getRedirectResult(auth).then((result) => {
+    if (result) {
+      const credential = GoogleAuthProvider.credentialFromResult(result);
+      if (credential?.accessToken) {
+        cachedAccessToken = credential.accessToken;
+        localStorage.setItem('google_access_token', cachedAccessToken);
+        localStorage.setItem('google_access_token_expiry', (Date.now() + 3500 * 1000).toString());
+      }
+    }
+  }).catch((error) => {
+    console.error("Redirect sign-in error:", error);
+  });
+
   return onAuthStateChanged(auth, async (user: User | null) => {
     if (user) {
       cachedAccessToken = getStoredToken();
@@ -60,6 +74,11 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
 
     return { user: result.user, accessToken: cachedAccessToken };
   } catch (error: any) {
+    if (error.code === 'auth/popup-closed-by-user' || error.code === 'auth/popup-blocked') {
+      console.warn('Popup blocked or closed, falling back to redirect...');
+      await signInWithRedirect(auth, provider);
+      return null;
+    }
     console.error('Sign in error:', error);
     throw error;
   } finally {

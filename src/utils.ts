@@ -29,8 +29,9 @@ export function calculateDeadline(state: any, appLanguage: string) {
 
 export function generateMessages(state: any, dl: { formatted: string, total: number }, appLanguage: string) {
   const isE = state.isEditMode;
-  const raw = state.mainType === 'Lain-lain' ? ((state.customDoc || '').trim() || 'Dokumen') : state.mainType;
-  const docLabel = raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase();
+  let raw = state.mainType === 'Lain-lain' ? ((state.customDoc || '').trim() || 'Dokumen') : state.mainType;
+  if (state.mainType === 'Resume' && isE) raw = 'Edit Resume';
+  const docLabel = raw === 'Edit Resume' ? raw : raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase();
   
   const addsForDisplay = (state.addons || []).map((a: string) => {
       if (a === 'Soft Copy Word') return `Soft Copy Word (${state.softcopyLang})`;

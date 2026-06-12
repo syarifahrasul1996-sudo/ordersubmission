@@ -85,6 +85,7 @@ export function CustomerInfoView() {
   const [isSaving, setIsSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [authError, setAuthError] = useState('');
 
   // Re-compute when navigating here or state changes
   useEffect(() => {
@@ -114,14 +115,19 @@ export function CustomerInfoView() {
 
   const handleLogin = async () => {
     setIsLoggingIn(true);
+    setAuthError('');
     try {
       const result = await googleSignIn();
       if (result) {
         setToken(result.accessToken);
         setNeedsAuth(false);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Login failed:', err);
+      // Give a helpful error message about mobile/iframe issues
+      setAuthError(appLanguage === 'ms' 
+        ? `Gagal log masuk (${err.message || 'Ralat'}). Sila buka app ini di tab baru jika anda di telefon bimbit.` 
+        : `Login failed (${err.message || 'Error'}). Please open this app in a new tab if you are on mobile.`);
     } finally {
       setIsLoggingIn(false);
     }
@@ -441,6 +447,11 @@ export function CustomerInfoView() {
                 Sign in with Google
               </span>
             </button>
+            {authError && (
+              <p className="mt-4 text-[13px] text-red-500 font-medium text-center">
+                {authError}
+              </p>
+            )}
         </div>
       ) : (
         <div className="space-y-4">
@@ -453,7 +464,7 @@ export function CustomerInfoView() {
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder={appLanguage === 'ms' ? 'Cth: Ali bin Abu' : 'E.g. John Doe'}
-              className="w-full h-14 bg-surface rounded-[16px] px-4 font-medium text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all placeholder:text-gray-300" 
+              className="w-full h-14 bg-surface rounded-[16px] px-4 font-medium text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all placeholder:text-gray-300 text-[16px]" 
             />
           </div>
 
@@ -466,7 +477,7 @@ export function CustomerInfoView() {
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
               placeholder="01X-XXX XXXX"
-              className="w-full h-14 bg-surface rounded-[16px] px-4 font-medium text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all placeholder:text-gray-300" 
+              className="w-full h-14 bg-surface rounded-[16px] px-4 font-medium text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all placeholder:text-gray-300 text-[16px]" 
             />
           </div>
 
@@ -476,7 +487,7 @@ export function CustomerInfoView() {
               <select 
                 value={order}
                 onChange={(e) => setOrder(e.target.value)}
-                className="w-full h-14 bg-surface text-text rounded-[16px] px-4 font-medium border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all appearance-none" 
+                className="w-full h-14 bg-surface text-text rounded-[16px] px-4 font-medium border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all appearance-none text-[16px]" 
               >
                 <option value="Resume">Resume</option>
                 <option value="Surat">Surat</option>
@@ -497,7 +508,7 @@ export function CustomerInfoView() {
               type="text" 
               value={template}
               onChange={(e) => setTemplate(e.target.value)}
-              className="w-full h-14 bg-surface rounded-[16px] px-4 font-medium text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all" 
+              className="w-full h-14 bg-surface rounded-[16px] px-4 font-medium text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all text-[16px]" 
             />
           </div>
 
@@ -507,7 +518,7 @@ export function CustomerInfoView() {
               <select 
                 value={bahasa}
                 onChange={(e) => setBahasa(e.target.value)}
-                className="w-full h-14 bg-surface text-text rounded-[16px] px-4 font-medium border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all appearance-none" 
+                className="w-full h-14 bg-surface text-text rounded-[16px] px-4 font-medium border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all appearance-none text-[16px]" 
               >
                 <option value="Melayu">Melayu</option>
                 <option value="English">English</option>
@@ -526,7 +537,7 @@ export function CustomerInfoView() {
               type="text" 
               value={addOn}
               onChange={(e) => setAddOn(e.target.value)}
-              className="w-full h-14 bg-surface rounded-[16px] px-4 font-medium text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all" 
+              className="w-full h-14 bg-surface rounded-[16px] px-4 font-medium text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all text-[16px]" 
             />
           </div>
 
@@ -536,7 +547,7 @@ export function CustomerInfoView() {
               <select 
                 value={jenis}
                 onChange={(e) => setJenis(e.target.value)}
-                className="w-full h-14 bg-surface text-text rounded-[16px] px-4 font-medium border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all appearance-none" 
+                className="w-full h-14 bg-surface text-text rounded-[16px] px-4 font-medium border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all appearance-none text-[16px]" 
               >
                 <option value="Tidak Urgent">Tidak Urgent</option>
                 <option value="Semi Urgent">Semi Urgent</option>
@@ -556,7 +567,7 @@ export function CustomerInfoView() {
               type="text" 
               value={due}
               onChange={(e) => setDue(e.target.value)}
-              className="w-full h-14 bg-surface rounded-[16px] px-4 font-medium text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all" 
+              className="w-full h-14 bg-surface rounded-[16px] px-4 font-medium text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all text-[16px]" 
             />
           </div>
 

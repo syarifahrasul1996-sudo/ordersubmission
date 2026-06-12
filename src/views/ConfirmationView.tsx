@@ -8,8 +8,10 @@ export function ConfirmationView({ onGenerated }: { onGenerated: () => void }) {
   const [copied, setCopied] = useState(false);
 
   const isE = state.isEditMode;
-  const raw = state.mainType === 'Lain-lain' ? ((state.customDoc || '').trim() || 'Dokumen') : state.mainType;
-  const typeText = `${raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase()} ${state.subType ? '(' + state.subType + ')' : ''}`;
+  let raw = state.mainType === 'Lain-lain' ? ((state.customDoc || '').trim() || 'Dokumen') : state.mainType;
+  if (state.mainType === 'Resume' && isE) raw = 'Edit Resume';
+  const typeTextHead = raw === 'Edit Resume' ? raw : raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase();
+  const typeText = `${typeTextHead} ${state.subType ? '(' + state.subType + ')' : ''}`;
 
   const langText = (!isE && state.resumeLangs && state.resumeLangs.length > 0) ? state.resumeLangs.join(' & ') : '-';
   const dlInfo = calculateDeadline(state, appLanguage);

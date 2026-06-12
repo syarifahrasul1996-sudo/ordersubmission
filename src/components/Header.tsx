@@ -21,7 +21,7 @@ export function Header() {
   const showCounter = state.extraHours > 0 && !['confirmation', 'output'].includes(currentView);
 
   return (
-    <header className="sticky top-0 bg-white/80 backdrop-blur-xl border-b border-gray-100 px-4 sm:px-5 h-14 sm:h-16 flex items-center justify-between shrink-0 z-40">
+    <header className="sticky top-0 bg-white/80 backdrop-blur-xl border-b border-gray-100 px-4 sm:px-5 h-[calc(3.5rem+env(safe-area-inset-top))] sm:h-[calc(4rem+env(safe-area-inset-top))] pt-[env(safe-area-inset-top)] flex items-center justify-between shrink-0 z-40">
       <div className="flex items-center">
         {showBack ? (
           <button 

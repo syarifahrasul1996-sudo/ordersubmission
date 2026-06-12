@@ -195,7 +195,7 @@ export function ResumeFormFieldsView() {
                     value={state.customDoc} // Just repurpose customDoc for custom addon text internally or create a new state, wait let's use customDoc since we only use one input here anyway
                     onChange={(e) => setState(prev => ({...prev, customDoc: e.target.value}))}
                     placeholder={appLanguage === 'ms' ? 'Apa yang anda perlukan?' : 'What do you need?'}
-                    className="w-full bg-surface border-2 border-transparent rounded-[16px] h-[56px] px-5 sm:px-6 focus:outline-none focus:border-primary font-bold text-text shadow-inner transition-all select-text text-[14px]"
+                    className="w-full bg-surface border-2 border-transparent rounded-[16px] h-[56px] px-5 sm:px-6 focus:outline-none focus:border-primary font-bold text-text shadow-inner transition-all select-text text-[16px]"
                   />
                 </div>
               )}
@@ -212,7 +212,7 @@ export function ResumeFormFieldsView() {
             type="text" 
             value={state.template}
             onChange={(e) => setState(prev => ({...prev, template: e.target.value}))}
-            className="w-full bg-surface border-2 border-transparent rounded-[16px] h-[56px] px-5 sm:px-6 focus:outline-none focus:border-primary font-bold uppercase tracking-wider text-text shadow-inner transition-all select-text text-[14px]" 
+            className="w-full bg-surface border-2 border-transparent rounded-[16px] h-[56px] px-5 sm:px-6 focus:outline-none focus:border-primary font-bold uppercase tracking-wider text-text shadow-inner transition-all select-text text-[16px]" 
             placeholder="CTH: MODERN 01" 
           />
         </section>
