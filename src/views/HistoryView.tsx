@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
-import { Clock, Copy, Trash2, Calendar, AlertCircle, RefreshCcw } from 'lucide-react';
+import { Clock, Copy, Trash2, Calendar, AlertCircle, RefreshCcw, Edit3, Save } from 'lucide-react';
 import { useAppContext } from '../AppContext';
 
 export function HistoryView() {
-  const { history, clearHistory, loadOrder, appLanguage } = useAppContext();
+  const { history, clearHistory, deleteOrderFromHistory, loadOrder, pushView, appLanguage } = useAppContext();
   const [showConfirm, setShowConfirm] = useState(false);
 
   const handleCopyAll = async (msgs: string[]) => {
@@ -67,31 +67,65 @@ export function HistoryView() {
                       {item.state?.mainType === 'Lain-lain' ? item.state?.customDoc : item.state?.mainType} {item.state?.isEditMode ? '(Edit)' : ''}
                     </p>
                   </div>
-                  <div className="flex items-center space-x-2 shrink-0 ml-2">
+                  <div className="flex items-center space-x-1.5 shrink-0 ml-2">
                     <button 
                       onClick={() => loadOrder(item.state)}
-                      className="flex items-center h-10 px-3.5 bg-primary/10 text-primary font-bold text-[12px] sm:text-[13px] rounded-full active:scale-95 transition-all md:hover:bg-primary/20"
-                      title={appLanguage === 'ms' ? 'Guna Semula' : 'Reuse'}
+                      className="w-9 h-9 bg-primary/10 text-primary rounded-full flex items-center justify-center active:scale-95 transition-all"
+                      title={appLanguage === 'ms' ? 'Edit' : 'Edit'}
                     >
-                      <RefreshCcw className="w-3.5 h-3.5 mr-1.5" />
-                      {appLanguage === 'ms' ? 'Guna Semula' : 'Reuse'}
+                      <Edit3 className="w-4 h-4" />
+                    </button>
+                    <button 
+                      onClick={() => pushView('customer-info', item.state)}
+                      className="w-9 h-9 bg-green-100 text-green-600 rounded-full flex items-center justify-center active:scale-95 transition-all"
+                      title="Google Sheets"
+                    >
+                      <Save className="w-4 h-4" />
                     </button>
                     <button 
                       onClick={() => handleCopyAll(item.messages || [])}
-                      className="w-10 h-10 bg-gray-50 border border-gray-200 rounded-full flex items-center justify-center text-text active:scale-95 transition-all shadow-sm md:hover:bg-gray-100"
+                      className="w-9 h-9 bg-gray-100 text-text rounded-full flex items-center justify-center active:scale-95 transition-all"
                       title={appLanguage === 'ms' ? 'Salin Semua' : 'Copy All'}
                     >
                       <Copy className="w-4 h-4" />
                     </button>
+                    <button 
+                      onClick={() => deleteOrderFromHistory(item.id)}
+                      className="w-9 h-9 bg-red-100 text-red-500 rounded-full flex items-center justify-center active:scale-95 transition-all"
+                      title={appLanguage === 'ms' ? 'Padam' : 'Delete'}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
                   </div>
                 </div>
                 
-                <div className="space-y-3">
-                  {(item.messages || []).map((msg, i) => (
-                    <div key={i} className="bg-gray-50 rounded-[12px] p-3 text-[13px] text-text whitespace-pre-wrap font-medium">
-                      {msg}
+                <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-[13px] mt-2">
+                  {item.state?.template && (
+                    <div>
+                      <span className="text-subtext">{appLanguage === 'ms' ? 'Templat' : 'Template'}:</span>{' '}
+                      <span className="font-medium text-text">{item.state.template}</span>
                     </div>
-                  ))}
+                  )}
+                  {item.state?.language && (
+                    <div>
+                      <span className="text-subtext">{appLanguage === 'ms' ? 'Bahasa' : 'Language'}:</span>{' '}
+                      <span className="font-medium text-text">{item.state.language === 'ms' ? 'Melayu' : 'English'}</span>
+                    </div>
+                  )}
+                  {item.state?.urgency && (
+                    <div>
+                      <span className="text-subtext">{appLanguage === 'ms' ? 'Kecemasan' : 'Urgency'}:</span>{' '}
+                      <span className="font-medium text-text">
+                        {item.state.urgency === 'super' ? 'Super Urgent' : item.state.urgency === 'semi' ? 'Semi Urgent' : 'Normal'}
+                      </span>
+                    </div>
+                  )}
+                  {item.state?.addons && item.state.addons.length > 0 && (
+                    <div className="w-full">
+                       <span className="text-subtext">{appLanguage === 'ms' ? 'Tambahan' : 'Add-ons'}:</span>{' '}
+                       <span className="font-medium text-text">{item.state.addons.join(', ')}</span>
+                    </div>
+                  )}
                 </div>
               </div>
             );

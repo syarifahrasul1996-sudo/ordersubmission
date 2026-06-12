@@ -424,177 +424,207 @@ export function CustomerInfoView() {
         </p>
       </div>
 
-      {needsAuth ? (
-        <div className="p-6 bg-surface border border-gray-100 rounded-2xl flex flex-col items-center justify-center">
-            <p className="text-[14px] text-text mb-4 text-center">
-              {appLanguage === 'ms' ? 'Sila log masuk dengan Google untuk menyimpan di Google Sheets.' : 'Please sign in with Google to save to Google Sheets.'}
-            </p>
-            <button 
-              onClick={handleLogin} 
-              disabled={isLoggingIn}
-              className="gsi-material-button w-full shrink-0 flex items-center justify-center relative bg-white text-[#3c4043] border border-[#dadce0] rounded-[4px] h-[40px] px-3 font-semibold hover:bg-[#f8fafc] cursor-pointer"
-            >
-              <div className="mr-3 w-[18px] h-[18px]">
-                <svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" className="w-[18px] h-[18px] block">
-                  <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
-                  <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
-                  <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
-                  <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
-                  <path fill="none" d="M0 0h48v48H0z"></path>
-                </svg>
-              </div>
-              <span className="text-[14px]">
-                Sign in with Google
-              </span>
-            </button>
-            {authError && (
-              <p className="mt-4 text-[13px] text-red-500 font-medium text-center">
-                {authError}
-              </p>
-            )}
+      <div className="space-y-4">
+        <div className="space-y-1">
+          <label className="text-[13px] font-bold text-text ml-1 uppercase tracking-wider">
+            {appLanguage === 'ms' ? 'Nama Pelanggan' : 'Customer Name'}
+          </label>
+          <input 
+            type="text" 
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder={appLanguage === 'ms' ? 'Cth: Ali bin Abu' : 'E.g. John Doe'}
+            className="w-full h-14 bg-surface rounded-[16px] px-4 font-medium text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all placeholder:text-gray-300 text-[16px]" 
+          />
         </div>
-      ) : (
-        <div className="space-y-4">
-          <div className="space-y-1">
-            <label className="text-[13px] font-bold text-text ml-1 uppercase tracking-wider">
-              {appLanguage === 'ms' ? 'Nama Pelanggan' : 'Customer Name'}
-            </label>
-            <input 
-              type="text" 
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder={appLanguage === 'ms' ? 'Cth: Ali bin Abu' : 'E.g. John Doe'}
-              className="w-full h-14 bg-surface rounded-[16px] px-4 font-medium text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all placeholder:text-gray-300 text-[16px]" 
-            />
-          </div>
 
-          <div className="space-y-1">
-            <label className="text-[13px] font-bold text-text ml-1 uppercase tracking-wider">
-              {appLanguage === 'ms' ? 'No. Telefon' : 'Phone Number'}
-            </label>
-            <input 
-              type="tel" 
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              placeholder="01X-XXX XXXX"
-              className="w-full h-14 bg-surface rounded-[16px] px-4 font-medium text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all placeholder:text-gray-300 text-[16px]" 
-            />
-          </div>
+        <div className="space-y-1">
+          <label className="text-[13px] font-bold text-text ml-1 uppercase tracking-wider">
+            {appLanguage === 'ms' ? 'No. Telefon' : 'Phone Number'}
+          </label>
+          <input 
+            type="tel" 
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            placeholder="01X-XXX XXXX"
+            className="w-full h-14 bg-surface rounded-[16px] px-4 font-medium text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all placeholder:text-gray-300 text-[16px]" 
+          />
+        </div>
 
-          <div className="space-y-1">
-            <label className="text-[13px] font-bold text-text ml-1 uppercase tracking-wider">Order</label>
-            <div className="relative">
-              <select 
-                value={order}
-                onChange={(e) => setOrder(e.target.value)}
-                className="w-full h-14 bg-surface text-text rounded-[16px] px-4 font-medium border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all appearance-none text-[16px]" 
+        <div className="space-y-1">
+          <label className="text-[13px] font-bold text-text ml-1 uppercase tracking-wider">Order</label>
+          <div className="relative">
+            <select 
+              value={order}
+              onChange={(e) => setOrder(e.target.value)}
+              className="w-full h-14 bg-surface text-text rounded-[16px] px-4 font-medium border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all appearance-none text-[16px]" 
+            >
+              <option value="Resume">Resume</option>
+              <option value="Surat">Surat</option>
+              <option value="Edit PDF">Edit PDF</option>
+              <option value="Lain2">Lain2</option>
+              <option value="Edit Resume">Edit Resume</option>
+              <option value=""></option>
+            </select>
+            <div className="absolute top-0 right-4 h-full flex items-center pointer-events-none">
+              <svg className="w-4 h-4 text-subtext" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-1">
+          <label className="text-[13px] font-bold text-text ml-1 uppercase tracking-wider">Template</label>
+          <input 
+            type="text" 
+            value={template}
+            onChange={(e) => setTemplate(e.target.value)}
+            className="w-full h-14 bg-surface rounded-[16px] px-4 font-medium text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all text-[16px]" 
+          />
+        </div>
+
+        <div className="space-y-1">
+          <label className="text-[13px] font-bold text-text ml-1 uppercase tracking-wider">Bahasa</label>
+          <div className="relative">
+            <select 
+              value={bahasa}
+              onChange={(e) => setBahasa(e.target.value)}
+              className="w-full h-14 bg-surface text-text rounded-[16px] px-4 font-medium border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all appearance-none text-[16px]" 
+            >
+              <option value="Melayu">Melayu</option>
+              <option value="English">English</option>
+              <option value="2 Bahasa">2 Bahasa</option>
+              <option value=""></option>
+            </select>
+            <div className="absolute top-0 right-4 h-full flex items-center pointer-events-none">
+              <svg className="w-4 h-4 text-subtext" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7-7-7-7"></path></svg>
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-1">
+          <label className="text-[13px] font-bold text-text ml-1 uppercase tracking-wider">Add On</label>
+          <input 
+            type="text" 
+            value={addOn}
+            onChange={(e) => setAddOn(e.target.value)}
+            className="w-full h-14 bg-surface rounded-[16px] px-4 font-medium text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all text-[16px]" 
+          />
+        </div>
+
+        <div className="space-y-1">
+          <label className="text-[13px] font-bold text-text ml-1 uppercase tracking-wider">Jenis</label>
+          <div className="relative">
+            <select 
+              value={jenis}
+              onChange={(e) => setJenis(e.target.value)}
+              className="w-full h-14 bg-surface text-text rounded-[16px] px-4 font-medium border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all appearance-none text-[16px]" 
+            >
+              <option value="Tidak Urgent">Tidak Urgent</option>
+              <option value="Semi Urgent">Semi Urgent</option>
+              <option value="Urgent">Urgent</option>
+              <option value="Super Urgent">Super Urgent</option>
+              <option value=""></option>
+            </select>
+            <div className="absolute top-0 right-4 h-full flex items-center pointer-events-none">
+              <svg className="w-4 h-4 text-subtext" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-1">
+          <label className="text-[13px] font-bold text-text ml-1 uppercase tracking-wider">Due</label>
+          <input 
+            type="text" 
+            value={due}
+            onChange={(e) => setDue(e.target.value)}
+            className="w-full h-14 bg-surface rounded-[16px] px-4 font-medium text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all text-[16px]" 
+          />
+        </div>
+
+        {errorMsg && (
+          <div className="p-4 bg-red-50 text-red-600 rounded-xl text-sm font-medium border border-red-100">
+            {errorMsg}
+          </div>
+        )}
+
+        <div className="pt-6">
+          {needsAuth ? (
+            <div className="space-y-3 p-5 bg-surface border border-gray-100 rounded-2xl flex flex-col items-center">
+              <p className="text-[13px] text-text text-center font-medium">
+                {appLanguage === 'ms' 
+                  ? 'Anda perlu log masuk untuk menyimpan ke dalam Google Sheets.' 
+                  : 'You need to sign in to save into Google Sheets.'}
+              </p>
+              
+              <button 
+                onClick={handleLogin} 
+                disabled={isLoggingIn}
+                className="gsi-material-button w-full shrink-0 flex items-center justify-center relative bg-white text-[#3c4043] border border-[#dadce0] rounded-[4px] h-[40px] px-3 font-semibold hover:bg-[#f8fafc] cursor-pointer"
               >
-                <option value="Resume">Resume</option>
-                <option value="Surat">Surat</option>
-                <option value="Edit PDF">Edit PDF</option>
-                <option value="Lain2">Lain2</option>
-                <option value="Edit Resume">Edit Resume</option>
-                <option value=""></option>
-              </select>
-              <div className="absolute top-0 right-4 h-full flex items-center pointer-events-none">
-                <svg className="w-4 h-4 text-subtext" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+                <div className="mr-3 w-[18px] h-[18px]">
+                  <svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" className="w-[18px] h-[18px] block">
+                    <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
+                    <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
+                    <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
+                    <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
+                    <path fill="none" d="M0 0h48v48H0z"></path>
+                  </svg>
+                </div>
+                <span className="text-[14px]">
+                  Sign in with Google
+                </span>
+              </button>
+              
+              {authError && (
+                <p className="text-[12px] text-red-500 font-medium text-center px-2">
+                  {authError}
+                </p>
+              )}
+              
+              <div className="relative w-full flex items-center py-2">
+                <div className="flex-grow border-t border-gray-200"></div>
+                <span className="flex-shrink-0 mx-4 text-subtext text-[12px] uppercase tracking-wider">{appLanguage === 'ms' ? 'ATAU' : 'OR'}</span>
+                <div className="flex-grow border-t border-gray-200"></div>
               </div>
-            </div>
-          </div>
-
-          <div className="space-y-1">
-            <label className="text-[13px] font-bold text-text ml-1 uppercase tracking-wider">Template</label>
-            <input 
-              type="text" 
-              value={template}
-              onChange={(e) => setTemplate(e.target.value)}
-              className="w-full h-14 bg-surface rounded-[16px] px-4 font-medium text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all text-[16px]" 
-            />
-          </div>
-
-          <div className="space-y-1">
-            <label className="text-[13px] font-bold text-text ml-1 uppercase tracking-wider">Bahasa</label>
-            <div className="relative">
-              <select 
-                value={bahasa}
-                onChange={(e) => setBahasa(e.target.value)}
-                className="w-full h-14 bg-surface text-text rounded-[16px] px-4 font-medium border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all appearance-none text-[16px]" 
+              
+              <button
+                onClick={() => {
+                  let formattedPhone = phone.trim();
+                  if (formattedPhone.startsWith('+')) formattedPhone = formattedPhone.substring(1);
+                  else if (formattedPhone.startsWith('0')) formattedPhone = '6' + formattedPhone;
+                  let formattedName = name.replace(/\w\S*/g, (txt) => txt.charAt(0).toUpperCase() + txt.substring(1).toLowerCase());
+                  
+                  const textToCopy = `Nama: ${formattedName}\nPhone: ${formattedPhone}\nOrder: ${order}\nTemplate: ${template}\nBahasa: ${bahasa}\nAdd On: ${addOn}\nJenis: ${jenis}\nDue: ${due}`;
+                  
+                  if (navigator.clipboard) {
+                    navigator.clipboard.writeText(textToCopy).then(() => {
+                      alert(appLanguage === 'ms' ? 'Maklumat disalin!' : 'Info copied!');
+                    }).catch(err => console.error(err));
+                  }
+                }}
+                className="w-full h-12 bg-gray-100 text-text font-bold text-[14px] rounded-[12px] flex items-center justify-center hover:bg-gray-200 transition-colors"
               >
-                <option value="Melayu">Melayu</option>
-                <option value="English">English</option>
-                <option value="2 Bahasa">2 Bahasa</option>
-                <option value=""></option>
-              </select>
-              <div className="absolute top-0 right-4 h-full flex items-center pointer-events-none">
-                <svg className="w-4 h-4 text-subtext" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7-7-7-7"></path></svg>
-              </div>
+                {appLanguage === 'ms' ? 'Salin Maklumat Secara Manual' : 'Copy Info Manually'}
+              </button>
             </div>
-          </div>
-
-          <div className="space-y-1">
-            <label className="text-[13px] font-bold text-text ml-1 uppercase tracking-wider">Add On</label>
-            <input 
-              type="text" 
-              value={addOn}
-              onChange={(e) => setAddOn(e.target.value)}
-              className="w-full h-14 bg-surface rounded-[16px] px-4 font-medium text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all text-[16px]" 
-            />
-          </div>
-
-          <div className="space-y-1">
-            <label className="text-[13px] font-bold text-text ml-1 uppercase tracking-wider">Jenis</label>
-            <div className="relative">
-              <select 
-                value={jenis}
-                onChange={(e) => setJenis(e.target.value)}
-                className="w-full h-14 bg-surface text-text rounded-[16px] px-4 font-medium border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all appearance-none text-[16px]" 
-              >
-                <option value="Tidak Urgent">Tidak Urgent</option>
-                <option value="Semi Urgent">Semi Urgent</option>
-                <option value="Urgent">Urgent</option>
-                <option value="Super Urgent">Super Urgent</option>
-                <option value=""></option>
-              </select>
-              <div className="absolute top-0 right-4 h-full flex items-center pointer-events-none">
-                <svg className="w-4 h-4 text-subtext" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
-              </div>
-            </div>
-          </div>
-
-          <div className="space-y-1">
-            <label className="text-[13px] font-bold text-text ml-1 uppercase tracking-wider">Due</label>
-            <input 
-              type="text" 
-              value={due}
-              onChange={(e) => setDue(e.target.value)}
-              className="w-full h-14 bg-surface rounded-[16px] px-4 font-medium text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all text-[16px]" 
-            />
-          </div>
-
-          {errorMsg && (
-            <div className="p-4 bg-red-50 text-red-600 rounded-xl text-sm font-medium border border-red-100">
-              {errorMsg}
-            </div>
-          )}
-
-          <div className="pt-6">
+          ) : (
             <button
               onClick={handleSaveInfo}
               disabled={isSaving}
-              className="w-full h-16 bg-primary text-white font-black text-[16px] rounded-[18px] flex items-center justify-center space-x-2 active:scale-[0.98] transition-all disabled:opacity-70"
+              className="w-full h-16 bg-primary text-white font-black text-[16px] rounded-[18px] flex items-center justify-center space-x-2 active:scale-[0.98] transition-all disabled:opacity-70 shadow-sm"
             >
               {isSaving ? (
                 <RefreshCcw className="w-5 h-5 animate-spin" />
               ) : (
                 <>
-                  <span>{appLanguage === 'ms' ? 'Simpan Data' : 'Save Data'}</span>
+                  <span>{appLanguage === 'ms' ? 'Simpan Data Ke Sheets' : 'Save To Sheets'}</span>
                   <Save className="w-5 h-5 ml-1" />
                 </>
               )}
             </button>
-          </div>
+          )}
         </div>
-      )}
+      </div>
     </div>
   );
 }

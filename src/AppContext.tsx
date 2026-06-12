@@ -13,6 +13,7 @@ interface AppContextType {
   setGeneratedMessages: (msgs: string[]) => void;
   history: OrderHistoryItem[];
   saveOrderToHistory: (messages: string[]) => void;
+  deleteOrderFromHistory: (id: string) => void;
   clearHistory: () => void;
   loadOrder: (state: AppState) => void;
   theme: 'light' | 'dark';
@@ -128,6 +129,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setHistory(prev => [newItem, ...prev]);
   };
 
+  const deleteOrderFromHistory = (id: string) => {
+    setHistory(prev => prev.filter(item => item.id !== id));
+  };
+
   const clearHistory = () => {
     setHistory([]);
     localStorage.removeItem('orderHistory');
@@ -166,7 +171,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AppContext.Provider value={{ state, setState, viewStack, pushView, popView, goHome, reset, generatedMessages, setGeneratedMessages, history, saveOrderToHistory, clearHistory, loadOrder, theme, toggleTheme, appLanguage, toggleLanguage }}>
+    <AppContext.Provider value={{ state, setState, viewStack, pushView, popView, goHome, reset, generatedMessages, setGeneratedMessages, history, saveOrderToHistory, deleteOrderFromHistory, clearHistory, loadOrder, theme, toggleTheme, appLanguage, toggleLanguage }}>
       {children}
     </AppContext.Provider>
   );
