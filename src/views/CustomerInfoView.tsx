@@ -595,21 +595,46 @@ export function CustomerInfoView() {
                 </span>
               </button>
               
-              <div className="text-center px-1">
-                <p className="text-[11px] text-gray-500 leading-snug">
+              <div className="w-full text-left">
+                <p className="text-[11px] text-gray-500 leading-snug text-center mb-2">
                   {appLanguage === 'ms' 
-                    ? 'Jika terdapat ralat "invalid action", pastikan URL web ini telah ditambah ke dalam "Authorized Domains" di Firebase Console anda.'
-                    : 'If you see an "invalid action" error, please make sure this app\'s URL is added to "Authorized Domains" in your Firebase Console.'}
+                    ? 'Jika terdapat ralat semasa log masuk di telefon, Firebase anda menyekat URL ini.'
+                    : 'If you see an error logging in on mobile, Firebase is blocking this URL.'}
                 </p>
-                <button
-                   onClick={(e) => {
-                     e.preventDefault();
-                     window.open(window.location.href, '_blank', 'noopener,noreferrer');
-                   }}
-                   className="mt-2 text-primary text-[11.5px] font-bold underline hover:text-primary/80"
-                >
-                  {appLanguage === 'ms' ? 'Buka di Tab Baru (Untuk Pengguna Mobile)' : 'Open in New Tab (For Mobile)'}
-                </button>
+                <div className="bg-white/80 border border-blue-200 p-2.5 rounded-xl">
+                  <p className="text-[10px] text-blue-800 font-bold mb-1.5">
+                    {appLanguage === 'ms' ? 'Sila tambah URL ini di ruang "Authorized Domains" dalam Firebase Console > Authentication:' : 'Add this exact domain to Firebase Console > Authentication > Authorized Domains:'}
+                  </p>
+                  <div className="flex items-center space-x-2">
+                    <code className="flex-1 bg-white border border-gray-200 px-2 py-1.5 rounded-lg text-[10px] font-mono text-gray-700 truncate select-all">
+                      {window.location.hostname}
+                    </code>
+                    <button
+                      onClick={(e) => {
+                        e.preventDefault();
+                        if (navigator.clipboard) {
+                          navigator.clipboard.writeText(window.location.hostname);
+                          alert('Domain copied!');
+                        }
+                      }}
+                      className="px-3 py-1.5 bg-blue-100 hover:bg-blue-200 active:scale-95 transition-all rounded-lg text-[10px] font-bold text-blue-700 whitespace-nowrap"
+                    >
+                      COPY
+                    </button>
+                  </div>
+                </div>
+                
+                <div className="mt-3 flex justify-center">
+                  <button
+                     onClick={(e) => {
+                       e.preventDefault();
+                       window.open(window.location.href, '_blank', 'noopener,noreferrer');
+                     }}
+                     className="text-primary text-[11px] font-bold underline hover:text-primary/80"
+                  >
+                    {appLanguage === 'ms' ? 'Buka di Tab Baru (Untuk Iframe Mobile)' : 'Open in New Tab (For Mobile Iframe)'}
+                  </button>
+                </div>
               </div>
               
               {authError && (
