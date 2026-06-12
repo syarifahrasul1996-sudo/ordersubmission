@@ -603,9 +603,9 @@ export function CustomerInfoView() {
                 </p>
                 <div className="bg-white/80 border border-blue-200 p-2.5 rounded-xl">
                   <p className="text-[10px] text-blue-800 font-bold mb-1.5">
-                    {appLanguage === 'ms' ? 'Sila tambah URL ini di ruang "Authorized Domains" dalam Firebase Console > Authentication:' : 'Add this exact domain to Firebase Console > Authentication > Authorized Domains:'}
+                    {appLanguage === 'ms' ? '1. Tambah URL ini di Firebase Console > Authentication > Authorized Domains:' : '1. Add this domain to Firebase > Auth > Authorized Domains:'}
                   </p>
-                  <div className="flex items-center space-x-2">
+                  <div className="flex items-center space-x-2 mb-3">
                     <code className="flex-1 bg-white border border-gray-200 px-2 py-1.5 rounded-lg text-[10px] font-mono text-gray-700 truncate select-all">
                       {window.location.hostname}
                     </code>
@@ -615,6 +615,27 @@ export function CustomerInfoView() {
                         if (navigator.clipboard) {
                           navigator.clipboard.writeText(window.location.hostname);
                           alert('Domain copied!');
+                        }
+                      }}
+                      className="px-3 py-1.5 bg-blue-100 hover:bg-blue-200 active:scale-95 transition-all rounded-lg text-[10px] font-bold text-blue-700 whitespace-nowrap"
+                    >
+                      COPY
+                    </button>
+                  </div>
+                  
+                  <p className="text-[10px] text-blue-800 font-bold mb-1.5">
+                    {appLanguage === 'ms' ? '2. Google Cloud Console > APIs & Services > Credentials > OAuth 2.0 Client IDs. Tambah ini ke Authorized redirect URIs:' : '2. Google Cloud Console > APIs & Services > Credentials > OAuth 2.0 Web Client. Add this to Authorized redirect URIs:'}
+                  </p>
+                  <div className="flex items-center space-x-2">
+                    <code className="flex-1 bg-white border border-gray-200 px-2 py-1.5 rounded-lg text-[10px] font-mono text-gray-700 truncate select-all overflow-x-auto whitespace-nowrap scrollbar-hide">
+                      {`https://${window.location.hostname}/__/auth/handler`}
+                    </code>
+                    <button
+                      onClick={(e) => {
+                        e.preventDefault();
+                        if (navigator.clipboard) {
+                          navigator.clipboard.writeText(`https://${window.location.hostname}/__/auth/handler`);
+                          alert('Redirect URI copied!');
                         }
                       }}
                       className="px-3 py-1.5 bg-blue-100 hover:bg-blue-200 active:scale-95 transition-all rounded-lg text-[10px] font-bold text-blue-700 whitespace-nowrap"
