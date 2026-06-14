@@ -9,8 +9,7 @@ export function ConfirmationView({ onGenerated }: { onGenerated: () => void }) {
 
   const isE = state.isEditMode;
   let raw = state.mainType === 'Lain-lain' ? ((state.customDoc || '').trim() || 'Dokumen') : state.mainType;
-  if (state.mainType === 'Resume' && isE) raw = 'Edit Resume';
-  const typeTextHead = raw === 'Edit Resume' ? raw : raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase();
+  const typeTextHead = raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase();
   const typeText = `${typeTextHead} ${state.subType ? '(' + state.subType + ')' : ''}`;
 
   const langText = (!isE && state.resumeLangs && state.resumeLangs.length > 0) ? state.resumeLangs.join(' & ') : '-';
@@ -43,7 +42,7 @@ export function ConfirmationView({ onGenerated }: { onGenerated: () => void }) {
   };
   const urgencyLabel = urgencyLabels[state.urgency || ''] || '';
   
-  const priceDocLabel = state.mainType === 'Resume' ? (isE ? 'Edit Resume' : 'Resume') : raw;
+  const priceDocLabel = state.mainType === 'Resume' ? 'Resume' : raw;
 
   const langTextRaw = (!isE && state.resumeLangs && state.resumeLangs.length > 0) ? state.resumeLangs.join(' & ') : '';
   const docPart = [priceDocLabel, langTextRaw].filter(Boolean).join(' ');

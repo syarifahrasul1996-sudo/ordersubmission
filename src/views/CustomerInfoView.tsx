@@ -1,15 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { RefreshCcw, Save, Check } from 'lucide-react';
 import { useAppContext } from '../AppContext';
-import { initAuth, googleSignIn, getAccessToken } from '../auth';
 import { calculateDeadline } from '../utils';
 
 export function CustomerInfoView() {
   const { appLanguage, state, setState, goHome } = useAppContext();
-  
-  const [needsAuth, setNeedsAuth] = useState(false);
-  const [isLoggingIn, setIsLoggingIn] = useState(false);
-  const [token, setToken] = useState<string | null>(null);
 
   const computeInitialValues = () => {
     let initOrder = '';
@@ -82,10 +77,19 @@ export function CustomerInfoView() {
   const [due, setDue] = useState('');
 
   const [spreadsheetId, setSpreadsheetId] = useState(state.spreadsheetId);
+  const webhookUrl = 'https://script.google.com/macros/s/AKfycbxmXQZ19F7HBQV5qCjIchom20Jh-o-1g7rnEJMAbCPRkbth3sv8CVEFp7TP6VABRZxUdw/exec';
   const [isSaving, setIsSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
-  const [authError, setAuthError] = useState('');
+  const [isInIframe, setIsInIframe] = useState(false);
+
+  useEffect(() => {
+    try {
+      setIsInIframe(window.self !== window.top);
+    } catch (e) {
+      setIsInIframe(true);
+    }
+  }, []);
 
   // Re-compute when navigating here or state changes
   useEffect(() => {
@@ -98,40 +102,6 @@ export function CustomerInfoView() {
     setDue(initVals.initDue);
     setSpreadsheetId(state.spreadsheetId);
   }, [state]);
-
-  useEffect(() => {
-    const unsubscribe = initAuth(
-      (user, t) => {
-        setToken(t);
-        setNeedsAuth(false);
-      },
-      () => {
-        setToken(null);
-        setNeedsAuth(true);
-      }
-    );
-    return () => unsubscribe();
-  }, []);
-
-  const handleLogin = async () => {
-    setIsLoggingIn(true);
-    setAuthError('');
-    try {
-      const result = await googleSignIn();
-      if (result) {
-        setToken(result.accessToken);
-        setNeedsAuth(false);
-      }
-    } catch (err: any) {
-      console.error('Login failed:', err);
-      // Give a helpful error message about mobile/iframe issues
-      setAuthError(appLanguage === 'ms' 
-        ? `Gagal log masuk (${err.message || 'Ralat'}). Sila buka app ini di tab baru jika anda di telefon bimbit.` 
-        : `Login failed (${err.message || 'Error'}). Please open this app in a new tab if you are on mobile.`);
-    } finally {
-      setIsLoggingIn(false);
-    }
-  };
 
   const handleSaveInfo = async () => {
     if (!name.trim() || !phone.trim()) {
@@ -147,17 +117,6 @@ export function CustomerInfoView() {
     setSaved(false);
 
     try {
-      let t = token;
-      if (!t) {
-        t = await getAccessToken();
-      }
-      
-      if (!t) {
-        setNeedsAuth(true);
-        setIsSaving(false);
-        return;
-      }
-
       let formattedPhone = phone.trim();
       if (formattedPhone.startsWith('+')) {
         formattedPhone = formattedPhone.substring(1);
@@ -173,216 +132,37 @@ export function CustomerInfoView() {
         formattedName,
         formattedPhone,
         order,
-        template,
-        bahasa,
-        addOn,
+        template || "",
+        bahasa || "",
+        addOn || "",
         jenis,
         due,
         ""
       ];
 
-      // fetch spreadsheet to see available sheets
-      const metaRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}`, {
-        headers: { 'Authorization': `Bearer ${t}` }
-      });
-      let targetSheet = "Sheet1";
-      let targetSheetId = 0;
+      // We save directly to Apps Script Web App URL
+      // Determine monthly target sheet name on frontend to submit
+      const now = new Date();
+      const monthNamesEn = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+      const monthNamesMs = ["Januari", "Februari", "Mac", "April", "Mei", "Jun", "Julai", "Ogos", "September", "Oktober", "November", "Disember"];
+      // Support standard pattern
+      const currentMonthEn = monthNamesEn[now.getMonth()];
+      const currentMonthMs = monthNamesMs[now.getMonth()];
+      const targetSheet = appLanguage === 'ms' ? currentMonthMs : currentMonthEn;
 
-      if (metaRes.ok) {
-        const meta = await metaRes.json();
-        const sheets = meta.sheets || [];
-        
-        // Let's try to match current month
-        const now = new Date();
-        const monthNamesEn = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-        const monthNamesEnShort = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-        const monthNamesMs = ["Januari", "Februari", "Mac", "April", "Mei", "Jun", "Julai", "Ogos", "September", "Oktober", "November", "Disember"];
-        const currentMonthEn = monthNamesEn[now.getMonth()];
-        const currentMonthEnShort = monthNamesEnShort[now.getMonth()];
-        const currentMonthMs = monthNamesMs[now.getMonth()];
-        
-        // Find a sheet that contains the current month name
-        const currentMonthSheet = sheets.find((s: any) => {
-          const title = s.properties.title;
-          return title.includes(currentMonthEn) || 
-                 title.includes(currentMonthEnShort) || 
-                 title.includes(currentMonthMs);
-        });
-
-        if (currentMonthSheet) {
-          targetSheet = currentMonthSheet.properties.title;
-          targetSheetId = currentMonthSheet.properties.sheetId;
-        } else if (sheets.length > 0) {
-          // Fallback to the first sheet if we couldn't find a month match
-          targetSheet = sheets[0].properties.title;
-          targetSheetId = sheets[0].properties.sheetId;
-        }
-      }
-
-      // Fetch existing data to determine insertion point
-      const sheetDataRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/'${encodeURIComponent(targetSheet)}'!A:J`, {
-        headers: { 'Authorization': `Bearer ${t}` }
-      });
-      
-      let existingRows: any[] = [];
-      if (sheetDataRes.ok) {
-         const sheetData = await sheetDataRes.json();
-         existingRows = sheetData.values || [];
-      }
-
-      const parseDateString = (dateStr: string) => {
-        if (!dateStr) return null;
-        const parts = dateStr.split(' at ');
-        if (parts.length !== 2) return null;
-        const dateParts = parts[0].split('/');
-        if (dateParts.length !== 3) return null;
-        const timeAndAMPM = parts[1].split(' ');
-        if (timeAndAMPM.length !== 2) return null;
-        const timeParts = timeAndAMPM[0].split(':');
-        if (timeParts.length !== 2) return null;
-
-        const day = parseInt(dateParts[0], 10);
-        const month = parseInt(dateParts[1], 10) - 1;
-        const year = parseInt(dateParts[2], 10);
-        let hour = parseInt(timeParts[0], 10);
-        const minute = parseInt(timeParts[1], 10);
-        const isPM = timeAndAMPM[1].toUpperCase() === 'PM';
-
-        if (isPM && hour < 12) hour += 12;
-        if (!isPM && hour === 12) hour = 0;
-
-        return new Date(year, month, day, hour, minute);
-      };
-
-      const newDateParsed = parseDateString(due);
-      const newDateStrOnly = due.split(' at ')[0];
-
-      let insertIndex = existingRows.length;
-      let addBlankAbove = false;
-      let addBlankBelow = false;
-
-      if (newDateParsed && existingRows.length > 1) {
-         const parsedExisting = existingRows.map((r, i) => {
-            if (!r || r.length === 0 || !r[8]) return { index: i, date: null, dateStr: null, isBlank: true };
-            const dateObj = parseDateString(r[8]);
-            return { index: i, date: dateObj, dateStr: r[8].split(' at ')[0], isBlank: false };
-         });
-
-         for (let i = 1; i < parsedExisting.length; i++) {
-            const curr = parsedExisting[i];
-            if (curr.date && newDateParsed < curr.date) {
-               insertIndex = i;
-               break;
-            }
-         }
-
-         const itemAbove = insertIndex > 0 ? parsedExisting[insertIndex - 1] : null;
-         const itemBelow = insertIndex < parsedExisting.length ? parsedExisting[insertIndex] : null;
-
-         if (itemAbove && !itemAbove.isBlank && itemAbove.dateStr !== newDateStrOnly && itemAbove.index !== 0) addBlankAbove = true;
-         if (itemBelow && !itemBelow.isBlank && itemBelow.dateStr !== newDateStrOnly) addBlankBelow = true;
-      }
-
-      if (insertIndex < 1) insertIndex = 1; // Never insert before header
-
-      const totalRowsToInsert = 1 + (addBlankAbove ? 1 : 0) + (addBlankBelow ? 1 : 0);
-      const dataRowIndex = insertIndex + (addBlankAbove ? 1 : 0);
-
-      const rowDataToInsert = [];
-      if (addBlankAbove) rowDataToInsert.push({ values: [] });
-      
-      rowDataToInsert.push({
-        values: orderRow.map(val => {
-           if (val === "FALSE" || val === "TRUE") {
-               return { userEnteredValue: { boolValue: val === "TRUE" } };
-           } else {
-               return { userEnteredValue: { stringValue: val } };
-           }
+      await fetch(webhookUrl.trim(), {
+        method: 'POST',
+        mode: 'no-cors', // To avoid any CORS / Redirect blocks when client is on separate domain like Vercel
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          rowData: orderRow,
+          sheetName: targetSheet,
+          spreadsheetId: spreadsheetId
         })
       });
 
-      if (addBlankBelow) rowDataToInsert.push({ values: [] });
-
-      const requests: any[] = [
-         {
-            insertDimension: {
-               range: {
-                  sheetId: targetSheetId,
-                  dimension: "ROWS",
-                  startIndex: insertIndex,
-                  endIndex: insertIndex + totalRowsToInsert
-               },
-               inheritFromBefore: false
-            }
-         },
-         {
-            updateCells: {
-               rows: rowDataToInsert,
-               fields: "userEnteredValue",
-               start: {
-                  sheetId: targetSheetId,
-                  rowIndex: insertIndex,
-                  columnIndex: 0
-               }
-            }
-         },
-         {
-            copyPaste: {
-               source: {
-                  sheetId: targetSheetId,
-                  startRowIndex: 1,
-                  endRowIndex: 2,
-                  startColumnIndex: 0,
-                  endColumnIndex: 10
-               },
-               destination: {
-                  sheetId: targetSheetId,
-                  startRowIndex: dataRowIndex,
-                  endRowIndex: dataRowIndex + 1,
-                  startColumnIndex: 0,
-                  endColumnIndex: 10
-               },
-               pasteType: "PASTE_DATA_VALIDATION",
-               pasteOrientation: "NORMAL"
-            }
-         },
-         {
-            copyPaste: {
-               source: {
-                  sheetId: targetSheetId,
-                  startRowIndex: 1,
-                  endRowIndex: 2,
-                  startColumnIndex: 0,
-                  endColumnIndex: 10
-               },
-               destination: {
-                  sheetId: targetSheetId,
-                  startRowIndex: dataRowIndex,
-                  endRowIndex: dataRowIndex + 1,
-                  startColumnIndex: 0,
-                  endColumnIndex: 10
-               },
-               pasteType: "PASTE_FORMAT",
-               pasteOrientation: "NORMAL"
-            }
-         }
-      ];
-
-      const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${t}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ requests })
-      });
-
-      if (!res.ok) {
-         const errorData = await res.json();
-         console.error('Sheets Error:', errorData);
-         throw new Error(errorData.error?.message || 'Failed to update Google Sheet.');
-      }
-      
       setSaved(true);
       
       // Auto return home after successful save
@@ -548,138 +328,22 @@ export function CustomerInfoView() {
         )}
 
         <div className="pt-4 space-y-4">
-          <button
-            onClick={() => {
-              let formattedPhone = phone.trim();
-              if (formattedPhone.startsWith('+')) formattedPhone = formattedPhone.substring(1);
-              else if (formattedPhone.startsWith('0')) formattedPhone = '6' + formattedPhone;
-              let formattedName = name.replace(/\w\S*/g, (txt) => txt.charAt(0).toUpperCase() + txt.substring(1).toLowerCase());
-              
-              const textToCopy = `Nama: ${formattedName}\nPhone: ${formattedPhone}\nOrder: ${order}\nTemplate: ${template}\nBahasa: ${bahasa}\nAdd On: ${addOn}\nJenis: ${jenis}\nDue: ${due}`;
-              
-              if (navigator.clipboard) {
-                navigator.clipboard.writeText(textToCopy).then(() => {
-                  alert(appLanguage === 'ms' ? 'Maklumat disalin ke clipboard!' : 'Info copied to clipboard!');
-                }).catch(err => console.error(err));
-              }
-            }}
-            className="w-full h-16 bg-text text-white font-black text-[16px] rounded-[18px] flex items-center justify-center active:scale-[0.98] transition-all shadow-sm"
-          >
-            {appLanguage === 'ms' ? 'Salin Maklumat Sahaja' : 'Copy Info Only'}
-          </button>
-          
-          <div className="relative w-full flex items-center py-2">
-            <div className="flex-grow border-t border-gray-200"></div>
-            <span className="flex-shrink-0 mx-4 text-subtext text-[12px] uppercase tracking-wider">{appLanguage === 'ms' ? 'ATAU SIMPAN KE SHEETS' : 'OR SAVE TO SHEETS'}</span>
-            <div className="flex-grow border-t border-gray-200"></div>
-          </div>
-
-          {needsAuth ? (
-            <div className="space-y-4 p-5 bg-blue-50/50 border border-blue-100 rounded-2xl flex flex-col items-center">
-              <button 
-                onClick={handleLogin} 
-                disabled={isLoggingIn}
-                className="gsi-material-button w-full shrink-0 flex items-center justify-center relative bg-white text-[#3c4043] border border-[#dadce0] rounded-xl h-12 px-3 font-semibold hover:bg-[#f8fafc] cursor-pointer shadow-sm active:scale-[0.98] transition-all"
-              >
-                <div className="mr-3 w-5 h-5">
-                  <svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" className="w-5 h-5 block">
-                    <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
-                    <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
-                    <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
-                    <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
-                    <path fill="none" d="M0 0h48v48H0z"></path>
-                  </svg>
-                </div>
-                <span className="text-[14px]">
-                  Sign in with Google
-                </span>
-              </button>
-              
-              <div className="w-full text-left">
-                <p className="text-[11px] text-gray-500 leading-snug text-center mb-2">
-                  {appLanguage === 'ms' 
-                    ? 'Jika terdapat ralat semasa log masuk di telefon, Firebase anda menyekat URL ini.'
-                    : 'If you see an error logging in on mobile, Firebase is blocking this URL.'}
-                </p>
-                <div className="bg-white/80 border border-blue-200 p-2.5 rounded-xl">
-                  <p className="text-[10px] text-blue-800 font-bold mb-1.5">
-                    {appLanguage === 'ms' ? '1. Tambah URL ini di Firebase Console > Authentication > Authorized Domains:' : '1. Add this domain to Firebase > Auth > Authorized Domains:'}
-                  </p>
-                  <div className="flex items-center space-x-2 mb-3">
-                    <code className="flex-1 bg-white border border-gray-200 px-2 py-1.5 rounded-lg text-[10px] font-mono text-gray-700 truncate select-all">
-                      {window.location.hostname}
-                    </code>
-                    <button
-                      onClick={(e) => {
-                        e.preventDefault();
-                        if (navigator.clipboard) {
-                          navigator.clipboard.writeText(window.location.hostname);
-                          alert('Domain copied!');
-                        }
-                      }}
-                      className="px-3 py-1.5 bg-blue-100 hover:bg-blue-200 active:scale-95 transition-all rounded-lg text-[10px] font-bold text-blue-700 whitespace-nowrap"
-                    >
-                      COPY
-                    </button>
-                  </div>
-                  
-                  <p className="text-[10px] text-blue-800 font-bold mb-1.5">
-                    {appLanguage === 'ms' ? '2. Google Cloud Console > APIs & Services > Credentials > OAuth 2.0 Client IDs. Tambah ini ke Authorized redirect URIs:' : '2. Google Cloud Console > APIs & Services > Credentials > OAuth 2.0 Web Client. Add this to Authorized redirect URIs:'}
-                  </p>
-                  <div className="flex items-center space-x-2">
-                    <code className="flex-1 bg-white border border-gray-200 px-2 py-1.5 rounded-lg text-[10px] font-mono text-gray-700 truncate select-all overflow-x-auto whitespace-nowrap scrollbar-hide">
-                      {`https://${window.location.hostname}/__/auth/handler`}
-                    </code>
-                    <button
-                      onClick={(e) => {
-                        e.preventDefault();
-                        if (navigator.clipboard) {
-                          navigator.clipboard.writeText(`https://${window.location.hostname}/__/auth/handler`);
-                          alert('Redirect URI copied!');
-                        }
-                      }}
-                      className="px-3 py-1.5 bg-blue-100 hover:bg-blue-200 active:scale-95 transition-all rounded-lg text-[10px] font-bold text-blue-700 whitespace-nowrap"
-                    >
-                      COPY
-                    </button>
-                  </div>
-                </div>
-                
-                <div className="mt-3 flex justify-center">
-                  <button
-                     onClick={(e) => {
-                       e.preventDefault();
-                       window.open(window.location.href, '_blank', 'noopener,noreferrer');
-                     }}
-                     className="text-primary text-[11px] font-bold underline hover:text-primary/80"
-                  >
-                    {appLanguage === 'ms' ? 'Buka di Tab Baru (Untuk Iframe Mobile)' : 'Open in New Tab (For Mobile Iframe)'}
-                  </button>
-                </div>
-              </div>
-              
-              {authError && (
-                <p className="text-[12px] text-red-500 font-medium text-center px-2 bg-red-50 py-2 rounded-lg w-full">
-                  {authError}
-                </p>
-              )}
-            </div>
-          ) : (
+          <div className="space-y-4">
             <button
               onClick={handleSaveInfo}
               disabled={isSaving}
-              className="w-full h-16 bg-blue-600 text-white font-black text-[16px] rounded-[18px] flex items-center justify-center space-x-2 active:scale-[0.98] transition-all disabled:opacity-70 shadow-sm"
+              className="w-full h-16 bg-blue-600 hover:bg-blue-700 text-white font-black text-[16px] rounded-[18px] flex items-center justify-center space-x-2 active:scale-[0.98] transition-all disabled:opacity-70 shadow-sm"
             >
               {isSaving ? (
                 <RefreshCcw className="w-5 h-5 animate-spin" />
               ) : (
                 <>
-                  <span>{appLanguage === 'ms' ? 'Simpan Ke Google Sheets' : 'Save To Google Sheets'}</span>
+                  <span>{appLanguage === 'ms' ? 'Hantar Ke Google Sheet' : 'Save To Google Sheet'}</span>
                   <Save className="w-5 h-5 ml-1" />
                 </>
               )}
             </button>
-          )}
+          </div>
         </div>
       </div>
     </div>
