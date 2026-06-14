@@ -6,6 +6,7 @@ interface AppContextType {
   setState: React.Dispatch<React.SetStateAction<AppState>>;
   viewStack: ViewType[];
   pushView: (view: ViewType, updates?: Partial<AppState>) => void;
+  startNewOrder: (view: ViewType, updates: Partial<AppState>) => void;
   popView: () => void;
   goHome: () => void;
   reset: () => void;
@@ -13,6 +14,7 @@ interface AppContextType {
   setGeneratedMessages: (msgs: string[]) => void;
   history: OrderHistoryItem[];
   saveOrderToHistory: (messages: string[]) => void;
+  updateOrderHistoryState: (updates: Partial<AppState>) => void;
   deleteOrderFromHistory: (id: string) => void;
   clearHistory: () => void;
   loadOrder: (state: AppState) => void;
@@ -120,13 +122,40 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const toggleLanguage = () => setAppLanguage(l => l === 'ms' ? 'en' : 'ms');
 
   const saveOrderToHistory = (messages: string[]) => {
+    let currentId = state.historyId;
+    let currentTimestamp = state.timestamp;
+    
+    if (!currentId) {
+      currentId = Date.now().toString();
+      currentTimestamp = Date.now();
+    }
+    
+    const finalState = { ...state, historyId: currentId, timestamp: currentTimestamp };
+    
     const newItem: OrderHistoryItem = {
-      id: Date.now().toString(),
-      timestamp: Date.now(),
-      state: { ...state },
+      id: currentId,
+      timestamp: currentTimestamp!,
+      state: finalState,
       messages: [...messages]
     };
-    setHistory(prev => [newItem, ...prev]);
+    
+    setHistory(prev => {
+      const exists = prev.find(item => item.id === currentId);
+      if (exists) {
+        return prev.map(item => item.id === currentId ? newItem : item);
+      }
+      return [newItem, ...prev];
+    });
+    
+    setState(finalState);
+  };
+  
+  const updateOrderHistoryState = (updates: Partial<AppState>) => {
+    const finalState = { ...state, ...updates };
+    setState(finalState);
+    if (finalState.historyId) {
+       setHistory(prev => prev.map(item => item.id === finalState.historyId ? { ...item, state: finalState } : item));
+    }
   };
 
   const deleteOrderFromHistory = (id: string) => {
@@ -141,6 +170,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const loadOrder = (savedState: AppState) => {
     setState(savedState);
     setViewStack(['home', 'history', 'customer-info']);
+  };
+
+  const startNewOrder = (view: ViewType, updates: Partial<AppState>) => {
+    setState({ ...INITIAL_STATE, ...updates });
+    setViewStack(['home', view]);
   };
 
   const pushView = (view: ViewType, updates?: Partial<AppState>) => {
@@ -171,7 +205,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AppContext.Provider value={{ state, setState, viewStack, pushView, popView, goHome, reset, generatedMessages, setGeneratedMessages, history, saveOrderToHistory, deleteOrderFromHistory, clearHistory, loadOrder, theme, toggleTheme, appLanguage, toggleLanguage }}>
+    <AppContext.Provider value={{ state, setState, viewStack, pushView, startNewOrder, popView, goHome, reset, generatedMessages, setGeneratedMessages, history, saveOrderToHistory, updateOrderHistoryState, deleteOrderFromHistory, clearHistory, loadOrder, theme, toggleTheme, appLanguage, toggleLanguage }}>
       {children}
     </AppContext.Provider>
   );

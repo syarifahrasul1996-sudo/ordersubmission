@@ -1,5 +1,5 @@
 export function calculateDeadline(state: any, appLanguage: string) {
-  const now = new Date();
+  const now = state.timestamp ? new Date(state.timestamp) : new Date();
   const isSuperUrgent = state.urgency === 'super';
   const addonHours = (state.mainType === 'Resume' && !state.isEditMode && isSuperUrgent && state.addons) ? state.addons.length : 0;
   const total = (state.baseHours || 0) + (state.extraHours || 0) + addonHours;

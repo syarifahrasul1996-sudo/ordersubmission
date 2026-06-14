@@ -1,10 +1,50 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Clock, Copy, Trash2, Calendar, AlertCircle, RefreshCcw, Save } from 'lucide-react';
 import { useAppContext } from '../AppContext';
 
 export function HistoryView() {
   const { history, clearHistory, deleteOrderFromHistory, loadOrder, pushView, appLanguage } = useAppContext();
   const [showConfirm, setShowConfirm] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [pullProgress, setPullProgress] = useState(0);
+  const [startY, setStartY] = useState(0);
+  const [isPulling, setIsPulling] = useState(false);
+
+  // Pull to refresh logic
+  const onTouchStart = (e: React.TouchEvent) => {
+    if (window.scrollY <= 0) {
+      setStartY(e.touches[0].clientY);
+      setIsPulling(true);
+    }
+  };
+
+  const onTouchMove = (e: React.TouchEvent) => {
+    if (!isPulling || refreshing) return;
+    const currentY = e.touches[0].clientY;
+    const diff = currentY - startY;
+    
+    if (diff > 0) {
+      setPullProgress(Math.min(diff * 0.5, 80));
+    } else {
+      setPullProgress(0);
+    }
+  };
+
+  const onTouchEnd = () => {
+    if (!isPulling) return;
+    setIsPulling(false);
+    
+    if (pullProgress >= 60) {
+      setRefreshing(true);
+      setPullProgress(60);
+      setTimeout(() => {
+        setRefreshing(false);
+        setPullProgress(0);
+      }, 1000); // Simulate network refresh delay
+    } else {
+      setPullProgress(0);
+    }
+  };
 
   const handleCopyAll = async (msgs: string[]) => {
     try {
@@ -25,7 +65,30 @@ export function HistoryView() {
   };
 
   return (
-    <div className="flex flex-col bg-background w-full pb-[calc(env(safe-area-inset-bottom)+8rem)]">
+    <div 
+      className="flex flex-col bg-background w-full min-h-screen pb-[calc(env(safe-area-inset-bottom)+8rem)] overscroll-y-contain"
+      onTouchStart={onTouchStart}
+      onTouchMove={onTouchMove}
+      onTouchEnd={onTouchEnd}
+    >
+      <div 
+        className="w-full flex items-center justify-center overflow-hidden"
+        style={{ 
+          height: `${pullProgress}px`,
+          transition: isPulling && !refreshing ? 'none' : 'height 0.3s ease-out'
+        }}
+      >
+        <div 
+          className="flex items-center justify-center w-8 h-8 rounded-full bg-surface shadow-sm text-subtext"
+          style={{
+            transform: refreshing ? 'none' : `rotate(${pullProgress * 4}deg)`,
+            opacity: pullProgress / 40 > 1 ? 1 : pullProgress / 40
+          }}
+        >
+          <RefreshCcw className={`w-4 h-4 ${refreshing ? 'animate-spin text-primary' : ''}`} />
+        </div>
+      </div>
+
       <div className="p-4 sm:p-6 space-y-4">
         {history.length > 0 && (
           <div className="flex justify-end mb-2">

@@ -4,7 +4,7 @@ import { useAppContext } from '../AppContext';
 import { cn } from '../cn';
 
 export function HomeView() {
-  const { pushView, appLanguage } = useAppContext();
+  const { pushView, startNewOrder, appLanguage } = useAppContext();
   const [calcUrgency, setCalcUrgency] = useState<string>('all');
   const [superHours, setSuperHours] = useState<number>(2);
   const [eta, setEta] = useState<string>('');
@@ -86,7 +86,7 @@ export function HomeView() {
     <div className="flex flex-col p-4 sm:p-6 space-y-6 pb-[calc(env(safe-area-inset-bottom)+2rem)]">
       <div className="space-y-3.5">
         <button 
-          onClick={() => pushView('resume-type', { mainType: 'Resume' })} 
+          onClick={() => startNewOrder('resume-type', { mainType: 'Resume' })} 
           className="h-[72px] bg-surface active:bg-gray-200 md:hover:bg-gray-200 text-text font-bold rounded-[20px] flex items-center px-4 sm:px-5 w-full active:scale-[0.98] transition-all"
         >
           <span className="w-10 h-10 sm:w-11 sm:h-11 bg-white rounded-full flex items-center justify-center text-primary shadow-sm shrink-0"><FileText className="w-5 h-5 sm:w-5 sm:h-5" /></span>
@@ -94,7 +94,7 @@ export function HomeView() {
           <ChevronRight className="ml-auto text-subtext w-5 h-5 shrink-0" />
         </button>
         <button 
-          onClick={() => pushView('general-form', { mainType: 'Surat' })} 
+          onClick={() => startNewOrder('general-form', { mainType: 'Surat' })} 
           className="h-[72px] bg-surface active:bg-gray-200 md:hover:bg-gray-200 text-text font-bold rounded-[20px] flex items-center px-4 sm:px-5 w-full active:scale-[0.98] transition-all"
         >
           <span className="w-10 h-10 sm:w-11 sm:h-11 bg-white rounded-full flex items-center justify-center text-primary shadow-sm shrink-0"><Mail className="w-5 h-5 sm:w-5 sm:h-5" /></span>
@@ -102,7 +102,7 @@ export function HomeView() {
           <ChevronRight className="ml-auto text-subtext w-5 h-5 shrink-0" />
         </button>
         <button 
-          onClick={() => pushView('general-form', { mainType: 'Lain-lain' })} 
+          onClick={() => startNewOrder('general-form', { mainType: 'Lain-lain' })} 
           className="h-[72px] bg-surface active:bg-gray-200 md:hover:bg-gray-200 text-text font-bold rounded-[20px] flex items-center px-4 sm:px-5 w-full active:scale-[0.98] transition-all"
         >
           <span className="w-10 h-10 sm:w-11 sm:h-11 bg-white rounded-full flex items-center justify-center text-primary shadow-sm shrink-0"><MoreHorizontal className="w-5 h-5 sm:w-5 sm:h-5" /></span>

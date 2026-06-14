@@ -33,7 +33,8 @@ export function CustomerInfoView() {
     const isSuperUrgent = state.urgency === 'super';
     const addonHours = (state.mainType === 'Resume' && !state.isEditMode && isSuperUrgent && state.addons && Array.isArray(state.addons)) ? state.addons.length : 0;
     const total = (state.baseHours || 0) + (state.extraHours || 0) + addonHours;
-    const dl = new Date(Date.now() + total * 3600000);
+    const baseTime = state.timestamp ? state.timestamp : Date.now();
+    const dl = new Date(baseTime + total * 3600000);
     const formattedDate = `${String(dl.getDate()).padStart(2, '0')}/${String(dl.getMonth() + 1).padStart(2, '0')}/${dl.getFullYear()}`;
     const formattedTime = dl.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
 
@@ -63,7 +64,16 @@ export function CustomerInfoView() {
     }
     const initAddOn = initAddOnList.join(', ');
 
-    return { initOrder, initBahasa, initJenis, initDue: `${formattedDate} at ${formattedTime}`, initTemplate, initAddOn };
+    return { 
+      initName: state.customerName || '',
+      initPhone: state.customerPhone || '',
+      initOrder: state.customerOrder || initOrder, 
+      initBahasa: state.customerBahasa || initBahasa, 
+      initJenis: state.customerJenis || initJenis, 
+      initDue: state.customerDue || `${formattedDate} at ${formattedTime}`, 
+      initTemplate: state.customerTemplate || initTemplate, 
+      initAddOn: state.customerAddOn || initAddOn,
+    };
   };
 
   const [name, setName] = useState('');
@@ -94,6 +104,8 @@ export function CustomerInfoView() {
   // Re-compute when navigating here or state changes
   useEffect(() => {
     const initVals = computeInitialValues();
+    setName(initVals.initName);
+    setPhone(initVals.initPhone);
     setOrder(initVals.initOrder);
     setTemplate(initVals.initTemplate);
     setBahasa(initVals.initBahasa);
@@ -101,7 +113,10 @@ export function CustomerInfoView() {
     setJenis(initVals.initJenis);
     setDue(initVals.initDue);
     setSpreadsheetId(state.spreadsheetId);
-  }, [state]);
+  }, []); // Only fetch when mounted, so user typing doesn't get overwritten!
+
+  // Update app context values when this info is updated, so it is saved in history appropriately.
+  const { updateOrderHistoryState } = useAppContext();
 
   const handleSaveInfo = async () => {
     if (!name.trim() || !phone.trim()) {
@@ -109,8 +124,18 @@ export function CustomerInfoView() {
       return;
     }
     
-    // Save the new spreadsheet ID to global state
-    setState(prev => ({ ...prev, spreadsheetId }));
+    // Save the new values to global state + history
+    updateOrderHistoryState({
+      customerName: name,
+      customerPhone: phone,
+      customerOrder: order,
+      customerTemplate: template,
+      customerBahasa: bahasa,
+      customerAddOn: addOn,
+      customerJenis: jenis,
+      customerDue: due,
+      spreadsheetId: spreadsheetId,
+    });
 
     setErrorMsg('');
     setIsSaving(true);

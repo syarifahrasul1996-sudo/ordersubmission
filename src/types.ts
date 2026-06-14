@@ -13,6 +13,16 @@ export interface AppState {
   extraHours: number;
   customDoc: string;
   spreadsheetId: string;
+  timestamp?: number;
+  historyId?: string;
+  customerName?: string;
+  customerPhone?: string;
+  customerOrder?: string;
+  customerTemplate?: string;
+  customerBahasa?: string;
+  customerAddOn?: string;
+  customerJenis?: string;
+  customerDue?: string;
 }
 
 export type ViewType = 'home' | 'resume-type' | 'resume-form-fields' | 'general-form' | 'confirmation' | 'output' | 'history' | 'customer-info';
@@ -39,4 +49,12 @@ export const INITIAL_STATE: AppState = {
   extraHours: 0,
   customDoc: '',
   spreadsheetId: '1kUAJYUVhr9bPYErtpnohpvuGGyhBSvJyEOIyzEFivJo',
+  customerName: '',
+  customerPhone: '',
+  customerOrder: '',
+  customerTemplate: '',
+  customerBahasa: '',
+  customerAddOn: '',
+  customerJenis: '',
+  customerDue: '',
 };
