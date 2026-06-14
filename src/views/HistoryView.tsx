@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Clock, Copy, Trash2, Calendar, AlertCircle, RefreshCcw, Edit3, Save } from 'lucide-react';
+import { Clock, Copy, Trash2, Calendar, AlertCircle, RefreshCcw, Save } from 'lucide-react';
 import { useAppContext } from '../AppContext';
 
 export function HistoryView() {
@@ -56,67 +56,66 @@ export function HistoryView() {
             });
 
             return (
-              <div key={item.id} className="bg-surface border border-gray-100 rounded-[20px] p-4 shadow-sm flex flex-col space-y-4">
-                <div className="flex justify-between items-start border-b border-gray-100 pb-3">
+              <div 
+                key={item.id} 
+                onClick={() => loadOrder(item.state)}
+                className="bg-surface border border-gray-100 rounded-[16px] p-3 shadow-sm flex flex-col space-y-2.5 cursor-pointer hover:bg-gray-50 active:scale-[0.99] transition-all"
+              >
+                <div className="flex justify-between items-start border-b border-gray-100 pb-2">
                   <div>
-                    <div className="flex items-center text-primary/70 text-[11px] font-black uppercase tracking-widest mb-1.5">
-                      <Calendar className="w-3.5 h-3.5 mr-1" />
+                    <div className="flex items-center text-primary/70 text-[10px] font-black uppercase tracking-widest mb-1">
+                      <Calendar className="w-3 h-3 mr-1" />
                       {formattedDate}
                     </div>
-                    <p className="font-bold text-[16px] text-text">
+                    <p className="font-bold text-[15px] leading-tight text-text">
                       {item.state?.mainType === 'Lain-lain' ? item.state?.customDoc : item.state?.mainType} {item.state?.isEditMode ? '(Edit)' : ''}
                     </p>
                   </div>
                   <div className="flex items-center space-x-1.5 shrink-0 ml-2">
                     <button 
-                      onClick={() => loadOrder(item.state)}
-                      className="w-9 h-9 bg-primary/10 text-primary rounded-full flex items-center justify-center active:scale-95 transition-all"
-                      title={appLanguage === 'ms' ? 'Edit' : 'Edit'}
-                    >
-                      <Edit3 className="w-4 h-4" />
-                    </button>
-                    <button 
-                      onClick={() => pushView('customer-info', item.state)}
-                      className="w-9 h-9 bg-green-100 text-green-600 rounded-full flex items-center justify-center active:scale-95 transition-all"
+                      onClick={(e) => { e.stopPropagation(); pushView('customer-info', item.state); }}
+                      className="w-8 h-8 bg-green-100 text-green-600 rounded-full flex items-center justify-center active:scale-95 transition-all"
                       title="Google Sheets"
                     >
-                      <Save className="w-4 h-4" />
+                      <Save className="w-3.5 h-3.5" />
                     </button>
                     <button 
-                      onClick={() => handleCopyAll(item.messages || [])}
-                      className="w-9 h-9 bg-gray-100 text-text rounded-full flex items-center justify-center active:scale-95 transition-all"
+                      onClick={(e) => { e.stopPropagation(); handleCopyAll(item.messages || []); }}
+                      className="w-8 h-8 bg-gray-100 text-text rounded-full flex items-center justify-center active:scale-95 transition-all"
                       title={appLanguage === 'ms' ? 'Salin Semua' : 'Copy All'}
                     >
-                      <Copy className="w-4 h-4" />
+                      <Copy className="w-3.5 h-3.5" />
                     </button>
                     <button 
-                      onClick={() => deleteOrderFromHistory(item.id)}
-                      className="w-9 h-9 bg-red-100 text-red-500 rounded-full flex items-center justify-center active:scale-95 transition-all"
+                      onClick={(e) => { e.stopPropagation(); deleteOrderFromHistory(item.id); }}
+                      className="w-8 h-8 bg-red-100 text-red-500 rounded-full flex items-center justify-center active:scale-95 transition-all"
                       title={appLanguage === 'ms' ? 'Padam' : 'Delete'}
                     >
-                      <Trash2 className="w-4 h-4" />
+                      <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 </div>
                 
-                <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-[13px] mt-2">
+                <div className="flex flex-wrap gap-x-3 gap-y-1 text-[12px] mt-1.5 leading-snug">
                   {item.state?.template && (
                     <div>
                       <span className="text-subtext">{appLanguage === 'ms' ? 'Templat' : 'Template'}:</span>{' '}
                       <span className="font-medium text-text">{item.state.template}</span>
                     </div>
                   )}
-                  {item.state?.language && (
+                  {((item.state?.resumeLangs && item.state.resumeLangs.length > 0) || item.state?.language) && (
                     <div>
                       <span className="text-subtext">{appLanguage === 'ms' ? 'Bahasa' : 'Language'}:</span>{' '}
-                      <span className="font-medium text-text">{item.state.language === 'ms' ? 'Melayu' : 'English'}</span>
+                      <span className="font-medium text-text">
+                        {item.state?.resumeLangs ? item.state.resumeLangs.join(' & ') : (item.state.language === 'ms' ? 'Melayu' : 'English')}
+                      </span>
                     </div>
                   )}
                   {item.state?.urgency && (
                     <div>
-                      <span className="text-subtext">{appLanguage === 'ms' ? 'Kecemasan' : 'Urgency'}:</span>{' '}
+                      <span className="text-subtext">{appLanguage === 'ms' ? 'Jenis' : 'Type'}:</span>{' '}
                       <span className="font-medium text-text">
-                        {item.state.urgency === 'super' ? 'Super Urgent' : item.state.urgency === 'semi' ? 'Semi Urgent' : 'Normal'}
+                        {item.state.urgency === 'super' ? 'Super Urgent' : item.state.urgency === 'urgent' ? 'Urgent' : item.state.urgency === 'semi' ? 'Semi Urgent' : 'Tak Urgent'}
                       </span>
                     </div>
                   )}

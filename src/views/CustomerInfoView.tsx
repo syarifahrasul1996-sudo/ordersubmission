@@ -25,7 +25,7 @@ export function CustomerInfoView() {
     }
 
     let initJenis = '';
-    if (state.urgency === 'noturgent' || state.urgency === 'standard') initJenis = 'Tidak Urgent';
+    if (state.urgency === 'noturgent' || state.urgency === 'standard') initJenis = 'Tak Urgent';
     else if (state.urgency === 'urgent') initJenis = 'Urgent';
     else if (state.urgency === 'super') initJenis = 'Super Urgent';
     else if (state.urgency === 'semi') initJenis = 'Semi Urgent';
@@ -299,7 +299,7 @@ export function CustomerInfoView() {
               onChange={(e) => setJenis(e.target.value)}
               className="w-full h-14 bg-surface text-text rounded-[16px] px-4 font-medium border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all appearance-none text-[16px]" 
             >
-              <option value="Tidak Urgent">Tidak Urgent</option>
+              <option value="Tak Urgent">Tak Urgent</option>
               <option value="Semi Urgent">Semi Urgent</option>
               <option value="Urgent">Urgent</option>
               <option value="Super Urgent">Super Urgent</option>

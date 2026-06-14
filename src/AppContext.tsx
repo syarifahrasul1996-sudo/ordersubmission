@@ -140,7 +140,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const loadOrder = (savedState: AppState) => {
     setState(savedState);
-    setViewStack(['home']);
+    setViewStack(['home', 'history', 'customer-info']);
   };
 
   const pushView = (view: ViewType, updates?: Partial<AppState>) => {
