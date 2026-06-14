@@ -4,7 +4,8 @@ import { useAppContext } from '../AppContext';
 import { calculateDeadline } from '../utils';
 
 export function CustomerInfoView() {
-  const { appLanguage, state, setState, goHome } = useAppContext();
+  const { appLanguage, state, setState, goHome, viewStack, updateOrderHistoryState } = useAppContext();
+  const isActive = viewStack[viewStack.length - 1] === 'customer-info';
 
   const computeInitialValues = () => {
     let initOrder = '';
@@ -103,20 +104,22 @@ export function CustomerInfoView() {
 
   // Re-compute when navigating here or state changes
   useEffect(() => {
-    const initVals = computeInitialValues();
-    setName(initVals.initName);
-    setPhone(initVals.initPhone);
-    setOrder(initVals.initOrder);
-    setTemplate(initVals.initTemplate);
-    setBahasa(initVals.initBahasa);
-    setAddOn(initVals.initAddOn);
-    setJenis(initVals.initJenis);
-    setDue(initVals.initDue);
-    setSpreadsheetId(state.spreadsheetId);
-  }, []); // Only fetch when mounted, so user typing doesn't get overwritten!
-
-  // Update app context values when this info is updated, so it is saved in history appropriately.
-  const { updateOrderHistoryState } = useAppContext();
+    if (isActive) {
+      setSaved(false);
+      setIsSaving(false);
+      setErrorMsg('');
+      const initVals = computeInitialValues();
+      setName(initVals.initName);
+      setPhone(initVals.initPhone);
+      setOrder(initVals.initOrder);
+      setTemplate(initVals.initTemplate);
+      setBahasa(initVals.initBahasa);
+      setAddOn(initVals.initAddOn);
+      setJenis(initVals.initJenis);
+      setDue(initVals.initDue);
+      setSpreadsheetId(state.spreadsheetId);
+    }
+  }, [isActive, state.historyId, state.timestamp]); // fetch when mounted or when switching orders
 
   const handleSaveInfo = async () => {
     if (!name.trim() || !phone.trim()) {
