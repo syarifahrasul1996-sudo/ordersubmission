@@ -182,7 +182,7 @@ export function CustomerInfoView() {
         method: 'POST',
         mode: 'no-cors', // To avoid any CORS / Redirect blocks when client is on separate domain like Vercel
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'text/plain;charset=utf-8'
         },
         body: JSON.stringify({
           rowData: orderRow,
