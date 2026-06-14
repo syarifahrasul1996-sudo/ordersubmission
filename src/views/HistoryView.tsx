@@ -121,7 +121,7 @@ export function HistoryView() {
             return (
               <div 
                 key={item.id} 
-                onClick={() => loadOrder(item.state)}
+                onClick={() => loadOrder(item)}
                 className="bg-surface border border-gray-100 rounded-[16px] p-3 shadow-sm flex flex-col space-y-2.5 cursor-pointer hover:bg-gray-50 active:scale-[0.99] transition-all"
               >
                 <div className="flex justify-between items-start border-b border-gray-100 pb-2">

@@ -17,7 +17,7 @@ interface AppContextType {
   updateOrderHistoryState: (updates: Partial<AppState>) => void;
   deleteOrderFromHistory: (id: string) => void;
   clearHistory: () => void;
-  loadOrder: (state: AppState) => void;
+  loadOrder: (item: OrderHistoryItem) => void;
   theme: 'light' | 'dark';
   toggleTheme: () => void;
   appLanguage: 'ms' | 'en';
@@ -167,8 +167,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem('orderHistory');
   };
 
-  const loadOrder = (savedState: AppState) => {
-    setState(savedState);
+  const loadOrder = (item: OrderHistoryItem) => {
+    setState({ ...item.state, timestamp: item.timestamp, historyId: item.id });
     setViewStack(['home', 'history', 'customer-info']);
   };
 

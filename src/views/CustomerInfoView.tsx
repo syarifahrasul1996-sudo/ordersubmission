@@ -180,7 +180,7 @@ export function CustomerInfoView() {
 
       await fetch(webhookUrl.trim(), {
         method: 'POST',
-        mode: 'no-cors', // To avoid any CORS / Redirect blocks when client is on separate domain like Vercel
+        mode: 'no-cors', // MUST be no-cors for GAS
         headers: {
           'Content-Type': 'text/plain;charset=utf-8'
         },
