@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { RefreshCcw, Save, Check } from 'lucide-react';
+import { RefreshCcw, Save, Check, Activity } from 'lucide-react';
 import { useAppContext } from '../AppContext';
 import { calculateDeadline } from '../utils';
+import { Toast } from '../components/Toast';
+import { SetupHelper } from '../components/SetupHelper';
 
 export function CustomerInfoView() {
   const { appLanguage, state, setState, goHome, viewStack, updateOrderHistoryState } = useAppContext();
@@ -88,11 +90,81 @@ export function CustomerInfoView() {
   const [due, setDue] = useState('');
 
   const [spreadsheetId, setSpreadsheetId] = useState(state.spreadsheetId);
-  const webhookUrl = 'https://script.google.com/macros/s/AKfycbyt_j7gQEl0itYEaDK8v10Lr5Zmdea_DzP_kONXmqhvta2Vb43nzXGBuztAoNEFUV4cRg/exec';
+  const webhookUrl = 'https://script.google.com/macros/s/AKfycbzr6YzrURo8kee8ZvzcuiQIGjqVQqLnuSqFHqyJVlFQrwWaC6gmB6V3sxBrFDvH_yYhFQ/exec';
   const [isSaving, setIsSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [isInIframe, setIsInIframe] = useState(false);
+  const [toastMsg, setToastMsg] = useState('');
+  const [showToast, setShowToast] = useState(false);
+  const [showSetup, setShowSetup] = useState(false);
+
+  const showToastMessage = (msg: string) => {
+    setToastMsg(msg);
+    setShowToast(true);
+    setTimeout(() => setShowToast(false), 3000);
+  };
+
+  const testConnection = async () => {
+    setIsSaving(true);
+    setErrorMsg('');
+    showToastMessage('Testing connection...');
+    try {
+      const now = new Date();
+      const monthNamesEn = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+      const monthNamesMs = ["Januari", "Februari", "Mac", "April", "Mei", "Jun", "Julai", "Ogos", "September", "Oktober", "November", "Disember"];
+      
+      const targetSheetEn = `${monthNamesEn[now.getMonth()]} ${now.getFullYear()}`;
+      const targetSheetMs = `${monthNamesMs[now.getMonth()]} ${now.getFullYear()}`;
+
+      const response = await fetch(webhookUrl.trim(), {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: {
+          'Content-Type': 'text/plain;charset=utf-8'
+        },
+        body: JSON.stringify({
+          rowData: ['test_diagnostic_connection'],
+          sheetName: targetSheetEn, // For backwards compatibility
+          sheetNameEn: targetSheetEn,
+          sheetNameMs: targetSheetMs,
+          spreadsheetId: state.spreadsheetId
+        })
+      });
+      
+      // With no-cors, the response is opaque and we can't read the body or status
+      if (response.type === 'opaque') {
+        showToastMessage('Connection test completed (Opaque response). Assume successful!');
+        setErrorMsg('Diagnostic: Sent successfully (no-cors mode). Cannot read the exact response, but the request was dispatched.');
+        return;
+      }
+
+      const responseText = await response.text();
+      let result;
+      try {
+        result = JSON.parse(responseText);
+      } catch (e) {
+        throw new Error('Invalid JSON: ' + responseText.substring(0, 80));
+      }
+      if (result.status === 'error') {
+        const errorLogs = result.logs && result.logs.length > 0 ? `\nLogs: ${result.logs.join(' -> ')}` : '';
+        throw new Error((result.message || 'Server returned error') + errorLogs);
+      }
+      showToastMessage('Connection test successful! ' + (result.message || ''));
+      const debugLogs = result.logs && result.logs.length > 0 ? `\nLogs: ${result.logs.join(' -> ')}` : '';
+      setErrorMsg('Diagnostic Test Success: The web app endpoint is reachable and responding correctly.' + debugLogs);
+    } catch (err: any) {
+      console.error(err);
+      let errMsg = err.message || String(err);
+      if (errMsg.includes('Failed to fetch')) {
+        errMsg = 'Failed to fetch: You MUST deploy the Web App as "Execute as: Me" and "Who has access: Anyone". If it requires login, it will be blocked by CORS.';
+      }
+      setErrorMsg('Diagnostic Failed: ' + errMsg);
+      showToastMessage('Connection test failed!');
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   useEffect(() => {
     try {
@@ -156,7 +228,7 @@ export function CustomerInfoView() {
 
       // Columns: Checkbox, Nama, Phone Number, Order, Template, Bahasa, Add On, Jenis, Due, Link
       const orderRow = [
-        "FALSE",
+        false,
         formattedName,
         formattedPhone,
         order,
@@ -173,25 +245,53 @@ export function CustomerInfoView() {
       const now = new Date();
       const monthNamesEn = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
       const monthNamesMs = ["Januari", "Februari", "Mac", "April", "Mei", "Jun", "Julai", "Ogos", "September", "Oktober", "November", "Disember"];
-      // Support standard pattern
-      const currentMonthEn = monthNamesEn[now.getMonth()];
-      const currentMonthMs = monthNamesMs[now.getMonth()];
-      const targetSheet = appLanguage === 'ms' ? currentMonthMs : currentMonthEn;
+      
+      // Send both language variants so the backend can try both if needed, but primary is targetSheet
+      const targetSheetEn = `${monthNamesEn[now.getMonth()]} ${now.getFullYear()}`;
+      const targetSheetMs = `${monthNamesMs[now.getMonth()]} ${now.getFullYear()}`;
 
-      await fetch(webhookUrl.trim(), {
+      const response = await fetch(webhookUrl.trim(), {
         method: 'POST',
-        mode: 'no-cors', // MUST be no-cors for GAS
+        mode: 'no-cors',
         headers: {
           'Content-Type': 'text/plain;charset=utf-8'
         },
         body: JSON.stringify({
           rowData: orderRow,
-          sheetName: targetSheet,
+          sheetName: targetSheetEn, // Fallback for older script version
+          sheetNameEn: targetSheetEn, // Default to English e.g. June 2026
+          sheetNameMs: targetSheetMs, // Fallback for Malay e.g. Jun 2026
           spreadsheetId: spreadsheetId
         })
       });
 
+      // Handle opaque response for no-cors
+      if (response.type === 'opaque') {
+        setSaved(true);
+        showToastMessage(appLanguage === 'ms' ? 'Berjaya dihantar!' : 'Successfully submitted!');
+        setTimeout(() => {
+          goHome();
+        }, 2000);
+        return;
+      }
+
+      const responseText = await response.text();
+      let result;
+      try {
+        result = JSON.parse(responseText);
+      } catch (e) {
+        throw new Error('Failed to parse response: ' + responseText);
+      }
+
+      if (result.status === 'error') {
+        const errorLogs = result.logs && result.logs.length > 0 ? `\nLogs: ${result.logs.join(' -> ')}` : '';
+        throw new Error((result.message || 'Error from server') + errorLogs);
+      }
+
       setSaved(true);
+      showToastMessage(appLanguage === 'ms' 
+        ? `Berjaya disalurkan ke tab: ${result.message.replace('Data added to ', '').replace(' tab', '')}` 
+        : `Successfully saved to tab: ${result.message.replace('Data added to ', '').replace(' tab', '')}`);
       
       // Auto return home after successful save
       setTimeout(() => {
@@ -200,7 +300,12 @@ export function CustomerInfoView() {
       
     } catch (err: any) {
       console.error(err);
-      setErrorMsg(err.message || 'Error occurred while saving');
+      let errMsg = err.message || 'Error occurred while saving';
+      if (errMsg.includes('Failed to fetch')) {
+        errMsg = 'Failed to fetch: You MUST deploy the Web App as "Execute as: Me" and "Who has access: Anyone". If it requires login, it will fail.';
+      }
+      setErrorMsg(errMsg);
+      showToastMessage(appLanguage === 'ms' ? 'Ralat, sila semak mesej ralat' : 'Failed, please see logs');
     } finally {
       setIsSaving(false);
     }
@@ -349,8 +454,10 @@ export function CustomerInfoView() {
           />
         </div>
 
+
+
         {errorMsg && (
-          <div className="p-4 bg-red-50 text-red-600 rounded-xl text-sm font-medium border border-red-100">
+          <div className="p-4 bg-red-50 text-red-600 rounded-xl text-sm font-medium border border-red-100 whitespace-pre-wrap">
             {errorMsg}
           </div>
         )}
@@ -371,9 +478,25 @@ export function CustomerInfoView() {
                 </>
               )}
             </button>
+            <button
+              onClick={testConnection}
+              disabled={isSaving}
+              className="w-full h-12 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold text-[14px] rounded-[14px] flex items-center justify-center space-x-2 active:scale-[0.98] transition-all disabled:opacity-70"
+            >
+              <Activity className="w-4 h-4" />
+              <span>{appLanguage === 'ms' ? 'Uji Sambungan (Diagnostic)' : 'Test Connection (Diagnostic)'}</span>
+            </button>
+            <button
+              onClick={() => setShowSetup(true)}
+              className="w-full text-blue-600 font-medium text-[13px] hover:underline"
+            >
+              {appLanguage === 'ms' ? 'Data tidak masuk? Klik di sini untuk selesaikan masalah' : 'Data not entering? Click here to troubleshoot'}
+            </button>
           </div>
         </div>
       </div>
+      <Toast show={showToast} message={toastMsg} />
+      {showSetup && <SetupHelper onClose={() => setShowSetup(false)} appLanguage={appLanguage} />}
     </div>
   );
 }

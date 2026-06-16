@@ -136,7 +136,7 @@ export function HistoryView() {
                   </div>
                   <div className="flex items-center space-x-1.5 shrink-0 ml-2">
                     <button 
-                      onClick={(e) => { e.stopPropagation(); pushView('customer-info', item.state); }}
+                      onClick={(e) => { e.stopPropagation(); pushView('customer-info', { ...item.state, timestamp: item.timestamp, historyId: item.id }); }}
                       className="w-8 h-8 bg-green-100 text-green-600 rounded-full flex items-center justify-center active:scale-95 transition-all"
                       title="Google Sheets"
                     >
