@@ -12,187 +12,167 @@ export function SetupHelper({ onClose, appLanguage }: SetupHelperProps) {
   const [showToast, setShowToast] = useState(false);
 
   const scriptCode = `function doPost(e) {
-  var logs = [];
+  var lock = LockService.getScriptLock();
+  var hasLock = false;
+
   try {
-    logs.push("Parsing payload");
-    var contentStr = e.postData.contents;
-    Logger.log("Payload string: " + contentStr);
-    
-    var data = JSON.parse(contentStr);
-    Logger.log("Parsed data object: " + JSON.stringify(data));
-    
+    lock.waitLock(10000);
+    hasLock = true;
+
+    var data = JSON.parse(e.postData.contents);
+
     var spreadsheetId = data.spreadsheetId;
     var sheetNameEn = data.sheetNameEn;
     var sheetNameMs = data.sheetNameMs;
     var rowData = data.rowData;
-    
-    if (rowData && rowData[0] === 'test_diagnostic_connection') {
-      return ContentService.createTextOutput(JSON.stringify({
-        "status": "success", "message": "Diagnostic connection successful"
-      })).setMimeType(ContentService.MimeType.JSON);
+
+    if (rowData && rowData[0] === "test_diagnostic_connection") {
+      return jsonResponse({
+        status: "success",
+        message: "Diagnostic connection successful"
+      });
     }
-    
+
     if (!spreadsheetId) {
-      return ContentService.createTextOutput(JSON.stringify({
-        "status": "error", 
-        "message": "Missing spreadsheetId",
-        "logs": logs
-      })).setMimeType(ContentService.MimeType.JSON);
+      return jsonResponse({
+        status: "error",
+        message: "Missing spreadsheetId"
+      });
     }
-    
-    logs.push("Opening spreadsheet ID: " + spreadsheetId);
+
+    if (!Array.isArray(rowData)) {
+      return jsonResponse({
+        status: "error",
+        message: "Missing or invalid rowData"
+      });
+    }
+
     var ss = SpreadsheetApp.openById(spreadsheetId);
-    
-    var sheet = null;
-    logs.push("Looking for: " + sheetNameEn + " or " + sheetNameMs);
-    
-    if (sheetNameEn) sheet = ss.getSheetByName(sheetNameEn);
-    if (!sheet && sheetNameMs) sheet = ss.getSheetByName(sheetNameMs);
-    if (!sheet && sheetNameEn) sheet = ss.getSheetByName(sheetNameEn.split(' ')[0]);
-    if (!sheet && sheetNameMs) sheet = ss.getSheetByName(sheetNameMs.split(' ')[0]);
-    
+
+    var sheet =
+      ss.getSheetByName(sheetNameEn) ||
+      ss.getSheetByName(sheetNameMs);
+
     if (!sheet) {
-      logs.push("No matching month tab found. Using the first existing tab.");
-      sheet = ss.getSheets()[0];
+      sheet = ss.insertSheet(sheetNameEn);
     }
-    
-    // Ensure we have enough columns for rowData
-    if (sheet.getMaxColumns() < rowData.length) {
-      sheet.insertColumnsAfter(sheet.getMaxColumns(), rowData.length - sheet.getMaxColumns());
+
+    ensureSheetSetup(sheet);
+
+    if (rowData[0] === "TRUE" || rowData[0] === true) rowData[0] = true;
+    if (rowData[0] === "FALSE" || rowData[0] === false) rowData[0] = false;
+
+    var orderId = String(rowData[10] || "").trim();
+
+    if (!orderId) {
+      return jsonResponse({
+        status: "error",
+        message: "Missing Order ID in column K"
+      });
     }
-    
-    // Provide a header if it's completely empty
-    if (sheet.getLastRow() === 0) {
-      sheet.appendRow(["Done", "Nama", "Phone Number", "Order", "Template", "Bahasa", "Add On", "Jenis", "Due", "Link", "Order ID"]);
-      // Column A checkbox
-      sheet.getRange("A2:A").insertCheckboxes();
-      
-      // Column D (Order) validation
-      var orderRule = SpreadsheetApp.newDataValidation().requireValueInList(["Resume", "Surat", "Edit PDF", "Lain2", "Edit Resume"], true).build();
-      sheet.getRange("D2:D").setDataValidation(orderRule);
-      
-      // Column F (Bahasa) validation
-      var bahasaRule = SpreadsheetApp.newDataValidation().requireValueInList(["Melayu", "English", "2 bahasa"], true).build();
-      sheet.getRange("F2:F").setDataValidation(bahasaRule);
-      
-      // Column G (Add On) validation
-      var addOnRule = SpreadsheetApp.newDataValidation().requireValueInList(["Cover Letter", "Softcopy Word", "Cover Letter + Softcopy Word", "Lain2"], true).build();
-      sheet.getRange("G2:G").setDataValidation(addOnRule);
-      
-      // Column H (Jenis) validation
-      var jenisRule = SpreadsheetApp.newDataValidation().requireValueInList(["Tak Urgent", "Semi Urgent", "Urgent", "Super Urgent"], true).build();
-      sheet.getRange("H2:H").setDataValidation(jenisRule);
+
+    var existingRow = findRowByOrderId(sheet, orderId);
+
+    if (existingRow) {
+      var existingCheckbox = sheet.getRange(existingRow, 1).getValue();
+      rowData[0] = existingCheckbox;
+
+      sheet.getRange(existingRow, 1, 1, rowData.length).setValues([rowData]);
+      applyRowTemplate(sheet, existingRow);
+
+      return jsonResponse({
+        status: "success",
+        message: "Updated order " + orderId,
+        orderId: orderId
+      });
     }
-    
-    var lastRow = sheet.getLastRow();
-    logs.push("lastRow is " + lastRow + " and getMaxColumns is " + sheet.getMaxColumns());
-    
-    var inputName = String(rowData[1] || "").trim();
-    var inputPhone = String(rowData[2] || "").trim();
-    var inputOrderId = String(rowData[10] || "").trim();
-    var updated = false;
-    
-    // Format checkbox correctly
-    if (rowData[0] === "FALSE" || rowData[0] === "TRUE" || rowData[0] === false || rowData[0] === true) {
-      rowData[0] = (rowData[0] === "TRUE" || rowData[0] === true);
-    }
-    
-    if (lastRow > 1) {
-      // Find matching row
-      var searchLimit = lastRow - 1;
-      var dataRange = sheet.getRange(2, 1, Math.max(1, searchLimit), Math.max(sheet.getLastColumn(), rowData.length));
-      var sheetData = dataRange.getValues();
-      
-      for (var i = 0; i < sheetData.length; i++) {
-        var rowOrderId = String(sheetData[i][10] || "").trim();
-        var rowName = String(sheetData[i][1] || "").trim();
-        var rowPhone = String(sheetData[i][2] || "").trim();
-        
-        var isMatch = false;
-        if (inputOrderId && rowOrderId === inputOrderId) {
-           isMatch = true;
-           logs.push("Matched by Order ID: " + inputOrderId);
-        } else if (!inputOrderId && rowName === inputName && rowPhone === inputPhone) {
-           isMatch = true;
-           logs.push("Matched by Name + Phone");
-        }
-        
-        if (isMatch) {
-          var updateRowIndex = i + 2;
-          var existingCheckbox = sheetData[i][0];
-          rowData[0] = existingCheckbox; // Preserve existing checkbox state
-          
-          sheet.getRange(updateRowIndex, 1, 1, rowData.length).setValues([rowData]);
-          logs.push("Updated existing record at row " + updateRowIndex);
-          
-          if (updateRowIndex > 2) {
-            applyRowTemplate(sheet, updateRowIndex);
-          }
-          
-          updated = true;
-          break;
-        }
-      }
-    }
-    
-    if (!updated) {
-      sheet.getRange(lastRow + 1, 1, 1, rowData.length).setValues([rowData]);
-      logs.push("Appended new record at row " + (lastRow + 1));
-      
-      if (lastRow + 1 > 2) {
-        applyRowTemplate(sheet, lastRow + 1);
-      } else {
-        sheet.getRange(lastRow + 1, 1).insertCheckboxes();
-      }
-    }
-    
-    if (sheet.getLastRow() > 1) {
-      try {
-        sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn())
-             .sort({column: 9, ascending: true});
-        logs.push("Sorted sheet by Due date (column I)");
-      } catch (sortErr) {
-        logs.push("Sorting failed: " + sortErr.toString());
-      }
-    }
-    
-    var responseJSON = JSON.stringify({
-      "status": "success",
-      "message": "Data saved to " + sheet.getName(),
-      "logs": logs
+
+    sheet.appendRow(rowData);
+
+    var newRow = sheet.getLastRow();
+    applyRowTemplate(sheet, newRow);
+
+    return jsonResponse({
+      status: "success",
+      message: "Created order " + orderId,
+      orderId: orderId
     });
-    Logger.log("Returning success response: " + responseJSON);
-    return ContentService.createTextOutput(responseJSON).setMimeType(ContentService.MimeType.JSON);
-    
+
   } catch (error) {
-    logs.push("Error caught: " + error.toString());
-    var errJSON = JSON.stringify({
-      "status": "error",
-      "message": error.toString(),
-      "logs": logs
+    return jsonResponse({
+      status: "error",
+      message: error.toString()
     });
-    Logger.log("Returning error response: " + errJSON);
-    return ContentService.createTextOutput(errJSON).setMimeType(ContentService.MimeType.JSON);
+
+  } finally {
+    if (hasLock) lock.releaseLock();
   }
+}
+
+function ensureSheetSetup(sheet) {
+  if (sheet.getLastRow() === 0) {
+    sheet.appendRow([
+      "Done",
+      "Nama",
+      "Phone Number",
+      "Order",
+      "Template",
+      "Bahasa",
+      "Add On",
+      "Jenis",
+      "Due",
+      "Link",
+      "Order ID"
+    ]);
+
+    sheet.appendRow(["", "", "", "", "", "", "", "", "", "", ""]);
+    applyRowTemplate(sheet, 2);
+  }
+}
+
+function findRowByOrderId(sheet, orderId) {
+  var lastRow = sheet.getLastRow();
+
+  if (lastRow < 3) return null;
+
+  var values = sheet.getRange(3, 11, lastRow - 2, 1).getValues();
+
+  for (var i = 0; i < values.length; i++) {
+    if (String(values[i][0] || "").trim() === orderId) {
+      return i + 3;
+    }
+  }
+
+  return null;
 }
 
 function applyRowTemplate(sheet, targetRow) {
   var lastCol = sheet.getLastColumn();
-  if (lastCol < 1) return;
+
+  if (targetRow === 2) {
+    sheet.getRange(targetRow, 1).insertCheckboxes();
+    return;
+  }
 
   sheet.getRange(2, 1, 1, lastCol)
     .copyTo(
-      sheet.getRange(targetRow, 1),
+      sheet.getRange(targetRow, 1, 1, lastCol),
       SpreadsheetApp.CopyPasteType.PASTE_FORMAT,
       false
     );
 
   sheet.getRange(2, 1, 1, lastCol)
     .copyTo(
-      sheet.getRange(targetRow, 1),
+      sheet.getRange(targetRow, 1, 1, lastCol),
       SpreadsheetApp.CopyPasteType.PASTE_DATA_VALIDATION,
       false
     );
+}
+
+function jsonResponse(obj) {
+  return ContentService
+    .createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON);
 }
 
 function doOptions(e) {
@@ -201,6 +181,7 @@ function doOptions(e) {
     .setHeader("Access-Control-Allow-Origin", "*")
     .setHeader("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
     .setHeader("Access-Control-Allow-Headers", "Content-Type");
+}
 }`;
 
   const copyToClipboard = () => {

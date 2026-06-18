@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { RefreshCcw, Save, Check, Activity } from 'lucide-react';
+import { RefreshCcw, Save, Check } from 'lucide-react';
 import { useAppContext } from '../AppContext';
 import { calculateDeadline } from '../utils';
 import { Toast } from '../components/Toast';
@@ -118,67 +118,6 @@ export function CustomerInfoView() {
     setToastMsg(msg);
     setShowToast(true);
     setTimeout(() => setShowToast(false), 3000);
-  };
-
-  const testConnection = async () => {
-    setIsSaving(true);
-    setErrorMsg('');
-    showToastMessage('Testing connection...');
-    try {
-      const now = new Date();
-      const monthNamesEn = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-      const monthNamesMs = ["Januari", "Februari", "Mac", "April", "Mei", "Jun", "Julai", "Ogos", "September", "Oktober", "November", "Disember"];
-      
-      const targetSheetEn = `${monthNamesEn[now.getMonth()]} ${now.getFullYear()}`;
-      const targetSheetMs = `${monthNamesMs[now.getMonth()]} ${now.getFullYear()}`;
-
-      const response = await fetch(webhookUrl.trim(), {
-        method: 'POST',
-        mode: 'no-cors',
-        headers: {
-          'Content-Type': 'text/plain;charset=utf-8'
-        },
-        body: JSON.stringify({
-          rowData: ['test_diagnostic_connection'],
-          sheetName: targetSheetEn, // For backwards compatibility
-          sheetNameEn: targetSheetEn,
-          sheetNameMs: targetSheetMs,
-          spreadsheetId: state.spreadsheetId
-        })
-      });
-      
-      // With no-cors, the response is opaque and we can't read the body or status
-      if (response.type === 'opaque') {
-        showToastMessage('Connection test completed (Opaque response). Assume successful!');
-        setErrorMsg('Diagnostic: Sent successfully (no-cors mode). Cannot read the exact response, but the request was dispatched.');
-        return;
-      }
-
-      const responseText = await response.text();
-      let result;
-      try {
-        result = JSON.parse(responseText);
-      } catch (e) {
-        throw new Error('Invalid JSON: ' + responseText.substring(0, 80));
-      }
-      if (result.status === 'error') {
-        const errorLogs = result.logs && result.logs.length > 0 ? `\nLogs: ${result.logs.join(' -> ')}` : '';
-        throw new Error((result.message || 'Server returned error') + errorLogs);
-      }
-      showToastMessage('Connection test successful! ' + (result.message || ''));
-      const debugLogs = result.logs && result.logs.length > 0 ? `\nLogs: ${result.logs.join(' -> ')}` : '';
-      setErrorMsg('Diagnostic Test Success: The web app endpoint is reachable and responding correctly.' + debugLogs);
-    } catch (err: any) {
-      console.error(err);
-      let errMsg = err.message || String(err);
-      if (errMsg.includes('Failed to fetch')) {
-        errMsg = 'Failed to fetch: You MUST deploy the Web App as "Execute as: Me" and "Who has access: Anyone". If it requires login, it will be blocked by CORS.';
-      }
-      setErrorMsg('Diagnostic Failed: ' + errMsg);
-      showToastMessage('Connection test failed!');
-    } finally {
-      setIsSaving(false);
-    }
   };
 
   useEffect(() => {
@@ -499,6 +438,7 @@ export function CustomerInfoView() {
               <option value="Melayu">Melayu</option>
               <option value="English">English</option>
               <option value="2 bahasa">2 bahasa</option>
+              <option value=""></option>
             </select>
             <div className="absolute top-0 right-4 h-full flex items-center pointer-events-none">
               <svg className="w-4 h-4 text-subtext" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7-7-7-7"></path></svg>
@@ -600,20 +540,6 @@ export function CustomerInfoView() {
                   <Save className="w-5 h-5 ml-1" />
                 </>
               )}
-            </button>
-            <button
-              onClick={testConnection}
-              disabled={isSaving}
-              className="w-full h-12 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold text-[14px] rounded-[14px] flex items-center justify-center space-x-2 active:scale-[0.98] transition-all disabled:opacity-70"
-            >
-              <Activity className="w-4 h-4" />
-              <span>{appLanguage === 'ms' ? 'Uji Sambungan (Diagnostic)' : 'Test Connection (Diagnostic)'}</span>
-            </button>
-            <button
-              onClick={() => setShowSetup(true)}
-              className="w-full text-blue-600 font-medium text-[13px] hover:underline"
-            >
-              {appLanguage === 'ms' ? 'Data tidak masuk? Klik di sini untuk selesaikan masalah' : 'Data not entering? Click here to troubleshoot'}
             </button>
           </div>
         </div>
