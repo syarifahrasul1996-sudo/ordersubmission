@@ -15,7 +15,12 @@ export function SetupHelper({ onClose, appLanguage }: SetupHelperProps) {
   var logs = [];
   try {
     logs.push("Parsing payload");
-    var data = JSON.parse(e.postData.contents);
+    var contentStr = e.postData.contents;
+    Logger.log("Payload string: " + contentStr);
+    
+    var data = JSON.parse(contentStr);
+    Logger.log("Parsed data object: " + JSON.stringify(data));
+    
     var spreadsheetId = data.spreadsheetId;
     var sheetNameEn = data.sheetNameEn;
     var sheetNameMs = data.sheetNameMs;
@@ -51,24 +56,40 @@ export function SetupHelper({ onClose, appLanguage }: SetupHelperProps) {
       sheet = ss.getSheets()[0];
     }
     
+    // Ensure we have enough columns for rowData
+    if (sheet.getMaxColumns() < rowData.length) {
+      sheet.insertColumnsAfter(sheet.getMaxColumns(), rowData.length - sheet.getMaxColumns());
+    }
+    
     // Provide a header if it's completely empty
     if (sheet.getLastRow() === 0) {
-      sheet.appendRow(["Done", "Nama", "Phone Number", "Order", "Template", "Bahasa", "Add On", "Jenis", "Due", "Link", "Customer Information"]);
+      sheet.appendRow(["Done", "Nama", "Phone Number", "Order", "Template", "Bahasa", "Add On", "Jenis", "Due", "Link", "Order ID"]);
+      // Column A checkbox
       sheet.getRange("A2:A").insertCheckboxes();
-    } else {
-      // Ensure "Customer Information" column header exists
-      var headerRange = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), 11));
-      var headers = headerRange.getValues()[0];
-      if (!headers[10]) {
-         sheet.getRange(1, 11).setValue("Customer Information");
-      }
+      
+      // Column D (Order) validation
+      var orderRule = SpreadsheetApp.newDataValidation().requireValueInList(["Resume", "Surat", "Edit PDF", "Lain2", "Edit Resume"], true).build();
+      sheet.getRange("D2:D").setDataValidation(orderRule);
+      
+      // Column F (Bahasa) validation
+      var bahasaRule = SpreadsheetApp.newDataValidation().requireValueInList(["Melayu", "English", "2 bahasa"], true).build();
+      sheet.getRange("F2:F").setDataValidation(bahasaRule);
+      
+      // Column G (Add On) validation
+      var addOnRule = SpreadsheetApp.newDataValidation().requireValueInList(["Cover Letter", "Softcopy Word", "Cover Letter + Softcopy Word", "Lain2"], true).build();
+      sheet.getRange("G2:G").setDataValidation(addOnRule);
+      
+      // Column H (Jenis) validation
+      var jenisRule = SpreadsheetApp.newDataValidation().requireValueInList(["Tak Urgent", "Semi Urgent", "Urgent", "Super Urgent"], true).build();
+      sheet.getRange("H2:H").setDataValidation(jenisRule);
     }
     
     var lastRow = sheet.getLastRow();
+    logs.push("lastRow is " + lastRow + " and getMaxColumns is " + sheet.getMaxColumns());
     
-    // Unique ID check: Nama (Index 1) and Phone Number (Index 2)
     var inputName = String(rowData[1] || "").trim();
     var inputPhone = String(rowData[2] || "").trim();
+    var inputOrderId = String(rowData[10] || "").trim();
     var updated = false;
     
     // Format checkbox correctly
@@ -77,23 +98,37 @@ export function SetupHelper({ onClose, appLanguage }: SetupHelperProps) {
     }
     
     if (lastRow > 1) {
-      var dataRange = sheet.getRange(2, 1, lastRow - 1, Math.max(sheet.getLastColumn(), rowData.length));
+      // Find matching row
+      var searchLimit = lastRow - 1;
+      var dataRange = sheet.getRange(2, 1, Math.max(1, searchLimit), Math.max(sheet.getLastColumn(), rowData.length));
       var sheetData = dataRange.getValues();
       
       for (var i = 0; i < sheetData.length; i++) {
+        var rowOrderId = String(sheetData[i][10] || "").trim();
         var rowName = String(sheetData[i][1] || "").trim();
         var rowPhone = String(sheetData[i][2] || "").trim();
         
-        if (rowName === inputName && rowPhone === inputPhone) {
+        var isMatch = false;
+        if (inputOrderId && rowOrderId === inputOrderId) {
+           isMatch = true;
+           logs.push("Matched by Order ID: " + inputOrderId);
+        } else if (!inputOrderId && rowName === inputName && rowPhone === inputPhone) {
+           isMatch = true;
+           logs.push("Matched by Name + Phone");
+        }
+        
+        if (isMatch) {
           var updateRowIndex = i + 2;
-          
-          // If the existing row checkbox is checked, maybe keep it. But we'll just use what's passed (false) 
-          // or we can intentionally merge the existing checkbox state to not uncheck done items.
           var existingCheckbox = sheetData[i][0];
-          rowData[0] = existingCheckbox; // Preserve existing checkbox state on update
+          rowData[0] = existingCheckbox; // Preserve existing checkbox state
           
           sheet.getRange(updateRowIndex, 1, 1, rowData.length).setValues([rowData]);
           logs.push("Updated existing record at row " + updateRowIndex);
+          
+          if (updateRowIndex > 2) {
+            applyRowTemplate(sheet, updateRowIndex);
+          }
+          
           updated = true;
           break;
         }
@@ -104,14 +139,13 @@ export function SetupHelper({ onClose, appLanguage }: SetupHelperProps) {
       sheet.getRange(lastRow + 1, 1, 1, rowData.length).setValues([rowData]);
       logs.push("Appended new record at row " + (lastRow + 1));
       
-      // Ensure the appended row's col A is a checkbox
-      sheet.getRange(lastRow + 1, 1).insertCheckboxes();
+      if (lastRow + 1 > 2) {
+        applyRowTemplate(sheet, lastRow + 1);
+      } else {
+        sheet.getRange(lastRow + 1, 1).insertCheckboxes();
+      }
     }
     
-    // Set wrap text on Customer Information column (11) so linebreaks are preserved visibly
-    sheet.getRange(2, 11, Math.max(1, sheet.getLastRow() - 1), 1).setWrap(true);
-    
-    // Auto-sort by Due date (Column I, index 9)
     if (sheet.getLastRow() > 1) {
       try {
         sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn())
@@ -122,20 +156,43 @@ export function SetupHelper({ onClose, appLanguage }: SetupHelperProps) {
       }
     }
     
-    return ContentService.createTextOutput(JSON.stringify({
+    var responseJSON = JSON.stringify({
       "status": "success",
       "message": "Data saved to " + sheet.getName(),
       "logs": logs
-    })).setMimeType(ContentService.MimeType.JSON);
+    });
+    Logger.log("Returning success response: " + responseJSON);
+    return ContentService.createTextOutput(responseJSON).setMimeType(ContentService.MimeType.JSON);
     
   } catch (error) {
     logs.push("Error caught: " + error.toString());
-    return ContentService.createTextOutput(JSON.stringify({
+    var errJSON = JSON.stringify({
       "status": "error",
       "message": error.toString(),
       "logs": logs
-    })).setMimeType(ContentService.MimeType.JSON);
+    });
+    Logger.log("Returning error response: " + errJSON);
+    return ContentService.createTextOutput(errJSON).setMimeType(ContentService.MimeType.JSON);
   }
+}
+
+function applyRowTemplate(sheet, targetRow) {
+  var lastCol = sheet.getLastColumn();
+  if (lastCol < 1) return;
+
+  sheet.getRange(2, 1, 1, lastCol)
+    .copyTo(
+      sheet.getRange(targetRow, 1),
+      SpreadsheetApp.CopyPasteType.PASTE_FORMAT,
+      false
+    );
+
+  sheet.getRange(2, 1, 1, lastCol)
+    .copyTo(
+      sheet.getRange(targetRow, 1),
+      SpreadsheetApp.CopyPasteType.PASTE_DATA_VALIDATION,
+      false
+    );
 }
 
 function doOptions(e) {

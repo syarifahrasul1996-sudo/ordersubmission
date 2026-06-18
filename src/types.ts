@@ -24,6 +24,7 @@ export interface AppState {
   customerJenis?: string;
   customerDue?: string;
   customerInfo?: string;
+  orderId?: string;
 }
 
 export type ViewType = 'home' | 'resume-type' | 'resume-form-fields' | 'general-form' | 'confirmation' | 'output' | 'history' | 'customer-info';
@@ -59,4 +60,5 @@ export const INITIAL_STATE: AppState = {
   customerJenis: '',
   customerDue: '',
   customerInfo: '',
+  orderId: '',
 };

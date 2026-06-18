@@ -5,6 +5,12 @@ import { calculateDeadline } from '../utils';
 import { Toast } from '../components/Toast';
 import { SetupHelper } from '../components/SetupHelper';
 
+function generateOrderId() {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `ORD-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+}
+
 export function CustomerInfoView() {
   const { appLanguage, state, setState, goHome, viewStack, updateOrderHistoryState } = useAppContext();
   const isActive = viewStack[viewStack.length - 1] === 'customer-info';
@@ -67,6 +73,11 @@ export function CustomerInfoView() {
     }
     const initAddOn = initAddOnList.join(', ');
 
+    let initOrderId = state.orderId;
+    if (!initOrderId) {
+      initOrderId = generateOrderId();
+    }
+
     return { 
       initName: state.customerName || '',
       initPhone: state.customerPhone || '',
@@ -77,6 +88,7 @@ export function CustomerInfoView() {
       initTemplate: state.customerTemplate || initTemplate, 
       initAddOn: state.customerAddOn || initAddOn,
       initInfo: state.customerInfo || '',
+      initOrderId,
     };
   };
 
@@ -90,9 +102,10 @@ export function CustomerInfoView() {
   const [addOn, setAddOn] = useState('');
   const [jenis, setJenis] = useState('');
   const [due, setDue] = useState('');
+  const [orderId, setOrderId] = useState('');
 
   const [spreadsheetId, setSpreadsheetId] = useState(state.spreadsheetId);
-  const webhookUrl = 'https://script.google.com/macros/s/AKfycbyyETrylPHE8LPB6Z4dO3tQL9LHLpAFeEBvfRGqFR2Drj4EsQTbs4DwRfdFgrgTV4Pnyg/exec';
+  const webhookUrl = 'https://script.google.com/macros/s/AKfycbwxCjDoxOLmfgUK5A92fs8tR0s3XrlggBCD7_232w6j_GJEF-IybuKHBHNozYeQtXgw/exec';
   const [isSaving, setIsSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
@@ -192,6 +205,7 @@ export function CustomerInfoView() {
       setAddOn(initVals.initAddOn);
       setJenis(initVals.initJenis);
       setDue(initVals.initDue);
+      setOrderId(initVals.initOrderId);
       setSpreadsheetId(state.spreadsheetId);
     }
   }, [isActive, state.historyId, state.timestamp]); // fetch when mounted or when switching orders
@@ -213,6 +227,7 @@ export function CustomerInfoView() {
       customerAddOn: addOn,
       customerJenis: jenis,
       customerDue: due,
+      orderId: orderId,
       spreadsheetId: spreadsheetId,
     });
 
@@ -230,7 +245,7 @@ export function CustomerInfoView() {
 
       let formattedName = name.replace(/\w\S*/g, (txt) => txt.charAt(0).toUpperCase() + txt.substring(1).toLowerCase());
 
-      // Columns: Checkbox, Nama, Phone Number, Order, Template, Bahasa, Add On, Jenis, Due, Link, Info
+      // Columns: Checkbox, Nama, Phone Number, Order, Template, Bahasa, Add On, Jenis, Due, Link, Order ID
       const orderRow = [
         false,
         formattedName,
@@ -242,8 +257,8 @@ export function CustomerInfoView() {
         jenis,
         due,
         "",
-        info
-      ];
+        orderId || ""
+      ].map(v => v == null ? "" : v);
 
       // We save directly to Apps Script Web App URL
       // Determine monthly target sheet name on frontend to submit
@@ -274,19 +289,23 @@ export function CustomerInfoView() {
       const targetSheetEn = `${monthNamesEn[targetDate.getMonth()]} ${targetDate.getFullYear()}`;
       const targetSheetMs = `${monthNamesMs[targetDate.getMonth()]} ${targetDate.getFullYear()}`;
 
+      const payload = {
+        rowData: orderRow,
+        sheetName: targetSheetEn, // Fallback for older script version
+        sheetNameEn: targetSheetEn,
+        sheetNameMs: targetSheetMs,
+        spreadsheetId: state.spreadsheetId
+      };
+      
+      console.log("Submitting payload to Google Apps Script:", JSON.stringify(payload, null, 2));
+
       const response = await fetch(webhookUrl.trim(), {
         method: 'POST',
         mode: 'no-cors',
         headers: {
           'Content-Type': 'text/plain;charset=utf-8'
         },
-        body: JSON.stringify({
-          rowData: orderRow,
-          sheetName: targetSheetEn, // Fallback for older script version
-          sheetNameEn: targetSheetEn, // Default to English e.g. June 2026
-          sheetNameMs: targetSheetMs, // Fallback for Malay e.g. Jun 2026
-          spreadsheetId: spreadsheetId
-        })
+        body: JSON.stringify(payload)
       });
 
       // Handle opaque response for no-cors
@@ -363,7 +382,9 @@ export function CustomerInfoView() {
     const bahasaMatch = info.match(/(?:Surat BM\/BI\?|Bahasa:|Language:)\s*(.*)/i);
     if (bahasaMatch && bahasaMatch[1]) {
       const val = bahasaMatch[1].toUpperCase();
-      if (val.includes('BM')) {
+      if (val.includes('2 BAHASA') || val.includes('DUA BAHASA') || val.includes('BOTH') || (val.includes('BM') && val.includes('BI'))) {
+        newBahasa = '2 bahasa';
+      } else if (val.includes('BM') || val.includes('MELAYU')) {
         newBahasa = 'Melayu';
       } else if (val.includes('BI') || val.includes('ENGLISH') || val.includes('INGGERIS')) {
         newBahasa = 'English';
@@ -392,9 +413,16 @@ export function CustomerInfoView() {
   return (
     <div className="flex flex-col p-4 sm:p-6 pb-[calc(env(safe-area-inset-bottom)+4rem)]">
       <div className="mb-6">
-        <h2 className="text-2xl font-black text-text tracking-tighter mb-2">
-          {appLanguage === 'ms' ? 'Maklumat Pelanggan' : 'Customer Info'}
-        </h2>
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-2xl font-black text-text tracking-tighter">
+            {appLanguage === 'ms' ? 'Maklumat Pelanggan' : 'Customer Info'}
+          </h2>
+          {orderId && (
+            <span className="text-[10px] font-bold text-subtext bg-gray-100 px-2 py-1 rounded-md">
+              {orderId}
+            </span>
+          )}
+        </div>
         <p className="text-subtext text-sm">
           {appLanguage === 'ms' 
             ? 'Simpan maklumat pelanggan untuk rujukan masa depan.' 
@@ -470,8 +498,7 @@ export function CustomerInfoView() {
             >
               <option value="Melayu">Melayu</option>
               <option value="English">English</option>
-              <option value="2 Bahasa">2 Bahasa</option>
-              <option value=""></option>
+              <option value="2 bahasa">2 bahasa</option>
             </select>
             <div className="absolute top-0 right-4 h-full flex items-center pointer-events-none">
               <svg className="w-4 h-4 text-subtext" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7-7-7-7"></path></svg>
@@ -481,12 +508,22 @@ export function CustomerInfoView() {
 
         <div className="space-y-1">
           <label className="text-[13px] font-bold text-text ml-1 uppercase tracking-wider">Add On</label>
-          <input 
-            type="text" 
-            value={addOn}
-            onChange={(e) => setAddOn(e.target.value)}
-            className="w-full h-14 bg-surface rounded-[16px] px-4 font-medium text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all text-[16px]" 
-          />
+          <div className="relative">
+            <select 
+              value={addOn}
+              onChange={(e) => setAddOn(e.target.value)}
+              className="w-full h-14 bg-surface text-text rounded-[16px] px-4 font-medium border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all appearance-none text-[16px]" 
+            >
+              <option value="Cover Letter">Cover Letter</option>
+              <option value="Softcopy Word">Softcopy Word</option>
+              <option value="Cover Letter + Softcopy Word">Cover Letter + Softcopy Word</option>
+              <option value="Lain2">Lain2</option>
+              <option value=""></option>
+            </select>
+            <div className="absolute top-0 right-4 h-full flex items-center pointer-events-none">
+              <svg className="w-4 h-4 text-subtext" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+            </div>
+          </div>
         </div>
 
         <div className="space-y-1">
