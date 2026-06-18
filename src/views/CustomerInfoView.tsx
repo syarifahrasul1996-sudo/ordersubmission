@@ -76,11 +76,13 @@ export function CustomerInfoView() {
       initDue: state.customerDue || `${formattedDate} at ${formattedTime}`, 
       initTemplate: state.customerTemplate || initTemplate, 
       initAddOn: state.customerAddOn || initAddOn,
+      initInfo: state.customerInfo || '',
     };
   };
 
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
+  const [info, setInfo] = useState('');
   
   const [order, setOrder] = useState('');
   const [template, setTemplate] = useState('');
@@ -90,7 +92,7 @@ export function CustomerInfoView() {
   const [due, setDue] = useState('');
 
   const [spreadsheetId, setSpreadsheetId] = useState(state.spreadsheetId);
-  const webhookUrl = 'https://script.google.com/macros/s/AKfycbzr6YzrURo8kee8ZvzcuiQIGjqVQqLnuSqFHqyJVlFQrwWaC6gmB6V3sxBrFDvH_yYhFQ/exec';
+  const webhookUrl = 'https://script.google.com/macros/s/AKfycbyyETrylPHE8LPB6Z4dO3tQL9LHLpAFeEBvfRGqFR2Drj4EsQTbs4DwRfdFgrgTV4Pnyg/exec';
   const [isSaving, setIsSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
@@ -183,6 +185,7 @@ export function CustomerInfoView() {
       const initVals = computeInitialValues();
       setName(initVals.initName);
       setPhone(initVals.initPhone);
+      setInfo(initVals.initInfo);
       setOrder(initVals.initOrder);
       setTemplate(initVals.initTemplate);
       setBahasa(initVals.initBahasa);
@@ -203,6 +206,7 @@ export function CustomerInfoView() {
     updateOrderHistoryState({
       customerName: name,
       customerPhone: phone,
+      customerInfo: info,
       customerOrder: order,
       customerTemplate: template,
       customerBahasa: bahasa,
@@ -226,7 +230,7 @@ export function CustomerInfoView() {
 
       let formattedName = name.replace(/\w\S*/g, (txt) => txt.charAt(0).toUpperCase() + txt.substring(1).toLowerCase());
 
-      // Columns: Checkbox, Nama, Phone Number, Order, Template, Bahasa, Add On, Jenis, Due, Link
+      // Columns: Checkbox, Nama, Phone Number, Order, Template, Bahasa, Add On, Jenis, Due, Link, Info
       const orderRow = [
         false,
         formattedName,
@@ -237,18 +241,38 @@ export function CustomerInfoView() {
         addOn || "",
         jenis,
         due,
-        ""
+        "",
+        info
       ];
 
       // We save directly to Apps Script Web App URL
       // Determine monthly target sheet name on frontend to submit
-      const now = new Date();
+      let targetDate = new Date();
+      if (due && due.trim().length > 0) {
+        // Simple heuristic: try to parse the due string to a Date
+        // Since due might be "15/06/2026 at 10:00" or similar
+        const dueStr = due.replace(' at ', ' ');
+        const parsedDue = new Date(dueStr);
+        if (!isNaN(parsedDue.getTime())) {
+          targetDate = parsedDue;
+        } else {
+          // Attempt DD/MM/YYYY
+          const parts = due.split(' ')[0].split('/');
+          if (parts.length === 3) {
+            const parsedDME = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
+            if (!isNaN(parsedDME.getTime())) {
+              targetDate = parsedDME;
+            }
+          }
+        }
+      }
+      
       const monthNamesEn = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
       const monthNamesMs = ["Januari", "Februari", "Mac", "April", "Mei", "Jun", "Julai", "Ogos", "September", "Oktober", "November", "Disember"];
       
-      // Send both language variants so the backend can try both if needed, but primary is targetSheet
-      const targetSheetEn = `${monthNamesEn[now.getMonth()]} ${now.getFullYear()}`;
-      const targetSheetMs = `${monthNamesMs[now.getMonth()]} ${now.getFullYear()}`;
+      // Send both language variants so the backend can try both if needed
+      const targetSheetEn = `${monthNamesEn[targetDate.getMonth()]} ${targetDate.getFullYear()}`;
+      const targetSheetMs = `${monthNamesMs[targetDate.getMonth()]} ${targetDate.getFullYear()}`;
 
       const response = await fetch(webhookUrl.trim(), {
         method: 'POST',
@@ -309,6 +333,47 @@ export function CustomerInfoView() {
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const handleAutoFill = () => {
+    let newName = name;
+    let newOrder = order;
+    let newBahasa = bahasa;
+
+    // 1. Extract Nama
+    const nameMatch = info.match(/(?:Nama Penuh|Full Name):\s*(.*)/i);
+    if (nameMatch && nameMatch[1].trim()) {
+      newName = nameMatch[1].trim();
+    }
+
+    // 2. Extract Order
+    const uppercaseInfo = info.toUpperCase();
+    if (
+      uppercaseInfo.includes('MAKLUMAT PENGHANTAR') ||
+      uppercaseInfo.includes('MAKLUMAT PENERIMA') ||
+      uppercaseInfo.includes('JENIS / TUJUAN SURAT') ||
+      uppercaseInfo.includes('TARIKH SURAT')
+    ) {
+      newOrder = 'Surat';
+    } else if (uppercaseInfo.includes('BORANG RESUME')) {
+      newOrder = 'Resume';
+    }
+
+    // 3. Extract Bahasa
+    const bahasaMatch = info.match(/(?:Surat BM\/BI\?|Bahasa:|Language:)\s*(.*)/i);
+    if (bahasaMatch && bahasaMatch[1]) {
+      const val = bahasaMatch[1].toUpperCase();
+      if (val.includes('BM')) {
+        newBahasa = 'Melayu';
+      } else if (val.includes('BI') || val.includes('ENGLISH') || val.includes('INGGERIS')) {
+        newBahasa = 'English';
+      }
+    }
+
+    setName(newName);
+    setOrder(newOrder);
+    setBahasa(newBahasa);
+    showToastMessage(appLanguage === 'ms' ? 'Auto-isi terpakai!' : 'Auto-fill applied!');
   };
 
   if (saved) {
@@ -451,6 +516,27 @@ export function CustomerInfoView() {
             value={due}
             onChange={(e) => setDue(e.target.value)}
             className="w-full h-14 bg-surface rounded-[16px] px-4 font-medium text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all text-[16px]" 
+          />
+        </div>
+
+        <div className="space-y-1">
+          <div className="flex items-center justify-between ml-1 mb-1">
+            <label className="text-[13px] font-bold text-text uppercase tracking-wider">
+              {appLanguage === 'ms' ? 'Maklumat Pelanggan' : 'Customer Information'}
+            </label>
+            <button
+              onClick={handleAutoFill}
+              className="text-[12px] font-bold text-blue-600 bg-blue-50 px-3 py-1 rounded-[12px] hover:bg-blue-100 transition-colors active:scale-95"
+            >
+              {appLanguage === 'ms' ? 'Auto-isi' : 'Auto-fill'}
+            </button>
+          </div>
+          <textarea 
+            value={info}
+            onChange={(e) => setInfo(e.target.value)}
+            rows={12}
+            placeholder={appLanguage === 'ms' ? 'Salin dan tampal maklumat pelanggan/resume di sini...' : 'Copy and paste customer/resume details here...'}
+            className="w-full bg-surface rounded-[16px] p-4 font-medium text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all placeholder:text-gray-300 text-[16px] resize-y min-h-[14rem]" 
           />
         </div>
 

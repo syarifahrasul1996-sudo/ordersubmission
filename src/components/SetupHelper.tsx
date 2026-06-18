@@ -17,9 +17,15 @@ export function SetupHelper({ onClose, appLanguage }: SetupHelperProps) {
     logs.push("Parsing payload");
     var data = JSON.parse(e.postData.contents);
     var spreadsheetId = data.spreadsheetId;
-    var sheetNameEn = data.sheetNameEn; // e.g. "June 2026"
-    var sheetNameMs = data.sheetNameMs; // e.g. "Jun 2026"
+    var sheetNameEn = data.sheetNameEn;
+    var sheetNameMs = data.sheetNameMs;
     var rowData = data.rowData;
+    
+    if (rowData && rowData[0] === 'test_diagnostic_connection') {
+      return ContentService.createTextOutput(JSON.stringify({
+        "status": "success", "message": "Diagnostic connection successful"
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
     
     if (!spreadsheetId) {
       return ContentService.createTextOutput(JSON.stringify({
@@ -32,32 +38,82 @@ export function SetupHelper({ onClose, appLanguage }: SetupHelperProps) {
     logs.push("Opening spreadsheet ID: " + spreadsheetId);
     var ss = SpreadsheetApp.openById(spreadsheetId);
     
-    // We try to find a tab matching the current month (English or Malay).
     var sheet = null;
     logs.push("Looking for: " + sheetNameEn + " or " + sheetNameMs);
     
     if (sheetNameEn) sheet = ss.getSheetByName(sheetNameEn);
     if (!sheet && sheetNameMs) sheet = ss.getSheetByName(sheetNameMs);
-    
-    // If not found, try just the month name without year (e.g. "June" or "Jun")
     if (!sheet && sheetNameEn) sheet = ss.getSheetByName(sheetNameEn.split(' ')[0]);
     if (!sheet && sheetNameMs) sheet = ss.getSheetByName(sheetNameMs.split(' ')[0]);
     
-    // If absolutely no month tab is found, just use the first available tab
     if (!sheet) {
       logs.push("No matching month tab found. Using the first existing tab.");
       sheet = ss.getSheets()[0];
     }
     
-    // Append row data properly from column A onwards (column 1)
-    var lastRow = sheet.getLastRow();
-    sheet.getRange(lastRow + 1, 1, 1, rowData.length).setValues([rowData]);
-    logs.push("Appended row data starting at column A");
+    // Provide a header if it's completely empty
+    if (sheet.getLastRow() === 0) {
+      sheet.appendRow(["Done", "Nama", "Phone Number", "Order", "Template", "Bahasa", "Add On", "Jenis", "Due", "Link", "Customer Information"]);
+      sheet.getRange("A2:A").insertCheckboxes();
+    } else {
+      // Ensure "Customer Information" column header exists
+      var headerRange = sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), 11));
+      var headers = headerRange.getValues()[0];
+      if (!headers[10]) {
+         sheet.getRange(1, 11).setValue("Customer Information");
+      }
+    }
     
-    // Auto-sort by Due date (Column I which is index 9)
+    var lastRow = sheet.getLastRow();
+    
+    // Unique ID check: Nama (Index 1) and Phone Number (Index 2)
+    var inputName = String(rowData[1] || "").trim();
+    var inputPhone = String(rowData[2] || "").trim();
+    var updated = false;
+    
+    // Format checkbox correctly
+    if (rowData[0] === "FALSE" || rowData[0] === "TRUE" || rowData[0] === false || rowData[0] === true) {
+      rowData[0] = (rowData[0] === "TRUE" || rowData[0] === true);
+    }
+    
     if (lastRow > 1) {
+      var dataRange = sheet.getRange(2, 1, lastRow - 1, Math.max(sheet.getLastColumn(), rowData.length));
+      var sheetData = dataRange.getValues();
+      
+      for (var i = 0; i < sheetData.length; i++) {
+        var rowName = String(sheetData[i][1] || "").trim();
+        var rowPhone = String(sheetData[i][2] || "").trim();
+        
+        if (rowName === inputName && rowPhone === inputPhone) {
+          var updateRowIndex = i + 2;
+          
+          // If the existing row checkbox is checked, maybe keep it. But we'll just use what's passed (false) 
+          // or we can intentionally merge the existing checkbox state to not uncheck done items.
+          var existingCheckbox = sheetData[i][0];
+          rowData[0] = existingCheckbox; // Preserve existing checkbox state on update
+          
+          sheet.getRange(updateRowIndex, 1, 1, rowData.length).setValues([rowData]);
+          logs.push("Updated existing record at row " + updateRowIndex);
+          updated = true;
+          break;
+        }
+      }
+    }
+    
+    if (!updated) {
+      sheet.getRange(lastRow + 1, 1, 1, rowData.length).setValues([rowData]);
+      logs.push("Appended new record at row " + (lastRow + 1));
+      
+      // Ensure the appended row's col A is a checkbox
+      sheet.getRange(lastRow + 1, 1).insertCheckboxes();
+    }
+    
+    // Set wrap text on Customer Information column (11) so linebreaks are preserved visibly
+    sheet.getRange(2, 11, Math.max(1, sheet.getLastRow() - 1), 1).setWrap(true);
+    
+    // Auto-sort by Due date (Column I, index 9)
+    if (sheet.getLastRow() > 1) {
       try {
-        // Sort from row 2 (assuming row 1 is headers), up to the last column (10)
         sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn())
              .sort({column: 9, ascending: true});
         logs.push("Sorted sheet by Due date (column I)");
@@ -68,7 +124,7 @@ export function SetupHelper({ onClose, appLanguage }: SetupHelperProps) {
     
     return ContentService.createTextOutput(JSON.stringify({
       "status": "success",
-      "message": "Data added to " + sheet.getName() + " tab",
+      "message": "Data saved to " + sheet.getName(),
       "logs": logs
     })).setMimeType(ContentService.MimeType.JSON);
     
