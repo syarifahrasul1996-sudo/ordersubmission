@@ -24,6 +24,7 @@ export interface AppState {
   customerJenis?: string;
   customerDue?: string;
   customerInfo?: string;
+  googleSheetLink?: string;
   orderId?: string;
 }
 
@@ -60,5 +61,6 @@ export const INITIAL_STATE: AppState = {
   customerJenis: '',
   customerDue: '',
   customerInfo: '',
+  googleSheetLink: '',
   orderId: '',
 };

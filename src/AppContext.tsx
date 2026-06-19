@@ -15,6 +15,7 @@ interface AppContextType {
   history: OrderHistoryItem[];
   saveOrderToHistory: (messages: string[]) => void;
   updateOrderHistoryState: (updates: Partial<AppState>) => void;
+  updateSpecificHistoryItem: (id: string, updates: Partial<AppState>) => void;
   deleteOrderFromHistory: (id: string) => void;
   clearHistory: () => void;
   loadOrder: (item: OrderHistoryItem) => void;
@@ -158,6 +159,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const updateSpecificHistoryItem = (id: string, updates: Partial<AppState>) => {
+    setHistory(prev => prev.map(item => {
+      if (item.id === id) {
+        return { ...item, state: { ...item.state, ...updates } };
+      }
+      return item;
+    }));
+  };
+
   const deleteOrderFromHistory = (id: string) => {
     setHistory(prev => prev.filter(item => item.id !== id));
   };
@@ -205,7 +215,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AppContext.Provider value={{ state, setState, viewStack, pushView, startNewOrder, popView, goHome, reset, generatedMessages, setGeneratedMessages, history, saveOrderToHistory, updateOrderHistoryState, deleteOrderFromHistory, clearHistory, loadOrder, theme, toggleTheme, appLanguage, toggleLanguage }}>
+    <AppContext.Provider value={{ state, setState, viewStack, pushView, startNewOrder, popView, goHome, reset, generatedMessages, setGeneratedMessages, history, saveOrderToHistory, updateOrderHistoryState, updateSpecificHistoryItem, deleteOrderFromHistory, clearHistory, loadOrder, theme, toggleTheme, appLanguage, toggleLanguage }}>
       {children}
     </AppContext.Provider>
   );

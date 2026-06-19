@@ -28,13 +28,20 @@ export function CustomerInfoView() {
     }
 
     let initBahasa = '';
-    if (Array.isArray(state.resumeLangs)) {
-      if (state.resumeLangs.length === 2) initBahasa = '2 Bahasa';
-      else if (state.resumeLangs.length === 1) initBahasa = state.resumeLangs[0];
+    const isNewResume = state.mainType === 'Resume' && !state.isEditMode;
+    const isSurat = state.mainType === 'Surat';
+    const isLainLain = state.mainType === 'Lain-lain';
+    
+    // Only prefill if the user went through a flow that asks for language
+    if (isNewResume || isSurat || isLainLain) {
+      if (Array.isArray(state.resumeLangs)) {
+        if (state.resumeLangs.length === 2) initBahasa = '2 bahasa';
+        else if (state.resumeLangs.length === 1) initBahasa = state.resumeLangs[0];
+      }
     }
 
     let initJenis = '';
-    if (state.urgency === 'noturgent' || state.urgency === 'standard') initJenis = 'Tak Urgent';
+    if (state.urgency === 'noturgent' || state.urgency === 'standard') initJenis = 'Tidak Urgent';
     else if (state.urgency === 'urgent') initJenis = 'Urgent';
     else if (state.urgency === 'super') initJenis = 'Super Urgent';
     else if (state.urgency === 'semi') initJenis = 'Semi Urgent';
@@ -105,7 +112,7 @@ export function CustomerInfoView() {
   const [orderId, setOrderId] = useState('');
 
   const [spreadsheetId, setSpreadsheetId] = useState(state.spreadsheetId);
-  const webhookUrl = 'https://script.google.com/macros/s/AKfycbwxCjDoxOLmfgUK5A92fs8tR0s3XrlggBCD7_232w6j_GJEF-IybuKHBHNozYeQtXgw/exec';
+  const webhookUrl = 'https://script.google.com/macros/s/AKfycbzK2tjLkKaFaVFMIsgPZSj4ZtI26fD7rnqJAc7NKBTI932kOCWZzVBo6l6ezbyjxZw51A/exec';
   const [isSaving, setIsSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
@@ -474,7 +481,7 @@ export function CustomerInfoView() {
               onChange={(e) => setJenis(e.target.value)}
               className="w-full h-14 bg-surface text-text rounded-[16px] px-4 font-medium border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all appearance-none text-[16px]" 
             >
-              <option value="Tak Urgent">Tak Urgent</option>
+              <option value="Tidak Urgent">Tidak Urgent</option>
               <option value="Semi Urgent">Semi Urgent</option>
               <option value="Urgent">Urgent</option>
               <option value="Super Urgent">Super Urgent</option>

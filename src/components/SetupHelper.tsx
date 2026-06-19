@@ -175,6 +175,47 @@ function jsonResponse(obj) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
+function doGet(e) {
+  var action = e.parameter.action;
+  
+  if (action === "get_link") {
+    var orderId = e.parameter.orderId;
+    var spreadsheetId = e.parameter.spreadsheetId;
+    var callback = e.parameter.callback;
+    
+    try {
+      var ss = SpreadsheetApp.openById(spreadsheetId);
+      var sheets = ss.getSheets();
+      
+      var foundLink = "";
+      for (var s = 0; s < sheets.length; s++) {
+        var sheet = sheets[s];
+        var row = findRowByOrderId(sheet, orderId);
+        if (row) {
+          foundLink = sheet.getRange(row, 10).getValue(); // Column J is Link (10th column)
+          break;
+        }
+      }
+      
+      var result = { status: "success", link: foundLink };
+      if (callback) {
+        return ContentService.createTextOutput(callback + '(' + JSON.stringify(result) + ')')
+          .setMimeType(ContentService.MimeType.JAVASCRIPT);
+      }
+      return jsonResponse(result);
+    } catch(err) {
+      var errResult = { status: "error", message: err.toString() };
+      if (callback) {
+        return ContentService.createTextOutput(callback + '(' + JSON.stringify(errResult) + ')')
+          .setMimeType(ContentService.MimeType.JAVASCRIPT);
+      }
+      return jsonResponse(errResult);
+    }
+  }
+  
+  return ContentService.createTextOutput("OK").setMimeType(ContentService.MimeType.TEXT);
+}
+
 function doOptions(e) {
   return ContentService.createTextOutput("")
     .setMimeType(ContentService.MimeType.TEXT)

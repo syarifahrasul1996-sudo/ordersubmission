@@ -40,7 +40,7 @@ export function HomeView() {
         { id: 'super', label: 'Super Urgent', hours: superHours },
         { id: 'urgent', label: 'Urgent', hours: 24 },
         { id: 'semi', label: 'Semi Urgent', hours: 48 },
-        { id: 'normal', label: appLanguage === 'ms' ? 'Tak Urgent' : 'Not Urgent', hours: 72 },
+        { id: 'normal', label: appLanguage === 'ms' ? 'Tidak Urgent' : 'Not Urgent', hours: 72 },
       ];
 
       if (calcUrgency === 'all') {
@@ -76,7 +76,7 @@ export function HomeView() {
   };
 
   const urgencyOptions = [
-    { id: 'normal', label: appLanguage === 'ms' ? 'Tak Urgent' : 'Not Urgent' },
+    { id: 'normal', label: appLanguage === 'ms' ? 'Tidak Urgent' : 'Not Urgent' },
     { id: 'semi', label: 'Semi Urgent' },
     { id: 'urgent', label: 'Urgent' },
     { id: 'super', label: 'Super Urgent' },

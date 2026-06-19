@@ -38,7 +38,7 @@ export function ConfirmationView({ onGenerated }: { onGenerated: () => void }) {
     'super': 'Super Urgent',
     'urgent': 'Urgent',
     'semi': 'Semi Urgent',
-    'noturgent': 'Tak Urgent'
+    'noturgent': 'Tidak Urgent'
   };
   const urgencyLabel = urgencyLabels[state.urgency || ''] || '';
   
