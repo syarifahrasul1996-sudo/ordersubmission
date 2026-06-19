@@ -241,7 +241,7 @@ export function HistoryView() {
                 </div>
                 
                 <div className="flex flex-wrap gap-x-3 gap-y-1 text-[12px] mt-1.5 leading-snug">
-                  {item.state?.template && (
+                  {(item.state?.template && item.state?.mainType === 'Resume' && !item.state?.isEditMode) && (
                     <div>
                       <span className="text-subtext">{appLanguage === 'ms' ? 'Templat' : 'Template'}:</span>{' '}
                       <span className="font-medium text-text">{item.state.template}</span>
