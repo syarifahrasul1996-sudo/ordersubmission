@@ -116,7 +116,7 @@ export function CustomerInfoView() {
   const [orderId, setOrderId] = useState('');
 
   const [spreadsheetId, setSpreadsheetId] = useState(state.spreadsheetId);
-  const webhookUrl = 'https://script.google.com/macros/s/AKfycbzK2tjLkKaFaVFMIsgPZSj4ZtI26fD7rnqJAc7NKBTI932kOCWZzVBo6l6ezbyjxZw51A/exec';
+  const webhookUrl = 'https://script.google.com/macros/s/AKfycbxc44wibGH5n6KfVUI0u1oxK8DbqPENGtTwhSkFCVdErBK8bqV1UTXJvrWMBE6fMKH1Tw/exec';
   const [isSaving, setIsSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
