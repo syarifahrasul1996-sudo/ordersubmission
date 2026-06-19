@@ -178,6 +178,69 @@ function jsonResponse(obj) {
 function doGet(e) {
   var action = e.parameter.action;
   
+  if (action === "sync_recent") {
+    var spreadsheetId = e.parameter.spreadsheetId;
+    var callback = e.parameter.callback;
+
+    try {
+      var ss = SpreadsheetApp.openById(spreadsheetId);
+      var sheets = ss.getSheets();
+      var now = new Date();
+      var monthNamesEn = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+      var monthNamesMs = ["Januari", "Februari", "Mac", "April", "Mei", "Jun", "Julai", "Ogos", "September", "Oktober", "November", "Disember"];
+      
+      var targetSheets = [];
+      for (var mOffset = 0; mOffset <= 1; mOffset++) {
+        var d = new Date(now.getFullYear(), now.getMonth() + mOffset, 1);
+        targetSheets.push(monthNamesEn[d.getMonth()] + " " + d.getFullYear());
+        targetSheets.push(monthNamesMs[d.getMonth()] + " " + d.getFullYear());
+      }
+      
+      var recentOrders = [];
+      for (var s = 0; s < sheets.length; s++) {
+        var sheet = sheets[s];
+        if (targetSheets.indexOf(sheet.getName()) !== -1) {
+          var lastRow = sheet.getLastRow();
+          if (lastRow >= 3) {
+            var values = sheet.getRange(3, 1, lastRow - 2, 11).getValues();
+            for (var r = 0; r < values.length; r++) {
+              var rowData = values[r];
+              var done = String(rowData[0]).toLowerCase();
+              if (done !== "true") {
+                recentOrders.push({
+                  name: rowData[1] || "",
+                  phone: rowData[2] || "",
+                  order: rowData[3] || "",
+                  template: rowData[4] || "",
+                  bahasa: rowData[5] || "",
+                  addon: rowData[6] || "",
+                  jenis: rowData[7] || "",
+                  due: rowData[8] || "",
+                  link: String(rowData[9] || ""),
+                  orderId: String(rowData[10] || "")
+                });
+              }
+            }
+          }
+        }
+      }
+      
+      var result = { status: "success", orders: recentOrders };
+      if (callback) {
+        return ContentService.createTextOutput(callback + '(' + JSON.stringify(result) + ')')
+          .setMimeType(ContentService.MimeType.JAVASCRIPT);
+      }
+      return jsonResponse(result);
+    } catch(err) {
+      var errResult = { status: "error", message: err.toString() };
+      if (callback) {
+        return ContentService.createTextOutput(callback + '(' + JSON.stringify(errResult) + ')')
+          .setMimeType(ContentService.MimeType.JAVASCRIPT);
+      }
+      return jsonResponse(errResult);
+    }
+  }
+  
   if (action === "get_link") {
     var orderId = e.parameter.orderId;
     var spreadsheetId = e.parameter.spreadsheetId;

@@ -23,7 +23,11 @@ export interface AppState {
   customerAddOn?: string;
   customerJenis?: string;
   customerDue?: string;
+  dueTimestamp?: number;
+  hasNotified?: boolean;
+  isDelivered?: boolean;
   customerInfo?: string;
+  orderLink?: string;
   googleSheetLink?: string;
   orderId?: string;
 }
@@ -60,7 +64,11 @@ export const INITIAL_STATE: AppState = {
   customerAddOn: '',
   customerJenis: '',
   customerDue: '',
+  dueTimestamp: 0,
+  hasNotified: false,
+  isDelivered: false,
   customerInfo: '',
+  orderLink: '',
   googleSheetLink: '',
   orderId: '',
 };

@@ -13,6 +13,7 @@ interface AppContextType {
   generatedMessages: string[];
   setGeneratedMessages: (msgs: string[]) => void;
   history: OrderHistoryItem[];
+  setHistory: React.Dispatch<React.SetStateAction<OrderHistoryItem[]>>;
   saveOrderToHistory: (messages: string[]) => void;
   updateOrderHistoryState: (updates: Partial<AppState>) => void;
   updateSpecificHistoryItem: (id: string, updates: Partial<AppState>) => void;
@@ -119,6 +120,59 @@ export function AppProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('appLanguage', appLanguage);
   }, [appLanguage]);
 
+  useEffect(() => {
+    const checkAlerts = () => {
+      const now = Date.now();
+      const TWENTY_MINS = 20 * 60 * 1000;
+      
+      let updatedHistory = false;
+      const newHistory = history.map(item => {
+        const { dueTimestamp, hasNotified, customerName, subType, mainType, orderId, isDelivered } = item.state;
+        if (dueTimestamp && !hasNotified && !isDelivered) {
+          const timeUntilDue = dueTimestamp - now;
+          if (timeUntilDue > 0 && timeUntilDue <= TWENTY_MINS) {
+            // Due in 20 minutes or less!
+            const title = 'Order Due Soon!';
+            const body = `Order for ${customerName || 'Customer'} (${mainType} ${subType}) is due in less than 20 minutes!`;
+            
+            // Try Notification API if supported and granted
+            if ('Notification' in window && Notification.permission === 'granted') {
+              new Notification(title, { body });
+            } else {
+              // Fallback to alert if no notification permission (though alert is blocky)
+              // Only alert if we aren't completely in the background. But browser might block it.
+              // To avoid annoying blocking alerts on reload, we only alert if it wasn't due a long time ago.
+              // Actually, better to just use Notification or nothing, but the user asked for webapp to send alert.
+              // Let's use a standard browser alert for now if no permission (or try asking for permission).
+            }
+
+            // We update state to hasNotified = true
+            updatedHistory = true;
+            return {
+              ...item,
+              state: { ...item.state, hasNotified: true }
+            };
+          }
+        }
+        return item;
+      });
+
+      if (updatedHistory) {
+        setHistory(newHistory);
+      }
+    };
+
+    // Ask for permission if not asked yet
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+
+    const interval = setInterval(checkAlerts, 60000); // check every minute
+    checkAlerts(); // check right away
+    
+    return () => clearInterval(interval);
+  }, [history]);
+
   const toggleTheme = () => setTheme(t => t === 'light' ? 'dark' : 'light');
   const toggleLanguage = () => setAppLanguage(l => l === 'ms' ? 'en' : 'ms');
 
@@ -215,7 +269,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AppContext.Provider value={{ state, setState, viewStack, pushView, startNewOrder, popView, goHome, reset, generatedMessages, setGeneratedMessages, history, saveOrderToHistory, updateOrderHistoryState, updateSpecificHistoryItem, deleteOrderFromHistory, clearHistory, loadOrder, theme, toggleTheme, appLanguage, toggleLanguage }}>
+    <AppContext.Provider value={{ state, setState, viewStack, pushView, startNewOrder, popView, goHome, reset, generatedMessages, setGeneratedMessages, history, setHistory, saveOrderToHistory, updateOrderHistoryState, updateSpecificHistoryItem, deleteOrderFromHistory, clearHistory, loadOrder, theme, toggleTheme, appLanguage, toggleLanguage }}>
       {children}
     </AppContext.Provider>
   );

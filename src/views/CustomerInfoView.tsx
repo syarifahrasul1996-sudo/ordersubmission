@@ -92,9 +92,11 @@ export function CustomerInfoView() {
       initBahasa: state.customerBahasa || initBahasa, 
       initJenis: state.customerJenis || initJenis, 
       initDue: state.customerDue || `${formattedDate} at ${formattedTime}`, 
+      initDueTimestamp: state.dueTimestamp || dl.getTime(),
       initTemplate: state.customerTemplate || initTemplate, 
       initAddOn: state.customerAddOn || initAddOn,
       initInfo: state.customerInfo || '',
+      initLink: state.orderLink || '',
       initOrderId,
     };
   };
@@ -102,6 +104,7 @@ export function CustomerInfoView() {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [info, setInfo] = useState('');
+  const [link, setLink] = useState('');
   
   const [order, setOrder] = useState('');
   const [template, setTemplate] = useState('');
@@ -109,6 +112,7 @@ export function CustomerInfoView() {
   const [addOn, setAddOn] = useState('');
   const [jenis, setJenis] = useState('');
   const [due, setDue] = useState('');
+  const [dueTimestamp, setDueTimestamp] = useState(0);
   const [orderId, setOrderId] = useState('');
 
   const [spreadsheetId, setSpreadsheetId] = useState(state.spreadsheetId);
@@ -145,12 +149,14 @@ export function CustomerInfoView() {
       setName(initVals.initName);
       setPhone(initVals.initPhone);
       setInfo(initVals.initInfo);
+      setLink(initVals.initLink);
       setOrder(initVals.initOrder);
       setTemplate(initVals.initTemplate);
       setBahasa(initVals.initBahasa);
       setAddOn(initVals.initAddOn);
       setJenis(initVals.initJenis);
       setDue(initVals.initDue);
+      setDueTimestamp(initVals.initDueTimestamp);
       setOrderId(initVals.initOrderId);
       setSpreadsheetId(state.spreadsheetId);
     }
@@ -167,12 +173,15 @@ export function CustomerInfoView() {
       customerName: name,
       customerPhone: phone,
       customerInfo: info,
+      orderLink: link,
       customerOrder: order,
       customerTemplate: template,
       customerBahasa: bahasa,
       customerAddOn: addOn,
       customerJenis: jenis,
       customerDue: due,
+      dueTimestamp: dueTimestamp,
+      hasNotified: false,
       orderId: orderId,
       spreadsheetId: spreadsheetId,
     });
@@ -202,7 +211,7 @@ export function CustomerInfoView() {
         addOn || "",
         jenis,
         due,
-        "",
+        link || "",
         orderId || ""
       ].map(v => v == null ? "" : v);
 
@@ -499,6 +508,17 @@ export function CustomerInfoView() {
             type="text" 
             value={due}
             onChange={(e) => setDue(e.target.value)}
+            className="w-full h-14 bg-surface rounded-[16px] px-4 font-medium text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all text-[16px]" 
+          />
+        </div>
+
+        <div className="space-y-1">
+          <label className="text-[13px] font-bold text-text ml-1 uppercase tracking-wider">Link</label>
+          <input 
+            type="text" 
+            value={link}
+            onChange={(e) => setLink(e.target.value)}
+            placeholder="https://..."
             className="w-full h-14 bg-surface rounded-[16px] px-4 font-medium text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all text-[16px]" 
           />
         </div>

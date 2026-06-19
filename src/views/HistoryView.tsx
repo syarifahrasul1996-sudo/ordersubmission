@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Clock, Copy, Trash2, Calendar, AlertCircle, RefreshCcw, Save } from 'lucide-react';
+import { Clock, Trash2, Calendar, AlertCircle, RefreshCcw, Save, Bell, Check } from 'lucide-react';
 import { useAppContext } from '../AppContext';
 
 const formatCustomerName = (name?: string) => {
@@ -9,7 +9,7 @@ const formatCustomerName = (name?: string) => {
 };
 
 export function HistoryView() {
-  const { history, clearHistory, deleteOrderFromHistory, loadOrder, pushView, appLanguage, updateSpecificHistoryItem } = useAppContext();
+  const { state, history, setHistory, clearHistory, deleteOrderFromHistory, loadOrder, pushView, appLanguage, updateSpecificHistoryItem } = useAppContext();
   const [showConfirm, setShowConfirm] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [pullProgress, setPullProgress] = useState(0);
@@ -126,16 +126,125 @@ export function HistoryView() {
     }
   };
 
-  const handleCopyAll = async (msgs: string[]) => {
+  const handleGlobalSync = async () => {
+    if (!state.spreadsheetId) {
+      alert(appLanguage === 'ms' ? 'Sila tetapkan Spreadsheet ID terlebih dahulu.' : 'Please set Spreadsheet ID first in settings.');
+      return;
+    }
+    setRefreshing(true);
+    
     try {
-      await navigator.clipboard.writeText(msgs.join('\n\n\n'));
+      const webhookUrl = 'https://script.google.com/macros/s/AKfycbzK2tjLkKaFaVFMIsgPZSj4ZtI26fD7rnqJAc7NKBTI932kOCWZzVBo6l6ezbyjxZw51A/exec';
+      const callbackName = 'jsonp_callback_sync_' + Math.round(100000 * Math.random());
+      const url = new URL(webhookUrl);
+      url.searchParams.append('action', 'sync_recent');
+      url.searchParams.append('spreadsheetId', state.spreadsheetId);
+      url.searchParams.append('callback', callbackName);
+
+      const script = document.createElement('script');
+      script.src = url.toString();
+      
+      const jsonpPromise = new Promise((resolve, reject) => {
+        const timeoutId = setTimeout(() => {
+          reject(new Error('Request timed out.'));
+          cleanup();
+        }, 15000);
+
+        (window as any)[callbackName] = (data: any) => {
+          clearTimeout(timeoutId);
+          resolve(data);
+          cleanup();
+        };
+
+        script.onerror = () => {
+          clearTimeout(timeoutId);
+          reject(new Error('Failed to fetch'));
+          cleanup();
+        };
+
+        const cleanup = () => {
+          delete (window as any)[callbackName];
+          if (script.parentNode) script.parentNode.removeChild(script);
+        };
+      });
+
+      document.body.appendChild(script);
+
+      const data: any = await jsonpPromise;
+      if (data.status === "success" && Array.isArray(data.orders)) {
+        const currentNow = Date.now();
+        const existingHistory = [...history];
+        
+        let newCount = 0;
+        let updateCount = 0;
+
+        for (const orderData of data.orders) {
+          if (!orderData.orderId) continue;
+          
+          const existingIdx = existingHistory.findIndex(h => h.state.orderId === orderData.orderId);
+          const dueStr = orderData.due || '';
+          let dueTs = 0;
+          if (dueStr) {
+            const parsedStr = dueStr.replace(' at ', ' ');
+            const testDate = new Date(parsedStr);
+            if (!isNaN(testDate.getTime())) {
+              dueTs = testDate.getTime();
+            } else {
+              const parts = dueStr.split(' ')[0].split('/');
+              if (parts.length === 3) {
+                const parsedDME = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
+                if (!isNaN(parsedDME.getTime())) dueTs = parsedDME.getTime();
+              }
+            }
+          }
+
+          const newState = {
+            customerName: orderData.name,
+            customerPhone: orderData.phone,
+            customerOrder: orderData.order,
+            customerTemplate: orderData.template,
+            customerBahasa: orderData.bahasa,
+            customerAddOn: orderData.addon,
+            customerJenis: orderData.jenis,
+            customerDue: orderData.due,
+            orderLink: orderData.link,
+            googleSheetLink: orderData.link,
+            orderId: orderData.orderId,
+            dueTimestamp: dueTs,
+            mainType: orderData.order === 'Resume' ? 'Resume' : (orderData.order === 'Surat' ? 'Surat' : (orderData.order || 'Lain-lain')),
+            subType: '',
+          };
+
+          if (existingIdx !== -1) {
+            existingHistory[existingIdx] = {
+              ...existingHistory[existingIdx],
+              state: {
+                ...existingHistory[existingIdx].state,
+                ...newState
+              }
+            };
+            updateCount++;
+          } else {
+            existingHistory.push({
+              id: 'synced_' + Math.random().toString(36).substr(2, 9),
+              timestamp: currentNow,
+              state: newState,
+              messages: []
+            });
+            newCount++;
+          }
+        }
+        
+        setHistory(existingHistory);
+        alert(appLanguage === 'ms' ? `Berjaya disegerak.\nBaru: ${newCount}\nDikemaskini: ${updateCount}` : `Sync successful.\nNew: ${newCount}\nUpdated: ${updateCount}`);
+      } else {
+        alert(data.message || 'Unknown error');
+      }
     } catch (e) {
-      const ta = document.createElement("textarea");
-      ta.value = msgs.join('\n\n\n');
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand('copy');
-      document.body.removeChild(ta);
+      alert("Sync failed: " + e);
+    } finally {
+      setRefreshing(false);
+      setPullProgress(0);
     }
   };
 
@@ -170,15 +279,27 @@ export function HistoryView() {
       </div>
 
       <div className="p-4 sm:p-6 space-y-4">
-        {history.length > 0 && (
-          <div className="flex justify-end mb-2">
+        {history.length >= 0 && (
+          <div className="flex justify-between items-center mb-2">
             <button 
-              onClick={() => setShowConfirm(true)}
-              className="flex items-center text-[13px] font-bold text-red-500 hover:bg-red-50 px-3 py-1.5 rounded-full transition-all"
+              onClick={handleGlobalSync}
+              disabled={refreshing}
+              className={`flex items-center text-[13px] font-bold px-3 py-1.5 rounded-full transition-all ${refreshing ? 'bg-blue-100 text-blue-400 cursor-not-allowed' : 'bg-blue-50 text-blue-600 hover:bg-blue-100'}`}
+              title={appLanguage === 'ms' ? 'Segerak dari Google Sheet' : 'Sync from Google Sheet'}
             >
-              <Trash2 className="w-4 h-4 mr-1" />
-              {appLanguage === 'ms' ? 'Padam Semua' : 'Delete All'}
+              <RefreshCcw className={`w-4 h-4 mr-1.5 ${refreshing ? 'animate-spin' : ''}`} />
+              {appLanguage === 'ms' ? 'Segerak' : 'Sync'}
             </button>
+
+            {history.length > 0 && (
+              <button 
+                onClick={() => setShowConfirm(true)}
+                className="flex items-center text-[13px] font-bold text-red-500 hover:bg-red-50 px-3 py-1.5 rounded-full transition-all"
+              >
+                <Trash2 className="w-4 h-4 mr-1" />
+                {appLanguage === 'ms' ? 'Padam Semua' : 'Delete All'}
+              </button>
+            )}
           </div>
         )}
 
@@ -198,17 +319,31 @@ export function HistoryView() {
               minute: '2-digit'
             });
 
+            const now = Date.now();
+            const isDelivered = item.state.isDelivered;
+            const timeUntilDue = item.state.dueTimestamp ? item.state.dueTimestamp - now : 0;
+            const isDueSoon = !isDelivered && timeUntilDue > 0 && timeUntilDue <= 20 * 60 * 1000;
+            const isOverdue = !isDelivered && item.state.dueTimestamp ? timeUntilDue <= 0 : false;
+
             return (
               <div 
                 key={item.id} 
                 onClick={() => loadOrder(item)}
-                className="bg-surface border border-gray-100 rounded-[16px] p-2.5 shadow-sm flex flex-col space-y-1 cursor-pointer hover:bg-gray-50 active:scale-[0.99] transition-all"
+                className={`bg-surface border ${isDelivered ? 'border-blue-200 bg-blue-50/10' : (isDueSoon ? 'border-red-400 bg-red-50/10' : (isOverdue ? 'border-orange-200 bg-orange-50/10' : 'border-gray-100'))} rounded-[16px] p-2.5 shadow-sm flex flex-col space-y-1 cursor-pointer hover:bg-gray-50 active:scale-[0.99] transition-all`}
               >
                 <div className="flex justify-between items-start border-b border-gray-100 pb-1.5">
                   <div>
-                    <div className="flex items-center text-primary/70 text-[10px] font-black uppercase tracking-widest mb-0.5">
-                      <Calendar className="w-3 h-3 mr-1" />
+                    <div className={`flex items-center ${isDelivered ? 'text-blue-500' : (isDueSoon ? 'text-red-500' : 'text-primary/70')} text-[10px] font-black uppercase tracking-widest mb-0.5`}>
+                      {isDelivered ? (
+                        <Check className="w-3 h-3 mr-1" />
+                      ) : isDueSoon ? (
+                        <Bell className="w-3 h-3 mr-1 animate-pulse" />
+                      ) : (
+                        <Calendar className="w-3 h-3 mr-1" />
+                      )}
                       {formattedDate}
+                      {isDueSoon && <span className="ml-1 text-red-500 lowercase">({Math.ceil(timeUntilDue / 60000)}m)</span>}
+                      {isDelivered && <span className="ml-1 text-blue-500 lowercase">({appLanguage === 'ms' ? 'Dihantar' : 'Delivered'})</span>}
                     </div>
                     <p className="font-bold text-[14px] leading-tight text-text">
                       {item.state?.mainType === 'Lain-lain' ? item.state?.customDoc : item.state?.mainType} {item.state?.isEditMode ? '(Edit)' : ''}
@@ -222,13 +357,6 @@ export function HistoryView() {
                       title="Google Sheets"
                     >
                       <Save className="w-3.5 h-3.5" />
-                    </button>
-                    <button 
-                      onClick={(e) => { e.stopPropagation(); handleCopyAll(item.messages || []); }}
-                      className="w-8 h-8 bg-gray-100 text-text rounded-full flex items-center justify-center active:scale-95 transition-all"
-                      title={appLanguage === 'ms' ? 'Salin Semua' : 'Copy All'}
-                    >
-                      <Copy className="w-3.5 h-3.5" />
                     </button>
                     <button 
                       onClick={(e) => { e.stopPropagation(); deleteOrderFromHistory(item.id); }}
@@ -300,6 +428,19 @@ export function HistoryView() {
                       </button>
                     </div>
                   )}
+
+                  <div className="w-full pt-2 mt-1 border-t border-gray-100 flex items-center justify-start">
+                    <button 
+                      onClick={(e) => { 
+                        e.stopPropagation(); 
+                        updateSpecificHistoryItem(item.id, { isDelivered: !isDelivered, hasNotified: false }); 
+                      }}
+                      className={`px-3 py-1.5 text-[11px] font-bold rounded-lg flex items-center active:scale-95 transition-all ${isDelivered ? 'bg-blue-50 text-blue-600 border border-blue-200 shadow-sm' : 'bg-white text-gray-500 border border-gray-200 hover:bg-gray-50 shadow-sm'}`}
+                    >
+                      <Check className={`w-3.5 h-3.5 mr-1.5 ${isDelivered ? 'text-blue-500' : 'text-gray-400'}`} />
+                      {appLanguage === 'ms' ? (isDelivered ? 'Dihantar' : 'Belum Dihantar') : (isDelivered ? 'Delivered' : 'Not Delivered')}
+                    </button>
+                  </div>
                 </div>
               </div>
             );
