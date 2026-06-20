@@ -23,7 +23,8 @@ export function HistoryView() {
     loadOrder,
     pushView,
     appLanguage,
-    updateSpecificHistoryItem
+    updateSpecificHistoryItem,
+    updateOrderHistoryState
   } = useAppContext();
 
   const [showConfirm, setShowConfirm] = useState(false);
@@ -755,6 +756,23 @@ export function HistoryView() {
                   const phoneMatch = (item.state?.customerPhone || '').toLowerCase().includes(query);
                   if (!nameMatch && !idMatch && !phoneMatch) return false;
                 }
+
+                // Date filter: only show today's order, 2 days before and 3 days onward relative to today
+                const orderTime = item.state?.dueTimestamp || item.timestamp || Date.now();
+                const now = new Date();
+                
+                const minDate = new Date(now);
+                minDate.setDate(now.getDate() - 2);
+                minDate.setHours(0, 0, 0, 0);
+
+                const maxDate = new Date(now);
+                maxDate.setDate(now.getDate() + 3);
+                maxDate.setHours(23, 59, 59, 999);
+
+                if (orderTime < minDate.getTime() || orderTime > maxDate.getTime()) {
+                  return false;
+                }
+
                 return true;
               });
 
@@ -1199,7 +1217,7 @@ export function HistoryView() {
                           }
                           return input;
                         };
-                        state.spreadsheetId = extractId(firstActive.spreadsheetId);
+                        updateOrderHistoryState({ spreadsheetId: extractId(firstActive.spreadsheetId) });
                       }
                       alert(
                         appLanguage === 'ms' 
