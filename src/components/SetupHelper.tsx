@@ -75,7 +75,11 @@ export function SetupHelper({ onClose, appLanguage }: SetupHelperProps) {
 
     if (existingRow) {
       var existingCheckbox = sheet.getRange(existingRow, 1).getValue();
-      rowData[0] = existingCheckbox;
+      if (rowData[0] === true || existingCheckbox === true || String(existingCheckbox).toUpperCase() === "TRUE") {
+        rowData[0] = true;
+      } else {
+        rowData[0] = false;
+      }
 
       sheet.getRange(existingRow, 1, 1, rowData.length).setValues([rowData]);
       applyRowTemplate(sheet, existingRow);
@@ -178,6 +182,43 @@ function jsonResponse(obj) {
 function doGet(e) {
   var action = e.parameter.action;
   
+  if (action === "update_delivered") {
+    var orderId = e.parameter.orderId;
+    var spreadsheetId = e.parameter.spreadsheetId;
+    var isDelivered = e.parameter.isDelivered;
+    var callback = e.parameter.callback;
+
+    try {
+      var ss = SpreadsheetApp.openById(spreadsheetId);
+      var sheets = ss.getSheets();
+      var updated = false;
+
+      for (var s = 0; s < sheets.length; s++) {
+        var sheet = sheets[s];
+        var row = findRowByOrderId(sheet, orderId);
+        if (row) {
+          sheet.getRange(row, 1).setValue(isDelivered === "true" || isDelivered === true);
+          updated = true;
+          break;
+        }
+      }
+
+      var result = { status: "success", updated: updated };
+      if (callback) {
+        return ContentService.createTextOutput(callback + '(' + JSON.stringify(result) + ')')
+          .setMimeType(ContentService.MimeType.JAVASCRIPT);
+      }
+      return jsonResponse(result);
+    } catch(err) {
+      var errResult = { status: "error", message: err.toString() };
+      if (callback) {
+        return ContentService.createTextOutput(callback + '(' + JSON.stringify(errResult) + ')')
+          .setMimeType(ContentService.MimeType.JAVASCRIPT);
+      }
+      return jsonResponse(errResult);
+    }
+  }
+
   if (action === "sync_recent") {
     var spreadsheetId = e.parameter.spreadsheetId;
     var callback = e.parameter.callback;
@@ -205,21 +246,21 @@ function doGet(e) {
             var values = sheet.getRange(3, 1, lastRow - 2, 11).getValues();
             for (var r = 0; r < values.length; r++) {
               var rowData = values[r];
-              var done = String(rowData[0]).toLowerCase();
-              if (done !== "true") {
-                recentOrders.push({
-                  name: rowData[1] || "",
-                  phone: rowData[2] || "",
-                  order: rowData[3] || "",
-                  template: rowData[4] || "",
-                  bahasa: rowData[5] || "",
-                  addon: rowData[6] || "",
-                  jenis: rowData[7] || "",
-                  due: rowData[8] || "",
-                  link: String(rowData[9] || ""),
-                  orderId: String(rowData[10] || "")
-                });
-              }
+              var doneVal = String(rowData[0]).toLowerCase();
+              var isDeliveredVal = (doneVal === "true" || doneVal === "1" || doneVal === "yes");
+              recentOrders.push({
+                isDelivered: isDeliveredVal,
+                name: rowData[1] || "",
+                phone: rowData[2] || "",
+                order: rowData[3] || "",
+                template: rowData[4] || "",
+                bahasa: rowData[5] || "",
+                addon: rowData[6] || "",
+                jenis: rowData[7] || "",
+                due: rowData[8] || "",
+                link: String(rowData[9] || ""),
+                orderId: String(rowData[10] || "")
+              });
             }
           }
         }

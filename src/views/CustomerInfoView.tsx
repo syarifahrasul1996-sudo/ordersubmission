@@ -167,7 +167,109 @@ export function CustomerInfoView() {
       setErrorMsg(appLanguage === 'ms' ? 'Sila isi semua ruangan.' : 'Please fill all fields.');
       return;
     }
+
+    // Parse the edited "due" text field to dueTimestamp so card/history display is perfectly synchronized
+    let parsedTimestamp = dueTimestamp;
+    if (due && due.trim().length > 0) {
+      const dueStrClean = due.replace(/\s+at\s+/i, ' ').trim();
+      const directDate = new Date(dueStrClean);
+      if (!isNaN(directDate.getTime())) {
+        parsedTimestamp = directDate.getTime();
+      } else {
+        // Attempt custom DD/MM/YYYY parses with optional time
+        const parts = dueStrClean.split(/\s+/);
+        const datePart = parts[0];
+        const timePart = parts[1] || '00:00';
+
+        const dateSegs = datePart.split('/');
+        if (dateSegs.length === 3) {
+          const day = parseInt(dateSegs[0], 10);
+          const month = parseInt(dateSegs[1], 10) - 1;
+          const year = parseInt(dateSegs[2], 10);
+
+          const timeSegs = timePart.split(':');
+          let hours = parseInt(timeSegs[0] || '0', 10);
+          const minutes = parseInt(timeSegs[1] || '0', 10);
+          const seconds = parseInt(timeSegs[2] || '0', 10);
+
+          const isPM = dueStrClean.toUpperCase().includes('PM');
+          const isAM = dueStrClean.toUpperCase().includes('AM');
+          if (isPM && hours < 12) {
+            hours += 12;
+          } else if (isAM && hours === 12) {
+            hours = 0;
+          }
+
+          const parsedDME = new Date(year, month, day, hours, minutes, seconds);
+          if (!isNaN(parsedDME.getTime())) {
+            parsedTimestamp = parsedDME.getTime();
+          }
+        }
+      }
+    }
     
+    // Determine monthly target sheet name on frontend to submit
+    let targetDate = new Date();
+    if (due && due.trim().length > 0) {
+      // Simple heuristic: try to parse the due string to a Date
+      // Since due might be "15/06/2026 at 10:00" or similar
+      const dueStr = due.replace(' at ', ' ');
+      const parsedDue = new Date(dueStr);
+      if (!isNaN(parsedDue.getTime())) {
+        targetDate = parsedDue;
+      } else {
+        // Attempt DD/MM/YYYY
+        const parts = due.split(' ')[0].split('/');
+        if (parts.length === 3) {
+          const parsedDME = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
+          if (!isNaN(parsedDME.getTime())) {
+            targetDate = parsedDME;
+          }
+        }
+      }
+    }
+
+    const orderYear = String(targetDate.getFullYear());
+    let resolvedSpreadsheetId = spreadsheetId || state.spreadsheetId || '1kUAJYUVhr9bPYErtpnohpvuGGyhBSvJyEOIyzEFivJo';
+    let resolvedWebhookUrl = webhookUrl.trim();
+
+    try {
+      const savedSheets = localStorage.getItem('db_annual_sheets');
+      if (savedSheets) {
+        const parsed = JSON.parse(savedSheets);
+        if (Array.isArray(parsed)) {
+          const matches = parsed.find(s => s.year === orderYear);
+          if (matches) {
+            if (matches.spreadsheetId && matches.spreadsheetId.trim()) {
+              const rawInput = matches.spreadsheetId.trim();
+              if (rawInput.includes('docs.google.com/spreadsheets/d/')) {
+                const matchedId = rawInput.match(/\/d\/([a-zA-Z0-9-_]+)/);
+                resolvedSpreadsheetId = matchedId ? matchedId[1] : rawInput;
+              } else {
+                resolvedSpreadsheetId = rawInput;
+              }
+            }
+            if (matches.scriptUrl && matches.scriptUrl.trim()) {
+              resolvedWebhookUrl = matches.scriptUrl.trim();
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.error("Error reading db_annual_sheets:", err);
+    }
+
+    // Default fallbacks for each year if not customized
+    if (resolvedSpreadsheetId === '1kUAJYUVhr9bPYErtpnohpvuGGyhBSvJyEOIyzEFivJo' || !resolvedSpreadsheetId) {
+      if (orderYear === '2024') {
+        resolvedSpreadsheetId = '1B9zdWXVLnvj0jNNVnKxcb6cJnS1VLCIdB4j-RR3wOlg';
+      } else if (orderYear === '2025') {
+        resolvedSpreadsheetId = '1myU9apnYWWtU3snnCw14qI6ZS05i4DY6oOswLz1sCwo';
+      } else if (orderYear === '2026') {
+        resolvedSpreadsheetId = '1kUAJYUVhr9bPYErtpnohpvuGGyhBSvJyEOIyzEFivJo';
+      }
+    }
+
     // Save the new values to global state + history
     updateOrderHistoryState({
       customerName: name,
@@ -180,12 +282,14 @@ export function CustomerInfoView() {
       customerAddOn: addOn,
       customerJenis: jenis,
       customerDue: due,
-      dueTimestamp: dueTimestamp,
+      dueTimestamp: parsedTimestamp,
       hasNotified: false,
       orderId: orderId,
-      spreadsheetId: spreadsheetId,
+      spreadsheetId: resolvedSpreadsheetId,
+      scriptUrl: resolvedWebhookUrl,
     });
 
+    setDueTimestamp(parsedTimestamp);
     setErrorMsg('');
     setIsSaving(true);
     setSaved(false);
@@ -214,28 +318,6 @@ export function CustomerInfoView() {
         link || "",
         orderId || ""
       ].map(v => v == null ? "" : v);
-
-      // We save directly to Apps Script Web App URL
-      // Determine monthly target sheet name on frontend to submit
-      let targetDate = new Date();
-      if (due && due.trim().length > 0) {
-        // Simple heuristic: try to parse the due string to a Date
-        // Since due might be "15/06/2026 at 10:00" or similar
-        const dueStr = due.replace(' at ', ' ');
-        const parsedDue = new Date(dueStr);
-        if (!isNaN(parsedDue.getTime())) {
-          targetDate = parsedDue;
-        } else {
-          // Attempt DD/MM/YYYY
-          const parts = due.split(' ')[0].split('/');
-          if (parts.length === 3) {
-            const parsedDME = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
-            if (!isNaN(parsedDME.getTime())) {
-              targetDate = parsedDME;
-            }
-          }
-        }
-      }
       
       const monthNamesEn = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
       const monthNamesMs = ["Januari", "Februari", "Mac", "April", "Mei", "Jun", "Julai", "Ogos", "September", "Oktober", "November", "Disember"];
@@ -249,12 +331,12 @@ export function CustomerInfoView() {
         sheetName: targetSheetEn, // Fallback for older script version
         sheetNameEn: targetSheetEn,
         sheetNameMs: targetSheetMs,
-        spreadsheetId: state.spreadsheetId
+        spreadsheetId: resolvedSpreadsheetId
       };
       
       console.log("Submitting payload to Google Apps Script:", JSON.stringify(payload, null, 2));
 
-      const response = await fetch(webhookUrl.trim(), {
+      const response = await fetch(resolvedWebhookUrl, {
         method: 'POST',
         mode: 'no-cors',
         headers: {
