@@ -33,7 +33,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     try {
       const saved = localStorage.getItem('appTheme') as 'light' | 'dark';
       if (saved) return saved;
-      return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      return 'light';
     } catch {
       return 'light';
     }
@@ -202,125 +202,204 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const TWENTY_MINS = 20 * 60 * 1000;
       const THREE_HOURS = 3 * 60 * 60 * 1000;
       
-      let updatedHistory = false;
-      const newHistory = history.map(item => {
-        const { dueTimestamp, hasNotified, hasThreeHourChecked, customerName, subType, mainType, orderId, isDelivered } = item.state;
-        
-        let itemUpdated = false;
-        let newState = { ...item.state };
+      setHistory(prevHistory => {
+        let updatedHistory = false;
+        const newHistory = prevHistory.map(item => {
+          const { dueTimestamp, hasNotified, hasThreeHourChecked, customerName, subType, mainType, orderId, isDelivered } = item.state;
+          
+          let itemUpdated = false;
+          let newState = { ...item.state };
 
-        if (dueTimestamp && !isDelivered) {
-          const timeUntilDue = dueTimestamp - now;
+          if (dueTimestamp && !isDelivered) {
+            const timeUntilDue = dueTimestamp - now;
 
-          // 1. Check 3 hours logic: 3 hours before due time
-          if (timeUntilDue <= THREE_HOURS && !hasThreeHourChecked) {
-            newState.hasThreeHourChecked = true;
-            itemUpdated = true;
+            // 1. Check 3 hours logic: 3 hours before due time
+            if (timeUntilDue <= THREE_HOURS && !hasThreeHourChecked) {
+              newState.hasThreeHourChecked = true;
+              itemUpdated = true;
 
-            const spreadsheetId = item.state?.spreadsheetId || '1kUAJYUVhr9bPYErtpnohpvuGGyhBSvJyEOIyzEFivJo';
-            const oId = item.state?.orderId;
+              const spreadsheetId = item.state?.spreadsheetId || '1kUAJYUVhr9bPYErtpnohpvuGGyhBSvJyEOIyzEFivJo';
+              const oId = item.state?.orderId;
 
-            if (oId && spreadsheetId) {
-              const callbackName = 'jsonp_auto_sync_' + Math.round(100000 * Math.random()) + '_' + item.id;
-              const url = new URL(getActiveScriptUrl(spreadsheetId));
-              url.searchParams.append('action', 'get_link');
-              url.searchParams.append('orderId', oId);
-              url.searchParams.append('spreadsheetId', spreadsheetId);
-              url.searchParams.append('callback', callbackName);
+              if (oId && spreadsheetId) {
+                const callbackName = 'jsonp_auto_sync_' + Math.round(100000 * Math.random()) + '_' + item.id;
+                const url = new URL(getActiveScriptUrl(spreadsheetId));
+                url.searchParams.append('action', 'get_link');
+                url.searchParams.append('orderId', oId);
+                url.searchParams.append('spreadsheetId', spreadsheetId);
+                url.searchParams.append('callback', callbackName);
 
-              jsonpRequest(url, callbackName)
-                .then((data) => {
-                  if (data && data.status === 'success' && data.link) {
-                    // Update successfully and save link
-                    updateSpecificHistoryItem(item.id, {
-                      googleSheetLink: data.link,
-                      orderLink: data.link,
-                      hasThreeHourChecked: true,
-                      threeHourAlerted: true
-                    });
-                  } else {
-                    // Not updated, send custom status query notification!
+                jsonpRequest(url, callbackName)
+                  .then((data) => {
+                    if (data && data.status === 'success' && data.link) {
+                      // Update successfully and save link
+                      updateSpecificHistoryItem(item.id, {
+                        googleSheetLink: data.link,
+                        orderLink: data.link,
+                        hasThreeHourChecked: true,
+                        threeHourAlerted: true
+                      });
+                    } else {
+                      // Not updated, send custom status query notification!
+                      if (!item.state.googleSheetLink || item.state.googleSheetLink.trim() === '') {
+                        const notifyTitle = appLanguage === 'ms' ? 'Status Tempahan' : 'Ask Order Status';
+                        const notifyBody = `${customerName || 'Customer'} (${mainType || 'Tempahan'}) - Dah siap ke belum? Link masih belum dimasukkan.`;
+                        
+                        try {
+                          if ('Notification' in window && Notification.permission === 'granted') {
+                            new Notification(notifyTitle, { body: notifyBody });
+                          }
+                        } catch (e) { console.warn(e); }
+                      }
+                      updateSpecificHistoryItem(item.id, {
+                        hasThreeHourChecked: true,
+                        threeHourAlerted: true
+                      });
+                    }
+                  })
+                  .catch((err) => {
+                    console.warn('Auto background sync failed:', err);
                     if (!item.state.googleSheetLink || item.state.googleSheetLink.trim() === '') {
-                      const notifyTitle = appLanguage === 'ms' ? 'Tanya Status Tempahan' : 'Ask Order Status';
+                      const notifyTitle = appLanguage === 'ms' ? 'Status Tempahan' : 'Ask Order Status';
                       const notifyBody = `${customerName || 'Customer'} (${mainType || 'Tempahan'}) - Dah siap ke belum? Link masih belum dimasukkan.`;
                       
-                      if ('Notification' in window && Notification.permission === 'granted') {
-                        new Notification(notifyTitle, { body: notifyBody });
-                      }
+                      try {
+                        if ('Notification' in window && Notification.permission === 'granted') {
+                          new Notification(notifyTitle, { body: notifyBody });
+                        }
+                      } catch (e) { console.warn(e); }
                     }
                     updateSpecificHistoryItem(item.id, {
                       hasThreeHourChecked: true,
                       threeHourAlerted: true
                     });
-                  }
-                })
-                .catch((err) => {
-                  console.warn('Auto background sync failed:', err);
-                  if (!item.state.googleSheetLink || item.state.googleSheetLink.trim() === '') {
-                    const notifyTitle = appLanguage === 'ms' ? 'Tanya Status Tempahan' : 'Ask Order Status';
-                    const notifyBody = `${customerName || 'Customer'} (${mainType || 'Tempahan'}) - Dah siap ke belum? Link masih belum dimasukkan.`;
-                    
+                  });
+              } else {
+                // No spreadsheetId or orderId, just ask for status if no link
+                if (!item.state.googleSheetLink || item.state.googleSheetLink.trim() === '') {
+                  const notifyTitle = appLanguage === 'ms' ? 'Status Tempahan' : 'Ask Order Status';
+                  const notifyBody = `${customerName || 'Customer'} (${mainType || 'Tempahan'}) - Dah siap ke belum? Link masih belum dimasukkan.`;
+                  
+                  try {
                     if ('Notification' in window && Notification.permission === 'granted') {
                       new Notification(notifyTitle, { body: notifyBody });
                     }
-                  }
-                  updateSpecificHistoryItem(item.id, {
-                    hasThreeHourChecked: true,
-                    threeHourAlerted: true
-                  });
-                });
-            } else {
-              // No spreadsheetId or orderId, just ask for status if no link
-              if (!item.state.googleSheetLink || item.state.googleSheetLink.trim() === '') {
-                const notifyTitle = appLanguage === 'ms' ? 'Tanya Status Tempahan' : 'Ask Order Status';
-                const notifyBody = `${customerName || 'Customer'} (${mainType || 'Tempahan'}) - Dah siap ke belum? Link masih belum dimasukkan.`;
-                
-                if ('Notification' in window && Notification.permission === 'granted') {
-                  new Notification(notifyTitle, { body: notifyBody });
+                  } catch (e) { console.warn(e); }
                 }
+                newState.threeHourAlerted = true;
               }
-              newState.threeHourAlerted = true;
+            }
+
+            // 2. Check 20 mins logic
+            if (!hasNotified && timeUntilDue > 0 && timeUntilDue <= TWENTY_MINS) {
+              const title = 'Order Due Soon!';
+              const body = `Order for ${customerName || 'Customer'} (${mainType} ${subType}) is due in less than 20 minutes!`;
+              
+              try {
+                if ('Notification' in window && Notification.permission === 'granted') {
+                  new Notification(title, { body });
+                }
+              } catch (e) { console.warn(e); }
+              newState.hasNotified = true;
+              itemUpdated = true;
             }
           }
 
-          // 2. Check 20 mins logic
-          if (!hasNotified && timeUntilDue > 0 && timeUntilDue <= TWENTY_MINS) {
-            const title = 'Order Due Soon!';
-            const body = `Order for ${customerName || 'Customer'} (${mainType} ${subType}) is due in less than 20 minutes!`;
-            
-            if ('Notification' in window && Notification.permission === 'granted') {
-              new Notification(title, { body });
-            }
-            newState.hasNotified = true;
-            itemUpdated = true;
+          if (itemUpdated) {
+            updatedHistory = true;
+            return {
+              ...item,
+              state: newState
+            };
           }
-        }
+          return item;
+        });
 
-        if (itemUpdated) {
-          updatedHistory = true;
-          return {
-            ...item,
-            state: newState
-          };
-        }
-        return item;
+        return updatedHistory ? newHistory : prevHistory;
       });
-
-      if (updatedHistory) {
-        setHistory(newHistory);
-      }
     };
 
     // Ask for permission if not asked yet
-    if ('Notification' in window && Notification.permission === 'default') {
-      Notification.requestPermission();
+    try {
+      if ('Notification' in window && Notification.permission === 'default') {
+        Notification.requestPermission().catch(console.warn);
+      }
+    } catch (e) {
+      console.warn("Could not request notification permission on mount", e);
     }
 
     const interval = setInterval(checkAlerts, 60000); // Check every minute
     checkAlerts(); // Check right away
     
     return () => clearInterval(interval);
-  }, [history]);
+  }, [appLanguage]);
+
+  useEffect(() => {
+    const processOfflineQueue = async () => {
+      if (!navigator.onLine) return;
+
+      const queueStr = localStorage.getItem('db_offline_sync_queue');
+      if (!queueStr) return;
+
+      let queue: any[] = [];
+      try {
+        queue = JSON.parse(queueStr);
+      } catch (e) {
+        localStorage.removeItem('db_offline_sync_queue');
+        return;
+      }
+
+      if (!Array.isArray(queue) || queue.length === 0) return;
+
+      let remainingQueue = [...queue];
+      let processedCount = 0;
+
+      for (let i = 0; i < queue.length; i++) {
+        const item = queue[i];
+        if (!navigator.onLine) break;
+
+        try {
+          const response = await fetch(item.webhookUrl, {
+            method: 'POST',
+            mode: 'no-cors',
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            body: JSON.stringify(item.payload)
+          });
+          remainingQueue = remainingQueue.filter(q => q !== item);
+          processedCount++;
+        } catch (e) {
+          console.warn('Failed to sync offline item', e);
+        }
+      }
+
+      if (remainingQueue.length === 0) {
+        localStorage.removeItem('db_offline_sync_queue');
+        if (processedCount > 0) {
+          try {
+            if ('Notification' in window && Notification.permission === 'granted') {
+              new Notification(appLanguage === 'ms' ? 'Sync Selesai' : 'Sync Completed', { 
+                body: appLanguage === 'ms' 
+                  ? `${processedCount} rekod dari luar talian telah disync.` 
+                  : `${processedCount} offline records synced.` 
+              });
+            }
+          } catch(e) {}
+        }
+      } else if (remainingQueue.length !== queue.length) {
+        localStorage.setItem('db_offline_sync_queue', JSON.stringify(remainingQueue));
+      }
+    };
+
+    window.addEventListener('online', processOfflineQueue);
+    
+    // Check initially in case app loaded when online but had queue
+    const timeoutId = setTimeout(processOfflineQueue, 5000);
+
+    return () => {
+      window.removeEventListener('online', processOfflineQueue);
+      clearTimeout(timeoutId);
+    };
+  }, [appLanguage]);
 
   const toggleTheme = () => setTheme(t => t === 'light' ? 'dark' : 'light');
   const toggleLanguage = () => setAppLanguage(l => l === 'ms' ? 'en' : 'ms');

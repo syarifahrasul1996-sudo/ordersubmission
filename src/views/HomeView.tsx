@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { FileText, Mail, MoreHorizontal, ChevronRight, Calculator, Clock, Minus, Plus, Copy, Check, RefreshCcw } from 'lucide-react';
+import { FileText, Mail, MoreHorizontal, ChevronRight, Calculator, Clock, Minus, Plus, Copy, Check, RefreshCcw, BarChart3 } from 'lucide-react';
 import { useAppContext } from '../AppContext';
 import { cn } from '../cn';
 
@@ -115,6 +115,14 @@ export function HomeView() {
         >
           <span className="w-10 h-10 sm:w-11 sm:h-11 bg-white rounded-full flex items-center justify-center text-primary shadow-sm shrink-0"><svg className="w-5 h-5 sm:w-5 sm:h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg></span>
           <span className="ml-4 text-[16px] sm:text-[17px] text-left tracking-tight">{appLanguage === 'ms' ? 'Maklumat Pelanggan' : 'Customer Info'}</span>
+          <ChevronRight className="ml-auto text-subtext w-5 h-5 shrink-0" />
+        </button>
+        <button 
+          onClick={() => pushView('dashboard')} 
+          className="h-[72px] bg-surface active:bg-gray-200 md:hover:bg-gray-200 text-text font-bold rounded-[20px] flex items-center px-4 sm:px-5 w-full active:scale-[0.98] transition-all"
+        >
+          <span className="w-10 h-10 sm:w-11 sm:h-11 bg-white rounded-full flex items-center justify-center text-primary shadow-sm shrink-0"><BarChart3 className="w-5 h-5 sm:w-5 sm:h-5" /></span>
+          <span className="ml-4 text-[16px] sm:text-[17px] text-left tracking-tight">{appLanguage === 'ms' ? 'Tinjauan Perniagaan' : 'Business Overview'}</span>
           <ChevronRight className="ml-auto text-subtext w-5 h-5 shrink-0" />
         </button>
       </div>

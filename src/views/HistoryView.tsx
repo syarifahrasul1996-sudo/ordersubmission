@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { Clock, Trash2, Calendar, AlertCircle, RefreshCcw, Save, Bell, Check, Search, Database, Phone, Settings, ChevronDown, ChevronUp, Link, X } from 'lucide-react';
 import { useAppContext } from '../AppContext';
 
@@ -88,6 +88,15 @@ export function HistoryView() {
   const [globalScriptUrl, setGlobalScriptUrl] = useState<string>(() => {
     return localStorage.getItem('db_global_script_url') || GOOGLE_SCRIPT_URL;
   });
+  const [autoSync, setAutoSync] = useState(() => {
+    const saved = localStorage.getItem('db_auto_sync');
+    return saved !== null ? saved === 'true' : true;
+  });
+
+  useEffect(() => {
+    localStorage.setItem('db_auto_sync', String(autoSync));
+  }, [autoSync]);
+
   useEffect(() => {
   const timer = window.setInterval(() => {
     setCurrentTime(Date.now());
@@ -97,6 +106,23 @@ export function HistoryView() {
     window.clearInterval(timer);
   };
 }, []);
+
+  const handleGlobalSyncRef = useRef<((silent?: boolean) => Promise<void>) | null>(null);
+
+  useEffect(() => {
+    let syncTimer: number | null = null;
+    if (autoSync) {
+      syncTimer = window.setInterval(() => {
+        if (handleGlobalSyncRef.current && !isSearching && !refreshing) {
+          handleGlobalSyncRef.current(true);
+        }
+      }, 60000); // 1 minute auto-sync
+    }
+    return () => {
+      if (syncTimer) window.clearInterval(syncTimer);
+    };
+  }, [autoSync, isSearching, refreshing]);
+
 
   const [annualSheets, setAnnualSheets] = useState<{ year: string; spreadsheetId: string; scriptUrl: string }[]>(() => {
     try {
@@ -276,12 +302,19 @@ const parseDueTimestamp = (value: unknown): number => {
     const spreadsheetId = item.state?.spreadsheetId || state.spreadsheetId;
     const orderId = item.state?.orderId;
     const newStatus = !currentStatus;
+    const now = Date.now();
 
     // 1. Instantly update local state for perfect responsiveness and offline action
     updateSpecificHistoryItem(item.id, {
       isDelivered: newStatus,
       hasNotified: false,
-      ...(spreadsheetId ? { spreadsheetId } : {})
+      ...(spreadsheetId ? { spreadsheetId } : {}),
+      ...(spreadsheetId && orderId ? {
+        syncStatus: 'syncing',
+        syncLastAttempt: now,
+      } : {
+        syncStatus: 'saved_locally'
+      }),
     });
 
     // 2. If spreadsheetId and orderId are configured, gently sync update with Google Sheets in background
@@ -299,25 +332,47 @@ const parseDueTimestamp = (value: unknown): number => {
         const result = await jsonpRequest(url, callbackName);
         if (result.status !== 'success') {
           console.warn('Synced status check warning:', result.message || 'Update failed');
+          // Rollback on obvious application error
+          updateSpecificHistoryItem(item.id, {
+            isDelivered: currentStatus, // rollback
+            syncStatus: 'failed',
+            syncFailCount: (item.state?.syncFailCount || 0) + 1,
+            syncLastAttempt: Date.now(),
+          });
+        } else {
+          updateSpecificHistoryItem(item.id, {
+             syncStatus: 'synced',
+             syncLastSuccess: Date.now(),
+             syncFailCount: 0,
+          });
         }
       } catch (err) {
         console.warn('Failed to sync delivered status update in background:', err);
+        // Rollback on network/fetch error
+        updateSpecificHistoryItem(item.id, {
+          isDelivered: currentStatus, // rollback
+          syncStatus: 'failed',
+          syncFailCount: (item.state?.syncFailCount || 0) + 1,
+          syncLastAttempt: Date.now(),
+        });
       }
     }
   };
 
-  const handleGlobalSync = async () => {
+  const handleGlobalSync = async (silent = false) => {
     // Collect all active annual sheets
     const activeConfigs = annualSheets.filter(
       sheet => sheet.spreadsheetId && sheet.spreadsheetId.trim() !== ''
     );
 
     if (activeConfigs.length === 0) {
-      alert(
-        appLanguage === 'ms'
-          ? 'Sila konfigurasikan sekurang-kurangnya satu spreadsheet ID di bahagian Tetapan Database terlebih dahulu.'
-          : 'Please configure at least one spreadsheet ID in Database Settings first.'
-      );
+      if (!silent) {
+        alert(
+          appLanguage === 'ms'
+            ? 'Sila konfigurasikan sekurang-kurangnya satu spreadsheet ID di bahagian Tetapan Database terlebih dahulu.'
+            : 'Please configure at least one spreadsheet ID in Database Settings first.'
+        );
+      }
       return;
     }
 
@@ -417,18 +472,24 @@ const parseDueTimestamp = (value: unknown): number => {
 
       setHistory(existingHistory);
 
-      alert(
-        appLanguage === 'ms'
-          ? `Berjaya disync daripada ${activeConfigs.length} database tahunan!\nBaru: ${totalNewCou}\nDikemaskini: ${totalUpdCou}`
-          : `Aggregated sync complete across ${activeConfigs.length} annual sheets!\nNew: ${totalNewCou}\nUpdated: ${totalUpdCou}`
-      );
+      if (!silent) {
+        alert(
+          appLanguage === 'ms'
+            ? `Berjaya disync daripada ${activeConfigs.length} database tahunan!\nBaru: ${totalNewCou}\nDikemaskini: ${totalUpdCou}`
+            : `Aggregated sync complete across ${activeConfigs.length} annual sheets!\nNew: ${totalNewCou}\nUpdated: ${totalUpdCou}`
+        );
+      }
     } catch (e) {
-      alert('Sync failed: ' + e);
+      if (!silent) {
+        alert('Sync failed: ' + e);
+      }
     } finally {
       setRefreshing(false);
       setPullProgress(0);
     }
   };
+
+  handleGlobalSyncRef.current = handleGlobalSync;
 
   const onTouchStart = (e: React.TouchEvent) => {
     if (window.scrollY <= 0) {
@@ -630,15 +691,23 @@ const parseDueTimestamp = (value: unknown): number => {
     }
 
     // Instantly update local UI
+    const now = Date.now();
     setRemoteResults((prev) =>
-      prev.map((item, idx) => (idx === index ? { ...item, isDelivered: newStatus } : item))
+      prev.map((item, idx) => (idx === index ? { 
+        ...item, 
+        isDelivered: newStatus,
+        syncStatus: 'syncing',
+        syncLastAttempt: now
+      } : item))
     );
 
     // If it exists in local history too, update there
     const existingIdx = history.findIndex((h) => h.state?.orderId === orderId);
     if (existingIdx !== -1) {
       updateSpecificHistoryItem(history[existingIdx].id, {
-        isDelivered: newStatus
+        isDelivered: newStatus,
+        syncStatus: 'syncing',
+        syncLastAttempt: now
       });
     }
 
@@ -655,9 +724,61 @@ const parseDueTimestamp = (value: unknown): number => {
       const result = await jsonpRequest(url, callbackName);
       if (result.status !== 'success') {
         console.warn('Synced status check warning:', result.message || 'Update failed');
+        // Rollback
+        setRemoteResults((prev) =>
+          prev.map((item, idx) => (idx === index ? { 
+            ...item, 
+            isDelivered: currentStatus,
+            syncStatus: 'failed',
+            syncFailCount: (item.syncFailCount || 0) + 1,
+            syncLastAttempt: Date.now()
+          } : item))
+        );
+        if (existingIdx !== -1) {
+          updateSpecificHistoryItem(history[existingIdx].id, {
+            isDelivered: currentStatus,
+            syncStatus: 'failed',
+            syncFailCount: (history[existingIdx].state?.syncFailCount || 0) + 1,
+            syncLastAttempt: Date.now()
+          });
+        }
+      } else {
+         setRemoteResults((prev) =>
+          prev.map((item, idx) => (idx === index ? { 
+            ...item, 
+            syncStatus: 'synced',
+            syncLastSuccess: Date.now(),
+            syncFailCount: 0
+          } : item))
+        );
+        if (existingIdx !== -1) {
+           updateSpecificHistoryItem(history[existingIdx].id, {
+             syncStatus: 'synced',
+             syncLastSuccess: Date.now(),
+             syncFailCount: 0
+           });
+        }
       }
     } catch (err) {
       console.warn('Failed to sync delivered status update in background:', err);
+      // Rollback
+      setRemoteResults((prev) =>
+        prev.map((item, idx) => (idx === index ? { 
+          ...item, 
+          isDelivered: currentStatus,
+          syncStatus: 'failed',
+          syncFailCount: (item.syncFailCount || 0) + 1,
+          syncLastAttempt: Date.now()
+        } : item))
+      );
+      if (existingIdx !== -1) {
+        updateSpecificHistoryItem(history[existingIdx].id, {
+          isDelivered: currentStatus,
+          syncStatus: 'failed',
+          syncFailCount: (history[existingIdx].state?.syncFailCount || 0) + 1,
+          syncLastAttempt: Date.now()
+        });
+      }
     }
   };
 
@@ -721,7 +842,7 @@ const parseDueTimestamp = (value: unknown): number => {
           <div className="flex justify-between items-center mb-2">
             <button
               type="button"
-              onClick={handleGlobalSync}
+              onClick={() => handleGlobalSync(false)}
               disabled={refreshing}
               className={`flex items-center text-[13px] font-bold px-3.5 py-1.5 rounded-full transition-all duration-200 ${
                 refreshing
@@ -814,9 +935,9 @@ const parseDueTimestamp = (value: unknown): number => {
                 
                 if (localSearchQuery.trim()) {
                   const query = localSearchQuery.toLowerCase().trim();
-                  const nameMatch = (item.state?.customerName || '').toLowerCase().includes(query);
-                  const idMatch = (item.state?.orderId || '').toLowerCase().includes(query);
-                  const phoneMatch = (item.state?.customerPhone || '').toLowerCase().includes(query);
+                  const nameMatch = String(item.state?.customerName || '').toLowerCase().includes(query);
+                  const idMatch = String(item.state?.orderId || '').toLowerCase().includes(query);
+                  const phoneMatch = String(item.state?.customerPhone || '').toLowerCase().includes(query);
                   if (!nameMatch && !idMatch && !phoneMatch) return false;
                 }
 
@@ -1101,7 +1222,7 @@ const parseDueTimestamp = (value: unknown): number => {
                               {appLanguage === 'ms' ? 'Tel' : 'Phone'}:
                             </span>{' '}
                             <a
-                              href={`https://wa.me/${item.state.customerPhone.replace(/\D/g, '').startsWith('0') ? '6' + item.state.customerPhone.replace(/\D/g, '') : item.state.customerPhone.replace(/\D/g, '')}`}
+                              href={`https://wa.me/${String(item.state.customerPhone).replace(/\D/g, '').startsWith('0') ? '6' + String(item.state.customerPhone).replace(/\D/g, '') : String(item.state.customerPhone).replace(/\D/g, '')}`}
                               target="_blank"
                               rel="noopener noreferrer"
                               onClick={(e) => e.stopPropagation()}
@@ -1109,7 +1230,7 @@ const parseDueTimestamp = (value: unknown): number => {
                               title={appLanguage === 'ms' ? 'Hubungi di WhatsApp' : 'Contact on WhatsApp'}
                             >
                               <Phone className="w-2.5 h-2.5 text-blue-500 shrink-0" />
-                              <span className="select-all font-mono">{item.state.customerPhone}</span>
+                              <span className="select-all font-mono">{String(item.state.customerPhone)}</span>
                             </a>
                           </div>
                         )}
@@ -1189,6 +1310,31 @@ const parseDueTimestamp = (value: unknown): number => {
                             <span className="font-semibold text-text/80">{formattedLastEditedDate}</span>
                           </div>
                         </div>
+
+                        {item.state.syncStatus && (
+                          <div className="w-full pt-2 mt-1.5 border-t border-dashed border-gray-100/80 flex items-start justify-between bg-gray-50/50 -mx-3 -mb-3 px-3 py-2 rounded-b-xl">
+                            <div className="text-[9.5px] flex items-center">
+                              {item.state.syncStatus === 'saved_locally' && <span className="text-gray-500 font-medium">Saved locally</span>}
+                              {item.state.syncStatus === 'syncing' && <span className="text-blue-500 font-semibold animate-pulse flex items-center"><RefreshCcw className="w-2.5 h-2.5 mr-1 animate-spin" /> Syncing…</span>}
+                              {item.state.syncStatus === 'synced' && <span className="text-emerald-600 font-bold flex items-center"><Check className="w-2.5 h-2.5 mr-1"/> Synced</span>}
+                              {item.state.syncStatus === 'failed' && (
+                                <button 
+                                  type="button"
+                                  className="text-red-600 font-bold hover:underline flex items-center active:scale-95 transition-transform"
+                                  onClick={(e) => handleDeliveredToggle(e, item, isDelivered)}
+                                >
+                                  <AlertCircle className="w-2.5 h-2.5 mr-1" /> Sync failed — tap to retry
+                                </button>
+                              )}
+                            </div>
+                            {(item.state.syncLastSuccess || item.state.syncFailCount) && (
+                              <div className="text-[8.5px] text-gray-400 text-right leading-tight">
+                                {item.state.syncLastSuccess && <div>Last sync: <span className="font-medium text-gray-500">{new Date(item.state.syncLastSuccess).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></div>}
+                                {!!item.state.syncFailCount && item.state.syncFailCount > 0 && <div className="text-red-400 font-medium mt-0.5">Failed attempts: {item.state.syncFailCount}</div>}
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -1395,11 +1541,24 @@ const parseDueTimestamp = (value: unknown): number => {
 
             {!isSearching && remoteResults.length > 0 && (
               <div className="space-y-2.5 animate-fade-in-up">
-                <p className="text-[10px] font-bold text-subtext uppercase tracking-widest pl-1">
-                  {appLanguage === 'ms' 
-                    ? `Hasil Carian (${remoteResults.length} Rekod)` 
-                    : `Search Results (${remoteResults.length} Records)`}
-                </p>
+                <div className="flex items-center justify-between pl-1">
+                  <p className="text-[10px] font-bold text-subtext uppercase tracking-widest">
+                    {appLanguage === 'ms' 
+                      ? `Hasil Carian (${remoteResults.length} Rekod)` 
+                      : `Search Results (${remoteResults.length} Records)`}
+                  </p>
+                  <button 
+                    type="button"
+                    onClick={() => {
+                      setRemoteResults([]);
+                      setSearchQuery('');
+                    }}
+                    className="text-[10px] font-bold text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 uppercase tracking-widest px-2 py-1 rounded transition-colors flex flex-shrink-0 items-center justify-center"
+                    id="btn-clear-search"
+                  >
+                    {appLanguage === 'ms' ? 'Padam Carian' : 'Clear Results'}
+                  </button>
+                </div>
 
                 {remoteResults.map((item, idx) => {
                   const isDelivered = !!item.isDelivered;
@@ -1567,6 +1726,30 @@ const parseDueTimestamp = (value: unknown): number => {
                             : 'Not Delivered'}
                         </button>
                       </div>
+
+                      {item.syncStatus && (
+                        <div className="w-full pt-2 mt-1.5 border-t border-dashed border-gray-100/80 flex items-start justify-between bg-gray-50/50 -mx-2.5 -mb-2.5 px-3 py-2 rounded-b-xl">
+                          <div className="text-[9.5px] flex items-center">
+                            {item.syncStatus === 'syncing' && <span className="text-blue-500 font-semibold animate-pulse flex items-center"><RefreshCcw className="w-2.5 h-2.5 mr-1 animate-spin" /> Syncing…</span>}
+                            {item.syncStatus === 'synced' && <span className="text-emerald-600 font-bold flex items-center"><Check className="w-2.5 h-2.5 mr-1"/> Synced</span>}
+                            {item.syncStatus === 'failed' && (
+                              <button 
+                                type="button"
+                                className="text-red-600 font-bold hover:underline flex items-center active:scale-95 transition-transform"
+                                onClick={(e) => handleRemoteDeliveredToggle(e, idx, item)}
+                              >
+                                <AlertCircle className="w-2.5 h-2.5 mr-1" /> Sync failed — tap to retry
+                              </button>
+                            )}
+                          </div>
+                          {(item.syncLastSuccess || item.syncFailCount) && (
+                            <div className="text-[8.5px] text-gray-400 text-right leading-tight">
+                              {item.syncLastSuccess && <div>Last sync: <span className="font-medium text-gray-500">{new Date(item.syncLastSuccess).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></div>}
+                              {!!item.syncFailCount && item.syncFailCount > 0 && <div className="text-red-400 font-medium mt-0.5">Failed attempts: {item.syncFailCount}</div>}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   );
                 })}

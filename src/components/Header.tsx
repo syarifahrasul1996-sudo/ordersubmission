@@ -13,7 +13,9 @@ export function Header() {
     'general-form': { ms: 'Butiran Dokumen', en: 'Document Details' },
     'confirmation': { ms: 'Sahkan Maklumat', en: 'Confirm Details' },
     'output': { ms: 'Order Selesai', en: 'Order Complete' },
-    'history': { ms: 'Sejarah Tempahan', en: 'Order History' }
+    'history': { ms: 'Sejarah Tempahan', en: 'Order History' },
+    'dashboard': { ms: 'Tinjauan Perniagaan', en: 'Business Overview' },
+    'customer-info': { ms: 'Maklumat Pelanggan', en: 'Customer Info' }
   };
 
   const title = titles[currentView]?.[appLanguage] || (appLanguage === 'ms' ? 'Butiran' : 'Details');

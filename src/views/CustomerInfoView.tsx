@@ -93,7 +93,7 @@ export function CustomerInfoView() {
     ];
 
     let initAddOnDropdown = '';
-    const addOnToCheck = (state.customerAddOn || initAddOn).trim();
+    const addOnToCheck = String(state.customerAddOn || initAddOn).trim();
     if (addOnToCheck) {
       if (validDropdownOptions.includes(addOnToCheck)) {
         initAddOnDropdown = addOnToCheck;
@@ -121,12 +121,12 @@ export function CustomerInfoView() {
     }
 
     return { 
-      initName: state.customerName || '',
-      initPhone: state.customerPhone || '',
-      initOrder: state.customerOrder || initOrder, 
-      initBahasa: state.customerBahasa || initBahasa, 
-      initJenis: state.customerJenis || initJenis, 
-      initDue: state.customerDue || `${formattedDate} at ${formattedTime}`, 
+      initName: state.customerName ? String(state.customerName) : '',
+      initPhone: state.customerPhone ? String(state.customerPhone) : '',
+      initOrder: state.customerOrder ? String(state.customerOrder) : initOrder, 
+      initBahasa: state.customerBahasa ? String(state.customerBahasa) : initBahasa, 
+      initJenis: state.customerJenis ? String(state.customerJenis) : initJenis, 
+      initDue: state.customerDue ? String(state.customerDue) : `${formattedDate} at ${formattedTime}`, 
       initDueTimestamp: state.dueTimestamp || dl.getTime(),
       initTemplate: state.customerTemplate || initTemplate, 
       initAddOn: state.customerAddOn || initAddOn,
@@ -386,14 +386,59 @@ export function CustomerInfoView() {
       
       console.log("Submitting payload to Google Apps Script:", JSON.stringify(payload, null, 2));
 
-      const response = await fetch(resolvedWebhookUrl, {
-        method: 'POST',
-        mode: 'no-cors',
-        headers: {
-          'Content-Type': 'text/plain;charset=utf-8'
-        },
-        body: JSON.stringify(payload)
-      });
+      // Offline check & queue
+      if (!navigator.onLine) {
+        try {
+          const queueStr = localStorage.getItem('db_offline_sync_queue');
+          const queue = queueStr ? JSON.parse(queueStr) : [];
+          queue.push({
+            payload,
+            webhookUrl: resolvedWebhookUrl,
+            id: orderId,
+            timestamp: Date.now()
+          });
+          localStorage.setItem('db_offline_sync_queue', JSON.stringify(queue));
+          setSaved(true);
+          showToastMessage(appLanguage === 'ms' ? 'Luar Talian: Disimpan dalam Que' : 'Offline: Saved to Queue');
+          setTimeout(() => goHome(), 1800);
+          return;
+        } catch (e) {
+          throw new Error('Failed to save to offline queue.');
+        }
+      }
+
+      let response;
+      try {
+        response = await fetch(resolvedWebhookUrl, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: {
+            'Content-Type': 'text/plain;charset=utf-8'
+          },
+          body: JSON.stringify(payload)
+        });
+      } catch (fetchErr: any) {
+        // Fallback to offline queue if network fails
+        try {
+          const queueStr = localStorage.getItem('db_offline_sync_queue');
+          const queue = queueStr ? JSON.parse(queueStr) : [];
+          queue.push({
+            payload,
+            webhookUrl: resolvedWebhookUrl,
+            id: orderId,
+            timestamp: Date.now()
+          });
+          localStorage.setItem('db_offline_sync_queue', JSON.stringify(queue));
+          setSaved(true);
+          showToastMessage(appLanguage === 'ms' 
+            ? 'Sambungan gagal: Disimpan dalam Que' 
+            : 'Connection failed: Saved to Queue');
+          setTimeout(() => goHome(), 1800);
+          return;
+        } catch (e) {
+          throw fetchErr; // rethrow the original fetch error
+        }
+      }
 
       // Handle opaque response for no-cors
       if (response.type === 'opaque') {
@@ -504,11 +549,6 @@ export function CustomerInfoView() {
           <h2 className="text-2xl font-black text-text tracking-tighter">
             {appLanguage === 'ms' ? 'Maklumat Pelanggan' : 'Customer Info'}
           </h2>
-          {orderId && (
-            <span className="text-[10px] font-bold text-subtext bg-gray-100 px-2 py-1 rounded-md">
-              {orderId}
-            </span>
-          )}
         </div>
         <p className="text-subtext text-sm">
           {appLanguage === 'ms' 
@@ -518,6 +558,13 @@ export function CustomerInfoView() {
       </div>
 
       <div className="space-y-4">
+        {orderId && (
+          <div className="flex items-center space-x-2 ml-1">
+            <span className="text-[11px] font-bold text-subtext uppercase tracking-widest whitespace-nowrap">Order ID</span>
+            <span className="text-[11px] font-mono text-text bg-gray-100 dark:bg-gray-800 px-2 py-0.5 rounded cursor-default border border-gray-200 dark:border-gray-700 select-all">{orderId}</span>
+          </div>
+        )}
+
         <div className="space-y-1">
           <label className="text-[13px] font-bold text-text ml-1 uppercase tracking-wider">
             {appLanguage === 'ms' ? 'Nama Pelanggan' : 'Customer Name'}

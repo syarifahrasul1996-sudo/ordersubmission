@@ -32,6 +32,10 @@ export interface AppState {
   orderId?: string;
   hasThreeHourChecked?: boolean;
   threeHourAlerted?: boolean;
+  syncStatus?: 'saved_locally' | 'syncing' | 'synced' | 'failed';
+  syncLastAttempt?: number;
+  syncLastSuccess?: number;
+  syncFailCount?: number;
 }
 
 export type ViewType = 'home' | 'resume-type' | 'resume-form-fields' | 'general-form' | 'confirmation' | 'output' | 'history' | 'customer-info';

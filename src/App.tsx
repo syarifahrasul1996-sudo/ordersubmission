@@ -14,6 +14,7 @@ const ConfirmationView = lazy(() => import('./views/ConfirmationView').then(modu
 const OutputView = lazy(() => import('./views/OutputView').then(module => ({ default: module.OutputView })));
 const HistoryView = lazy(() => import('./views/HistoryView').then(module => ({ default: module.HistoryView })));
 const CustomerInfoView = lazy(() => import('./views/CustomerInfoView').then(module => ({ default: module.CustomerInfoView })));
+const DashboardView = lazy(() => import('./views/DashboardView').then(module => ({ default: module.DashboardView })));
 
 // Loading fallback for Suspense
 const ViewLoader = () => (
@@ -81,6 +82,10 @@ function AppContent() {
 
             <ViewSection id="view-customer-info" active={currentView === 'customer-info'}>
               <CustomerInfoView />
+            </ViewSection>
+
+            <ViewSection id="view-dashboard" active={currentView === 'dashboard'}>
+              <DashboardView />
             </ViewSection>
           </Suspense>
         </main>
