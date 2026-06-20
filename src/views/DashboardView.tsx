@@ -1,62 +1,216 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { useAppContext } from '../AppContext';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LabelList } from 'recharts';
+import { BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LabelList, CartesianGrid } from 'recharts';
+import { RefreshCcw, AlertCircle, Clock } from 'lucide-react';
+
+const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbw5KpBvJyFpIXmsHueg4XPSRkZ0mg6kxHqjMGp3WEs8Hx_JodvKSoKEg6RMsdH54iCa/exec';
+
+const extractId = (input: string) => {
+  if (input.includes('docs.google.com/spreadsheets/d/')) {
+    const match = input.match(/\/d\/([a-zA-Z0-9-_]+)/);
+    return match ? match[1] : input;
+  }
+  return input.trim();
+};
+
+const jsonpRequest = (url: URL, callbackName: string) => {
+  return new Promise<any>((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = url.toString();
+    script.async = true;
+
+    const cleanup = () => {
+      if (script.parentNode) script.parentNode.removeChild(script);
+      delete (window as any)[callbackName];
+    };
+
+    (window as any)[callbackName] = (data: any) => {
+      cleanup();
+      resolve(data);
+    };
+
+    script.onerror = () => {
+      cleanup();
+      reject(new Error('JSONP request failed'));
+    };
+
+    document.body.appendChild(script);
+  });
+};
 
 export function DashboardView() {
-  const { history, appLanguage } = useAppContext();
+  const { appLanguage } = useAppContext();
   
-  const [selectedYear, setSelectedYear] = useState<string>(new Date().getFullYear().toString());
+  const [filterYear, setFilterYear] = useState<string>(new Date().getFullYear().toString());
+  const [filterMonth, setFilterMonth] = useState<string>('all');
+  
+  const [remoteOrders, setRemoteOrders] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<number | null>(null);
+
+  const annualSheets = useMemo(() => {
+  try {
+    const saved = localStorage.getItem('db_annual_sheets');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  return [
+    {
+      year: '2024',
+      spreadsheetId: '1B9zdWXVLnvj0jNNVnKxcb6cJnS1VLCIdB4j-RR3wOlg',
+      scriptUrl: ''
+    },
+    {
+      year: '2025',
+      spreadsheetId: '1myU9apnYWWtU3snnCw14qI6ZS05i4DY6oOswLz1sCwo',
+      scriptUrl: ''
+    },
+    {
+      year: '2026',
+      spreadsheetId: '1kUAJYUVhr9bPYErtpnohpvuGGyhBSvJyEOIyzEFivJo',
+      scriptUrl: ''
+    }
+  ];
+}, []);
+
+  const globalScriptUrl = useMemo(() => {
+    return localStorage.getItem('db_global_script_url') || GOOGLE_SCRIPT_URL;
+  }, []);
+
+  const fetchDashboardOrders = async (year: string) => {
+    const sheetConfig = annualSheets.find((s: any) => s.year === year && s.spreadsheetId?.trim() !== '');
+    
+    if (!sheetConfig) {
+      setRemoteOrders([]);
+      setError(appLanguage === 'ms' 
+        ? `Tiada Database Cloud dikonfigurasikan untuk tahun ${year}. Sila tetapkan di Sejarah > Tetapan.`
+        : `No Cloud Database configured for year ${year}. Please configure in History > Settings.`
+      );
+      return;
+    }
+
+    setIsLoading(true);
+    setError(null);
+
+    const sId = extractId(sheetConfig.spreadsheetId);
+    const sUrl = sheetConfig.scriptUrl?.trim() || globalScriptUrl;
+    
+    try {
+      const callbackName = 'jsonp_callback_dashboard_' + Math.round(100000 * Math.random()) + '_' + year;
+      const url = new URL(sUrl);
+
+      url.searchParams.append('action', 'get_dashboard_orders');
+      url.searchParams.append('spreadsheetId', sId);
+      url.searchParams.append('year', year);
+      url.searchParams.append('callback', callbackName);
+
+      const data = await jsonpRequest(url, callbackName);
+      
+      if (data && data.status === 'success' && Array.isArray(data.orders)) {
+        setRemoteOrders(data.orders);
+        setLastUpdated(Date.now());
+      } else {
+        throw new Error(data?.message || 'Invalid response format');
+      }
+    } catch (err: any) {
+      console.error('Dashboard fetch failed:', err);
+      setError(appLanguage === 'ms' ? `Ralat mendapatkan data: ${err.message}` : `Failed to fetch data: ${err.message}`);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+  fetchDashboardOrders(filterYear);
+}, [filterYear, annualSheets, globalScriptUrl]);
 
   const stats = useMemo(() => {
-    const orders = history || [];
+    const orders = remoteOrders;
     
-    const uniqueOrders = new Set();
-    const customers = new Map<string, number>(); // phone -> count
+    const availableYearsSet = new Set<string>(annualSheets.filter((s:any) => s.year).map((s:any) => s.year));
+    if (!availableYearsSet.has(filterYear)) availableYearsSet.add(filterYear);
     
-    // Monthly & Yearly aggregations
     const monthCounts = new Map<string, number>();
-    const yearCounts = new Map<string, number>();
+    for (let i = 1; i <= 12; i++) {
+      monthCounts.set(String(i).padStart(2, '0'), 0);
+    }
+
+    const filteredOrders = orders.filter(order => {
+      if (filterMonth !== 'all') {
+        if (!order.dueTimestamp || order.dueTimestamp === 0) return false;
+        
+        const date = new Date(order.dueTimestamp);
+        const mStr = String(date.getMonth() + 1).padStart(2, '0');
+        if (mStr !== filterMonth) return false;
+      }
+      return true;
+    });
+
+    let totalOrders = 0;
+    const customers = new Map<string, number>(); 
     const typeCounts = new Map<string, number>();
     const urgencyCounts = new Map<string, number>();
     
-    const availableYears = new Set<string>();
+    let invalidDatesCount = 0;
 
-    orders.forEach(order => {
-      const state = order.state || {};
-      
-      // Order ID
-      if (state.orderId) uniqueOrders.add(state.orderId);
-      else uniqueOrders.add(order.id);
+    filteredOrders.forEach(order => {
+      // Order ID deduplication
+      if (String(order.name || '').trim() !== '') {
+  totalOrders++;
+}
 
       // Customer Phone normalization
-      let phone = state.customerPhone || '';
-      phone = String(phone).replace(/\D/g, ''); // kept only digits
+      let phone = order.phone || '';
+      phone = String(phone).replace(/\D/g, '');
       if (phone.startsWith('60')) phone = '0' + phone.substring(2);
-      if (phone) {
-        customers.set(phone, (customers.get(phone) || 0) + 1);
-      }
+      if (phone) customers.set(phone, (customers.get(phone) || 0) + 1);
 
       // Main Type
-      const type = state.mainType || 'Unknown';
+      const type = order.order || order.jenisTempahan || 'Unknown';
       typeCounts.set(type, (typeCounts.get(type) || 0) + 1);
 
       // Urgency
-      const urgency = state.urgency || 'Normal';
-      urgencyCounts.set(urgency, (urgencyCounts.get(urgency) || 0) + 1);
+      // Urgency
+const urgencyRaw = String(order.jenis || order.urgency || '')
+  .trim()
+  .toLowerCase();
 
-      // Dates
-      const ts = state.dueTimestamp || order.timestamp || Date.now();
-      const date = new Date(ts);
-      
-      const yearStr = `${date.getFullYear()}`;
-      availableYears.add(yearStr);
-      
-      const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-      
-      monthCounts.set(monthKey, (monthCounts.get(monthKey) || 0) + 1);
-      yearCounts.set(yearStr, (yearCounts.get(yearStr) || 0) + 1);
-    });
+let urgency = 'Tak Urgent';
 
+if (urgencyRaw === 'urgent') {
+  urgency = 'Urgent';
+} else if (
+  urgencyRaw === 'semi urgent' ||
+  urgencyRaw === 'semi-urgent' ||
+  urgencyRaw === 'semu urgent'
+) {
+  urgency = 'Semi Urgent';
+} else if (
+  urgencyRaw === 'super urgent' ||
+  urgencyRaw === 'super-urgent'
+) {
+  urgency = 'Super Urgent';
+}
+
+urgencyCounts.set(urgency, (urgencyCounts.get(urgency) || 0) + 1);
+
+// Monthly chart aggregation (only if valid date)
+if (order.dueTimestamp && order.dueTimestamp > 0) {
+  const date = new Date(order.dueTimestamp);
+  const mStr = String(date.getMonth() + 1).padStart(2, '0');
+  monthCounts.set(mStr, (monthCounts.get(mStr) || 0) + 1);
+} else {
+  invalidDatesCount++;
+}
+});
     let repeatCustomers = 0;
     customers.forEach(count => {
       if (count > 1) repeatCustomers++;
@@ -67,16 +221,17 @@ export function DashboardView() {
       ? ((repeatCustomers / totalUniqueCustomers) * 100).toFixed(1) 
       : '0.0';
 
-    // Filter months by selected year
-    const ordersByMonth = Array.from(monthCounts.entries())
-      .filter(([name]) => name.startsWith(selectedYear + '-'))
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([name, value]) => ({ name: name.substring(5), value })); // Just show MM
+    const monthNamesMs = ['Jan', 'Feb', 'Mac', 'Apr', 'Mei', 'Jun', 'Jul', 'Ogo', 'Sep', 'Okt', 'Nov', 'Dis'];
+    const monthNamesEn = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const months = appLanguage === 'ms' ? monthNamesMs : monthNamesEn;
 
-    const ordersByYear = Array.from(yearCounts.entries())
+    const ordersByMonth = Array.from(monthCounts.entries())
       .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([name, value]) => ({ name, value }));
-      
+      .map(([mStr, value]) => ({ 
+        name: months[parseInt(mStr, 10) - 1], 
+        value 
+      }));
+
     const customerTypes = [
       { name: appLanguage === 'ms' ? 'Baru' : 'New', value: totalUniqueCustomers - repeatCustomers },
       { name: appLanguage === 'ms' ? 'Berulang' : 'Repeat', value: repeatCustomers }
@@ -84,198 +239,245 @@ export function DashboardView() {
 
     const typesChart = Array.from(typeCounts.entries())
       .map(([name, value]) => ({ name, value }))
-      .sort((a, b) => b.value - a.value);
+      .sort((a, b) => b.value - a.value).slice(0, 5);
       
     const urgencyChart = Array.from(urgencyCounts.entries())
       .map(([name, value]) => ({ name, value }))
-      .sort((a, b) => b.value - a.value);
-      
-    const years = Array.from(availableYears).sort().reverse();
+      .sort((a, b) => b.value - a.value).slice(0, 5);
+
+    const years = Array.from(availableYearsSet).sort().reverse();
 
     return {
-      totalUniqueOrders: uniqueOrders.size,
+      totalUniqueOrders: totalOrders,
       totalUniqueCustomers,
       repeatCustomers,
       repeatCustomerRate,
       ordersByMonth,
-      ordersByYear,
       customerTypes,
       typesChart,
       urgencyChart,
-      years
+      years,
+      months,
+      invalidDatesCount
     };
-  }, [history, appLanguage, selectedYear]);
+  }, [remoteOrders, appLanguage, filterYear, filterMonth, annualSheets]);
 
   const COLORS = ['#0A84FF', '#34C759', '#FF9F0A', '#FF453A', '#BF5AF2', '#64D2FF'];
 
   return (
-    <div className="flex flex-col p-4 sm:p-6 space-y-6 pb-[calc(env(safe-area-inset-bottom)+2rem)]">
-      <div className="flex items-center justify-between mb-2">
-        <h2 className="text-2xl font-black text-text tracking-tighter">
-          {appLanguage === 'ms' ? 'Tinjauan Perniagaan' : 'Business Overview'}
-        </h2>
-      </div>
-
-      <div className="grid grid-cols-2 gap-4">
-        <div className="bg-surface border border-gray-100 rounded-[20px] p-4 shadow-sm flex flex-col items-center text-center">
-          <span className="text-[11px] font-bold text-subtext uppercase tracking-widest mb-1">
-            {appLanguage === 'ms' ? 'Total Order' : 'Total Orders'}
-          </span>
-          <span className="text-3xl font-black text-text">{stats.totalUniqueOrders}</span>
-        </div>
-        <div className="bg-surface border border-gray-100 rounded-[20px] p-4 shadow-sm flex flex-col items-center text-center">
-          <span className="text-[11px] font-bold text-subtext uppercase tracking-widest mb-1">
-            {appLanguage === 'ms' ? 'Pelanggan' : 'Customers'}
-          </span>
-          <span className="text-3xl font-black text-text">{stats.totalUniqueCustomers}</span>
-        </div>
-        <div className="bg-surface border border-gray-100 rounded-[20px] p-4 shadow-sm flex flex-col items-center text-center">
-          <span className="text-[11px] font-bold text-subtext uppercase tracking-widest mb-1">
-            {appLanguage === 'ms' ? 'Pelanggan Tetap' : 'Repeat Cust.'}
-          </span>
-          <span className="text-3xl font-black text-text">{stats.repeatCustomers}</span>
-        </div>
-        <div className="bg-surface border border-gray-100 rounded-[20px] p-4 shadow-sm flex flex-col items-center text-center">
-          <span className="text-[11px] font-bold text-subtext uppercase tracking-widest mb-1">
-            {appLanguage === 'ms' ? 'Kadar Berulang' : 'Repeat Rate'}
-          </span>
-          <span className="text-3xl font-black text-text">{stats.repeatCustomerRate}%</span>
-        </div>
-      </div>
-
-      <div className="bg-surface border border-gray-100 rounded-[24px] p-5 shadow-sm space-y-6">
+    <div className="flex flex-col p-4 sm:p-6 space-y-6 pb-[calc(env(safe-area-inset-bottom)+2rem)] max-w-7xl mx-auto w-full">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-2">
         <div>
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-bold text-text">{appLanguage === 'ms' ? 'Order Mengikut Bulan' : 'Orders By Month'}</h3>
-            {stats.years.length > 0 && (
-              <select 
-                value={selectedYear}
-                onChange={(e) => setSelectedYear(e.target.value)}
-                className="bg-gray-50 border border-gray-200 text-text text-xs rounded-lg px-2 py-1 outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer"
-              >
-                {stats.years.map(year => (
-                  <option key={year} value={year}>{year}</option>
-                ))}
-              </select>
-            )}
-          </div>
-          <div className="h-[200px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={stats.ordersByMonth} margin={{ top: 20 }}>
-                <XAxis dataKey="name" tick={{fontSize: 10}} tickLine={false} axisLine={false} />
-                <Tooltip cursor={{fill: 'rgba(0,0,0,0.05)'}} contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)'}} />
-                <Bar dataKey="value" fill="#0A84FF" radius={[4, 4, 0, 0]}>
-                  <LabelList dataKey="value" position="top" style={{ fontSize: '10px', fontWeight: 'bold', fill: '#636366' }} />
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+          <h2 className="text-2xl font-black text-text tracking-tighter">
+            {appLanguage === 'ms' ? 'Tinjauan Perniagaan' : 'Business Overview'}
+          </h2>
+          {lastUpdated && (
+            <p className="text-xs text-gray-500 flex items-center mt-1">
+              <Clock className="w-3 h-3 mr-1" />
+              {appLanguage === 'ms' ? 'Dikemas kini: ' : 'Updated: '} {new Date(lastUpdated).toLocaleTimeString()}
+            </p>
+          )}
         </div>
-      </div>
-
-      <div className="bg-surface border border-gray-100 rounded-[24px] p-5 shadow-sm space-y-6">
-        <div>
-          <h3 className="text-sm font-bold text-text mb-4">{appLanguage === 'ms' ? 'Order Mengikut Tahun' : 'Orders By Year'}</h3>
-          <div className="h-[200px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={stats.ordersByYear} margin={{ top: 20 }}>
-                <XAxis dataKey="name" tick={{fontSize: 10}} tickLine={false} axisLine={false} />
-                <Tooltip cursor={{fill: 'rgba(0,0,0,0.05)'}} contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)'}} />
-                <Bar dataKey="value" fill="#34C759" radius={[4, 4, 0, 0]}>
-                  <LabelList dataKey="value" position="top" style={{ fontSize: '10px', fontWeight: 'bold', fill: '#636366' }} />
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-        <div className="bg-surface border border-gray-100 rounded-[24px] p-5 shadow-sm flex flex-col items-center">
-          <h3 className="text-sm font-bold text-text mb-4">{appLanguage === 'ms' ? 'Pelanggan: Baru vs Tetap' : 'Customers: New vs Repeat'}</h3>
-          <div className="h-[160px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={stats.customerTypes}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={50}
-                  outerRadius={70}
-                  paddingAngle={5}
-                  dataKey="value"
-                  label={{ fontSize: '10px', fill: '#636366', fontWeight: 'bold' }}
-                >
-                  {stats.customerTypes.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                  ))}
-                </Pie>
-                <Tooltip contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)'}} />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-          <div className="flex gap-4 mt-2">
-            {stats.customerTypes.map((entry, index) => (
-              <div key={entry.name} className="flex items-center text-[11px] font-bold text-subtext">
-                <span className="w-2.5 h-2.5 rounded-full mr-1.5" style={{backgroundColor: COLORS[index % COLORS.length]}}></span>
-                {entry.name}
-              </div>
+        
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => fetchDashboardOrders(filterYear)}
+            disabled={isLoading}
+            className={`h-10 px-4 rounded-xl font-bold border border-gray-200 flex items-center justify-center transition-all ${
+              isLoading ? 'opacity-50 cursor-not-allowed bg-gray-50' : 'bg-surface hover:bg-gray-50 active:scale-95 text-text'
+            }`}
+          >
+            <RefreshCcw className={`w-4 h-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
+            {appLanguage === 'ms' ? 'Muat Semula' : 'Refresh'}
+          </button>
+          
+          <select 
+            value={filterYear}
+            onChange={(e) => setFilterYear(e.target.value)}
+            className="flex-1 sm:flex-none h-10 bg-surface border border-gray-200 text-text text-sm font-semibold rounded-xl px-3 outline-none focus:border-primary/50 focus:ring-2 ring-primary/20 cursor-pointer shadow-sm"
+          >
+            {stats.years.map(year => (
+              <option key={year} value={year}>{year}</option>
             ))}
-          </div>
+          </select>
+          
+          <select 
+            value={filterMonth}
+            onChange={(e) => setFilterMonth(e.target.value)}
+            className="flex-1 sm:flex-none h-10 bg-surface border border-gray-200 text-text text-sm font-semibold rounded-xl px-3 outline-none focus:border-primary/50 focus:ring-2 ring-primary/20 cursor-pointer shadow-sm"
+          >
+            <option value="all">{appLanguage === 'ms' ? 'Sepanjang Tahun' : 'Whole Year'}</option>
+            {stats.months.map((month, idx) => {
+              const mVal = String(idx + 1).padStart(2, '0');
+              return <option key={mVal} value={mVal}>{month}</option>;
+            })}
+          </select>
         </div>
+      </div>
 
-        <div className="bg-surface border border-gray-100 rounded-[24px] p-5 shadow-sm flex flex-col items-center">
-          <h3 className="text-sm font-bold text-text mb-4">{appLanguage === 'ms' ? 'Jenis Order Popular' : 'Popular Order Types'}</h3>
-          <div className="h-[160px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={stats.typesChart}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={50}
-                  outerRadius={70}
-                  paddingAngle={5}
-                  dataKey="value"
-                  label={{ fontSize: '10px', fill: '#636366', fontWeight: 'bold' }}
-                >
+      {error ? (
+        <div className="bg-red-50 text-red-600 p-4 rounded-xl flex border border-red-100 shadow-sm leading-relaxed text-sm">
+          <AlertCircle className="w-5 h-5 mr-3 shrink-0 mt-0.5" />
+          <p>{error}</p>
+        </div>
+      ) : isLoading && remoteOrders.length === 0 ? (
+        <div className="bg-surface rounded-xl p-8 flex flex-col items-center justify-center border border-gray-100 shadow-sm mt-8">
+          <RefreshCcw className="w-8 h-8 text-primary animate-spin mb-4" />
+          <p className="text-gray-500 font-medium">
+            {appLanguage === 'ms' ? 'Memuatkan data dari Google Sheets...' : 'Loading data from Google Sheets...'}
+          </p>
+        </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="bg-surface border border-gray-100 rounded-2xl p-4 shadow-sm flex flex-col justify-center">
+              <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">{appLanguage === 'ms' ? 'Jumlah Order' : 'Total Orders'}</p>
+              <p className="text-3xl font-black text-text">{stats.totalUniqueOrders}</p>
+            </div>
+            
+            <div className="bg-surface border border-gray-100 rounded-2xl p-4 shadow-sm flex flex-col justify-center">
+              <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">{appLanguage === 'ms' ? 'Pelanggan Unik' : 'Unique Customers'}</p>
+              <p className="text-3xl font-black text-text">{stats.totalUniqueCustomers}</p>
+            </div>
+
+            <div className="bg-surface border border-gray-100 rounded-2xl p-4 shadow-sm flex flex-col justify-center">
+              <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">{appLanguage === 'ms' ? 'Pelanggan Berulang' : 'Repeat Customers'}</p>
+              <p className="text-3xl font-black text-text">{stats.repeatCustomers}</p>
+            </div>
+
+            <div className="bg-surface border border-gray-100 rounded-2xl p-4 shadow-sm flex flex-col justify-center relative overflow-hidden">
+              <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">{appLanguage === 'ms' ? 'Kadar Ulangan' : 'Repeat Rate'}</p>
+              <p className="text-3xl font-black text-primary">{stats.repeatCustomerRate}%</p>
+            </div>
+          </div>
+
+          {stats.invalidDatesCount > 0 && (
+            <div className="bg-amber-50 text-amber-700 p-3 rounded-xl flex items-center border border-amber-100 shadow-sm text-xs font-medium">
+              <AlertCircle className="w-4 h-4 mr-2 shrink-0" />
+              <p>
+                {appLanguage === 'ms' 
+                  ? `${stats.invalidDatesCount} order mempunyai tarikh yang tidak sah (tidak ditunjukkan dalam carta bulanan).`
+                  : `${stats.invalidDatesCount} orders have invalid dates (excluded from monthly chart).`}
+              </p>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+            <div className="bg-surface border border-gray-100 rounded-[24px] p-5 shadow-sm space-y-6">
+              <div>
+                <h3 className="text-sm font-bold text-text mb-4">
+                  {appLanguage === 'ms' ? `Order Mengikut Bulan (${filterYear})` : `Orders By Month (${filterYear})`}
+                </h3>
+                <div className="h-[200px] w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={stats.ordersByMonth} margin={{ top: 20, right: 10, left: -20, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
+                      <XAxis dataKey="name" tick={{fontSize: 10}} tickLine={false} axisLine={false} />
+                      <YAxis tick={{fontSize: 10}} tickLine={false} axisLine={false} allowDecimals={false} />
+                      <Tooltip cursor={{fill: 'rgba(0,0,0,0.05)'}} contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)'}} />
+                      <Line type="monotone" dataKey="value" stroke="#0A84FF" strokeWidth={3} dot={{ r: 4, strokeWidth: 2 }} activeDot={{ r: 6 }} >
+                        <LabelList dataKey="value" position="top" style={{ fontSize: '10px', fontWeight: 'bold', fill: '#636366' }} />
+                      </Line>
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              <div>
+                <h3 className="text-sm font-bold text-text mb-4">{appLanguage === 'ms' ? 'Jenis Pelanggan' : 'Customer Types'}</h3>
+                <div className="h-[180px] w-full flex items-center justify-center">
+                  <div className="w-[180px] h-full relative">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          data={stats.customerTypes}
+                          cx="50%"
+                          cy="50%"
+                          innerRadius={50}
+                          outerRadius={70}
+                          paddingAngle={5}
+                          dataKey="value"
+                          label={{ fontSize: '10px', fill: '#636366', fontWeight: 'bold' }}
+                        >
+                          {stats.customerTypes.map((entry, index) => (
+                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                          ))}
+                        </Pie>
+                        <Tooltip contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)'}} />
+                      </PieChart>
+                    </ResponsiveContainer>
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none flex-col">
+                      <span className="text-xl font-black text-text">{stats.totalUniqueCustomers}</span>
+                      <span className="text-[9px] font-bold text-gray-400 uppercase">{appLanguage === 'ms' ? 'Jumlah' : 'Total'}</span>
+                    </div>
+                  </div>
+                  <div className="flex flex-col justify-center space-y-2 ml-4">
+                    {stats.customerTypes.map((entry, index) => (
+                      <div key={entry.name} className="flex items-center text-xs">
+                        <div className="w-3 h-3 rounded-full mr-2" style={{ backgroundColor: COLORS[index % COLORS.length] }}></div>
+                        <span className="text-gray-500 mr-2">{entry.name}</span>
+                        <span className="font-bold text-text">{entry.value}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-surface border border-gray-100 rounded-[24px] p-5 shadow-sm space-y-6">
+              <div>
+                <h3 className="text-sm font-bold text-text mb-4">{appLanguage === 'ms' ? 'Kategori Tempahan' : 'Order Categories'}</h3>
+                <div className="h-[200px] w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={stats.typesChart}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={50}
+                        outerRadius={70}
+                        paddingAngle={5}
+                        dataKey="value"
+                        label={{ fontSize: '10px', fill: '#636366', fontWeight: 'bold' }}
+                      >
+                        {stats.typesChart.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={COLORS[(index + 2) % COLORS.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)'}} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="flex flex-wrap justify-center gap-3 mt-2">
                   {stats.typesChart.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS[(index + 2) % COLORS.length]} />
+                    <div key={entry.name} className="flex items-center text-[10px]">
+                      <div className="w-2 h-2 rounded-full mr-1" style={{ backgroundColor: COLORS[(index + 2) % COLORS.length] }}></div>
+                      <span className="text-gray-500 mr-1 truncate max-w-[80px]">{entry.name}</span>
+                      <span className="font-bold text-text">{entry.value}</span>
+                    </div>
                   ))}
-                </Pie>
-                <Tooltip contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)'}} />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-          <div className="flex flex-wrap justify-center gap-3 mt-2">
-            {stats.typesChart.map((entry, index) => (
-              <div key={entry.name} className="flex items-center text-[10px] font-bold text-subtext whitespace-nowrap">
-                <span className="w-2.5 h-2.5 rounded-full mr-1.5 shrink-0" style={{backgroundColor: COLORS[(index + 2) % COLORS.length]}}></span>
-                {entry.name}
+                </div>
               </div>
-            ))}
-          </div>
-        </div>
-      </div>
-      
-      <div className="bg-surface border border-gray-100 rounded-[24px] p-5 shadow-sm space-y-6">
-        <div>
-          <h3 className="text-sm font-bold text-text mb-4">{appLanguage === 'ms' ? 'Jenis Urgency Popular' : 'Popular Urgency'}</h3>
-          <div className="h-[200px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={stats.urgencyChart} layout="vertical">
-                <XAxis type="number" hide />
-                <YAxis dataKey="name" type="category" tick={{fontSize: 10}} tickLine={false} axisLine={false} width={80} />
-                <Tooltip cursor={{fill: 'rgba(0,0,0,0.05)'}} contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)'}} />
-                <Bar dataKey="value" fill="#FF9F0A" radius={[0, 4, 4, 0]}>
-                  <LabelList dataKey="value" position="right" style={{ fontSize: '10px', fontWeight: 'bold', fill: '#636366' }} />
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-      </div>
 
+              <div>
+                <h3 className="text-sm font-bold text-text mb-4">{appLanguage === 'ms' ? 'Prioriti (Tahap Urgency)' : 'Priority (Urgency Level)'}</h3>
+                <div className="h-[160px] w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={stats.urgencyChart} layout="vertical" margin={{ top: 0, right: 30, left: 10, bottom: 0 }}>
+                      <XAxis type="number" hide />
+                      <YAxis dataKey="name" type="category" tick={{fontSize: 10}} tickLine={false} axisLine={false} width={80} />
+                      <Tooltip cursor={{fill: 'rgba(0,0,0,0.05)'}} contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)'}} />
+                      <Bar dataKey="value" fill="#FF9F0A" radius={[0, 4, 4, 0]}>
+                        <LabelList dataKey="value" position="right" style={{ fontSize: '10px', fontWeight: 'bold', fill: '#636366' }} />
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
