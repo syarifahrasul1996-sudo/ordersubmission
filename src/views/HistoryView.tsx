@@ -3,7 +3,7 @@ import { Clock, Trash2, Calendar, AlertCircle, RefreshCcw, Save, Bell, Check, Se
 import { useAppContext } from '../AppContext';
 
 const GOOGLE_SCRIPT_URL =
-  'https://script.google.com/macros/s/AKfycbxc44wibGH5n6KfVUI0u1oxK8DbqPENGtTwhSkFCVdErBK8bqV1UTXJvrWMBE6fMKH1Tw/exec';
+  'https://script.google.com/macros/s/AKfycbw5KpBvJyFpIXmsHueg4XPSRkZ0mg6kxHqjMGp3WEs8Hx_JodvKSoKEg6RMsdH54iCa/exec';
 
 const formatCustomerName = (name?: string) => {
   if (!name) return '';
@@ -11,6 +11,50 @@ const formatCustomerName = (name?: string) => {
   return words
     .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
     .join(' ');
+};
+
+const getRelativeDayDetails = (orderTime: number, appLanguage: string) => {
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  
+  const orderDate = new Date(orderTime);
+  orderDate.setHours(0, 0, 0, 0);
+  
+  const diffTime = orderDate.getTime() - now.getTime();
+  const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+  
+  if (diffDays === 0) {
+    return {
+      text: appLanguage === 'ms' ? 'HARI INI' : 'TODAY',
+      className: 'bg-rose-500/10 text-rose-600 dark:bg-rose-500/20 dark:text-rose-400 border border-rose-200 dark:border-rose-900/50'
+    };
+  } else if (diffDays === 1) {
+    return {
+      text: appLanguage === 'ms' ? 'ESOK' : 'TOMORROW',
+      className: 'bg-amber-500/10 text-amber-600 dark:bg-amber-500/20 dark:text-amber-400 border border-amber-200 dark:border-amber-900/50'
+    };
+  } else if (diffDays === 2) {
+    return {
+      text: appLanguage === 'ms' ? '2 HARI LAGI' : 'IN 2 DAYS',
+      className: 'bg-indigo-500/10 text-indigo-600 dark:bg-indigo-500/20 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-900/50'
+    };
+  } else if (diffDays === 3) {
+    return {
+      text: appLanguage === 'ms' ? '3 HARI LAGI' : 'IN 3 DAYS',
+      className: 'bg-blue-500/10 text-blue-600 dark:bg-blue-500/20 dark:text-blue-400 border border-blue-200 dark:border-blue-900/50'
+    };
+  } else if (diffDays === -1) {
+    return {
+      text: appLanguage === 'ms' ? 'SEMALAM' : 'YESTERDAY',
+      className: 'bg-gray-500/10 text-gray-600 dark:bg-gray-500/20 dark:text-gray-400 border border-gray-200 dark:border-gray-800'
+    };
+  } else if (diffDays === -2) {
+    return {
+      text: appLanguage === 'ms' ? '2 HARI LEPAS' : '2 DAYS AGO',
+      className: 'bg-slate-500/10 text-slate-600 dark:bg-slate-500/20 dark:text-slate-400 border border-slate-200 dark:border-slate-800'
+    };
+  }
+  return null;
 };
 
 export function HistoryView() {
@@ -41,23 +85,26 @@ export function HistoryView() {
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState('');
   const [showDbSettings, setShowDbSettings] = useState(false);
+  const [globalScriptUrl, setGlobalScriptUrl] = useState<string>(() => {
+    return localStorage.getItem('db_global_script_url') || GOOGLE_SCRIPT_URL;
+  });
+
   const [annualSheets, setAnnualSheets] = useState<{ year: string; spreadsheetId: string; scriptUrl: string }[]>(() => {
     try {
       const saved = localStorage.getItem('db_annual_sheets');
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          // Ensure we have 3 slots with default structure
-          while (parsed.length < 3) {
-            parsed.push({ year: String(2024 + parsed.length), spreadsheetId: '', scriptUrl: '' });
-          }
-          return parsed;
+          return parsed.map((s: any) => ({
+            year: String(s.year || ''),
+            spreadsheetId: String(s.spreadsheetId || ''),
+            scriptUrl: String(s.scriptUrl || '')
+          }));
         }
       }
     } catch (e) {
       console.error(e);
     }
-    // Pre-fill standard slots with backward compatibility fallback to state.spreadsheetId if set
     return [
       {
         year: '2024',
@@ -87,18 +134,7 @@ export function HistoryView() {
   };
 
   const getActiveScriptUrl = (sId?: string) => {
-    if (sId) {
-      const targetId = extractId(sId);
-      const found = annualSheets.find(s => extractId(s.spreadsheetId) === targetId);
-      if (found && found.scriptUrl && found.scriptUrl.trim() !== '') {
-        return found.scriptUrl.trim();
-      }
-    }
-    const firstActive = annualSheets.find(s => s.scriptUrl && s.scriptUrl.trim() !== '');
-    if (firstActive) {
-      return firstActive.scriptUrl.trim();
-    }
-    return GOOGLE_SCRIPT_URL;
+    return globalScriptUrl.trim() || GOOGLE_SCRIPT_URL;
   };
 
   const jsonpRequest = (url: URL, callbackName: string) => {
@@ -472,8 +508,8 @@ export function HistoryView() {
         } else {
           setSearchError(
             appLanguage === 'ms'
-              ? 'Tiada padanan dijumpai di 3 Google Sheets.'
-              : 'No matching records found across the 3 Google Sheets.'
+              ? 'Tiada padanan dijumpai di Google Sheets tahunan.'
+              : 'No matching records found across the annual Google Sheets.'
           );
         }
       } else if (errors.length > 0) {
@@ -537,7 +573,20 @@ export function HistoryView() {
           : orderData.order === 'Surat'
           ? 'Surat'
           : orderData.order || 'Lain-lain',
-      subType: ''
+      subType: '',
+      customerInfo: [
+        `--- MAKLUMAT PELANGGAN ---`,
+        `Nama Penuh: ${orderData.name || ''}`,
+        `No. Telefon: ${orderData.phone || ''}`,
+        `Order: ${orderData.order || ''}`,
+        `Template: ${orderData.template || ''}`,
+        `Bahasa: ${orderData.bahasa || ''}`,
+        `Add On: ${orderData.addon || ''}`,
+        `Jenis: ${orderData.jenis || ''}`,
+        `Due: ${orderData.due || ''}`,
+        `Link: ${orderData.link || ''}`,
+        `Order ID: ${generatedOrderId}`
+      ].join('\n')
     };
 
     const randomId = orderData.orderId || 'synced_' + Math.round(Math.random() * 100000);
@@ -789,29 +838,37 @@ export function HistoryView() {
                 );
               }
 
-              return matchedItems
-                .sort((a, b) => {
-                  const aDelivered = !!a.state?.isDelivered;
-                  const bDelivered = !!b.state?.isDelivered;
+              return (
+                <div className="space-y-2">
+                  {matchedItems
+                    .sort((a, b) => {
+                      const aDelivered = !!a.state?.isDelivered;
+                      const bDelivered = !!b.state?.isDelivered;
 
-                  // 1. Not delivered on top, delivered at the bottom
-                  if (!aDelivered && bDelivered) return -1;
-                  if (aDelivered && !bDelivered) return 1;
+                      // 1. Not delivered on top, delivered at the bottom
+                      if (!aDelivered && bDelivered) return -1;
+                      if (aDelivered && !bDelivered) return 1;
 
-                  // 2. Both are same delivery status, sort by closest to now time
-                  const now = Date.now();
-                  const aDue = a.state?.dueTimestamp || a.timestamp || now;
-                  const bDue = b.state?.dueTimestamp || b.timestamp || now;
+                      // 2. Both are same delivery status
+                      const now = Date.now();
+                      const aDue = a.state?.dueTimestamp || a.timestamp || now;
+                      const bDue = b.state?.dueTimestamp || b.timestamp || now;
 
-                  const diffA = Math.abs(aDue - now);
-                  const diffB = Math.abs(bDue - now);
-
-                  if (diffA !== diffB) {
-                    return diffA - diffB;
-                  }
-                  return (b.timestamp || 0) - (a.timestamp || 0);
-                })
-                .map((item) => {
+                      if (!aDelivered) {
+                        // Pending orders: sort chronologically so that overdue & today's orders are always on top of tomorrow's / future orders
+                        if (aDue !== bDue) {
+                          return aDue - bDue;
+                        }
+                        return (b.timestamp || 0) - (a.timestamp || 0);
+                      } else {
+                        // Completed (delivered) orders: sort by latest completed/due date on top
+                        if (aDue !== bDue) {
+                          return bDue - aDue;
+                        }
+                        return (b.timestamp || 0) - (a.timestamp || 0);
+                      }
+                    })
+                    .map((item) => {
                   const lastEditedDateObj = new Date(item.timestamp || Date.now());
                   const formattedLastEditedDate = lastEditedDateObj.toLocaleString(
                     appLanguage === 'ms' ? 'ms-MY' : 'en-US',
@@ -843,66 +900,90 @@ export function HistoryView() {
                   const isDueSoon = !isDelivered && timeUntilDue > 0 && timeUntilDue <= 20 * 60 * 1000;
                   const isOverdue = !isDelivered && item.state?.dueTimestamp ? timeUntilDue <= 0 : false;
 
+                  const relDetails = getRelativeDayDetails(dueTimestamp, appLanguage);
+
+                  let barColor = "bg-gray-300";
+                  if (isDelivered) barColor = "bg-blue-500";
+                  else if (isDueSoon) barColor = "bg-rose-500";
+                  else if (isOverdue) barColor = "bg-amber-500 font-extrabold";
+                  else if (item.state?.urgency === 'super' || item.state?.customerJenis?.toLowerCase().includes('super')) barColor = "bg-rose-600";
+                  else if (item.state?.urgency === 'urgent' || item.state?.customerJenis?.toLowerCase().includes('urgent')) barColor = "bg-orange-500";
+                  else if (item.state?.urgency === 'semi' || item.state?.customerJenis?.toLowerCase().includes('semi')) barColor = "bg-yellow-500";
+
                   return (
                     <div
                       key={item.id}
                       onClick={() => loadOrder(item)}
-                      className={`bg-surface border ${
+                      className={`bg-surface border relative overflow-hidden ${
                         isDelivered
-                          ? 'border-blue-200 bg-blue-50/10 hover:border-blue-300'
+                          ? 'border-blue-100 bg-blue-50/5 hover:border-blue-200'
                           : isDueSoon
-                          ? 'border-red-400 bg-red-50/10 hover:border-red-500'
+                          ? 'border-red-200 bg-red-50/5 hover:border-red-300'
                           : isOverdue
-                          ? 'border-orange-200 bg-orange-50/10 hover:border-orange-300'
-                          : 'border-gray-100 hover:border-gray-300 shadow-sm'
-                      } rounded-[16px] p-2.5 flex flex-col space-y-1 hover:bg-gray-50/80 cursor-pointer active:scale-[0.99] transition-all duration-200`}
+                          ? 'border-amber-200 bg-amber-50/5 hover:border-amber-300/80'
+                          : 'border-gray-200/60 hover:border-gray-300 shadow-sm'
+                      } rounded-xl p-2.5 flex flex-col space-y-1 hover:bg-gray-50/65 cursor-pointer active:scale-[0.995] transition-all duration-200`}
                     >
-                      <div className="flex justify-between items-start border-b border-gray-100 pb-1.5">
-                        <div className="flex-1">
-                          <div
-                            className={`flex items-center ${
-                              isDelivered
-                                ? 'text-blue-500'
-                                : isDueSoon
-                                ? 'text-red-500'
-                                : 'text-primary/70'
-                            } text-[10px] font-black uppercase tracking-widest mb-0.5`}
-                          >
-                            {isDelivered ? (
-                              <Check className="w-3 h-3 mr-1" />
-                            ) : isDueSoon ? (
-                              <Bell className="w-3 h-3 mr-1 animate-pulse" />
-                            ) : (
-                              <Calendar className="w-3 h-3 mr-1" />
-                            )}
+                      {/* Left Accent Bar */}
+                      <div className={`absolute left-0 top-0 bottom-0 w-1 rounded-r ${barColor}`} />
 
-                            {item.state?.customerDue || formattedDueDate}
+                      <div className="pl-1.5">
+                        <div className="flex justify-between items-start border-b border-gray-100/60 pb-1">
+                          <div className="flex-1">
+                            <div className="flex flex-wrap items-center gap-1 mb-0.5">
+                              <div
+                                className={`flex items-center ${
+                                  isDelivered
+                                    ? 'text-blue-500 font-bold'
+                                    : isDueSoon
+                                    ? 'text-rose-600 font-bold'
+                                    : isOverdue
+                                    ? 'text-amber-600 font-bold'
+                                    : 'text-primary/75 font-semibold'
+                                } text-[10px] sm:text-[10.5px] uppercase tracking-wider`}
+                              >
+                                {isDelivered ? (
+                                  <Check className="w-3 h-3 mr-1 text-blue-500" />
+                                ) : isDueSoon ? (
+                                  <Bell className="w-3 h-3 mr-1 text-rose-500 animate-pulse" />
+                                ) : (
+                                  <Calendar className="w-3 h-3 mr-1" />
+                                )}
 
-                            {isDueSoon && (
-                              <span className="ml-1 text-red-500 lowercase">
-                                ({Math.ceil(timeUntilDue / 60000)}m)
-                              </span>
-                            )}
+                                {item.state?.customerDue || formattedDueDate}
 
-                            {isDelivered && (
-                              <span className="ml-1 text-blue-500 lowercase">
-                                ({appLanguage === 'ms' ? 'Dihantar' : 'Delivered'})
-                              </span>
-                            )}
+                                {isDueSoon && (
+                                  <span className="ml-1 text-rose-600 lowercase font-bold">
+                                    ({Math.ceil(timeUntilDue / 60000)}m)
+                                  </span>
+                                )}
+
+                                {isDelivered && (
+                                  <span className="ml-1 text-blue-500 lowercase">
+                                    ({appLanguage === 'ms' ? 'Dihantar' : 'Delivered'})
+                                  </span>
+                                )}
+                              </div>
+
+                              {relDetails && (
+                                <span className={`px-2 py-0.5 rounded-full text-[9px] font-black tracking-wider ${relDetails.className}`}>
+                                  {relDetails.text}
+                                </span>
+                              )}
+                            </div>
+
+                            <p className="font-bold text-[13px] sm:text-[13.5px] leading-tight text-[#111827]">
+                              {item.state?.mainType === 'Lain-lain'
+                                ? item.state?.customDoc
+                                : item.state?.mainType}{' '}
+                              {item.state?.isEditMode ? '(Edit)' : ''}
+                              {item.state?.customerName
+                                ? ` - ${formatCustomerName(item.state.customerName)}`
+                                : ''}
+                            </p>
                           </div>
 
-                          <p className="font-bold text-[14px] leading-tight text-text">
-                            {item.state?.mainType === 'Lain-lain'
-                              ? item.state?.customDoc
-                              : item.state?.mainType}{' '}
-                            {item.state?.isEditMode ? '(Edit)' : ''}
-                            {item.state?.customerName
-                              ? ` - ${formatCustomerName(item.state.customerName)}`
-                              : ''}
-                          </p>
-                        </div>
-
-                        <div className="flex items-center space-x-1.5 shrink-0 ml-2">
+                        <div className="flex items-center space-x-1 shrink-0 ml-1.5">
                           <button
                             type="button"
                             onClick={(e) => {
@@ -915,10 +996,10 @@ export function HistoryView() {
                                 historyId: item.id
                               });
                             }}
-                            className="w-8 h-8 bg-green-100 text-green-600 rounded-full flex items-center justify-center hover:bg-green-200 hover:text-green-700 hover:scale-[1.10] active:scale-90 transition-all shadow-sm duration-200"
+                            className="w-7 h-7 bg-green-100 text-green-600 rounded-full flex items-center justify-center hover:bg-green-200 hover:text-green-700 hover:scale-[1.05] active:scale-95 transition-all shadow-xs duration-200"
                             title={appLanguage === 'ms' ? 'Kemaskini data & hantar ke Google Sheet' : 'Edit details & sync to Google Sheets'}
                           >
-                            <Save className="w-3.5 h-3.5" />
+                            <Save className="w-3 h-3" />
                           </button>
 
                           <button
@@ -930,15 +1011,15 @@ export function HistoryView() {
                                 deleteOrderFromHistory(item.id);
                               }
                             }}
-                            className="w-8 h-8 bg-red-100 text-red-500 rounded-full flex items-center justify-center hover:bg-red-200 hover:text-red-700 hover:scale-[1.10] active:scale-90 transition-all shadow-sm duration-200"
+                            className="w-7 h-7 bg-red-100 text-red-500 rounded-full flex items-center justify-center hover:bg-red-200 hover:text-red-700 hover:scale-[1.05] active:scale-95 transition-all shadow-xs duration-200"
                             title={appLanguage === 'ms' ? 'Padam' : 'Delete'}
                           >
-                            <Trash2 className="w-3.5 h-3.5" />
+                            <Trash2 className="w-3 h-3" />
                           </button>
                         </div>
                       </div>
 
-                      <div className="flex flex-wrap gap-x-3 gap-y-1 text-[12px] mt-1.5 leading-snug">
+                      <div className="flex flex-wrap gap-x-2.5 gap-y-0.5 text-[11px] mt-1 leading-normal">
                         {item.state?.template &&
                           item.state?.mainType === 'Resume' &&
                           !item.state?.isEditMode && (
@@ -987,21 +1068,21 @@ export function HistoryView() {
                               target="_blank"
                               rel="noopener noreferrer"
                               onClick={(e) => e.stopPropagation()}
-                              className="font-semibold text-blue-600 hover:underline hover:text-blue-700 bg-blue-50/70 px-2 py-0.5 rounded flex items-center space-x-1 inline-flex text-[11px]"
+                              className="font-semibold text-blue-600 hover:underline hover:text-blue-700 bg-blue-50/50 px-1.5 py-0 rounded flex items-center space-x-1 inline-flex text-[10px]"
                               title={appLanguage === 'ms' ? 'Hubungi di WhatsApp' : 'Contact on WhatsApp'}
                             >
-                              <Phone className="w-3 h-3 text-blue-500 shrink-0" />
+                              <Phone className="w-2.5 h-2.5 text-blue-500 shrink-0" />
                               <span className="select-all font-mono">{item.state.customerPhone}</span>
                             </a>
                           </div>
                         )}
 
                         {item.state?.orderId && (
-                          <div className="w-full flex items-center justify-between pt-1">
+                          <div className="w-full flex items-center justify-between pt-0.5 mt-0.5">
                             <div className="flex-1 truncate mr-2">
-                              <span className="text-subtext">Link:</span>{' '}
+                              <span className="text-subtext text-[10.5px]">Link:</span>{' '}
                               {item.state?.googleSheetLink ? (
-                                <div className="flex flex-col gap-1">
+                                <div className="flex flex-col gap-0.5">
                                   {item.state.googleSheetLink
                                     .split(/[\n,]+/)
                                     .filter(Boolean)
@@ -1011,7 +1092,7 @@ export function HistoryView() {
                                         href={link.trim()}
                                         target="_blank"
                                         rel="noopener noreferrer"
-                                        className="text-blue-500 hover:underline font-medium truncate inline-block max-w-[200px] sm:max-w-[300px]"
+                                        className="text-blue-500 hover:underline font-medium truncate inline-block max-w-[150px] sm:max-w-[250px] text-[10.5px]"
                                         onClick={(e) => e.stopPropagation()}
                                         title={link.trim()}
                                       >
@@ -1020,7 +1101,7 @@ export function HistoryView() {
                                     ))}
                                 </div>
                               ) : (
-                                <span className="text-gray-400 italic font-medium">
+                                <span className="text-gray-400 italic font-medium text-[10px]">
                                   {appLanguage === 'ms' ? 'Belum dimasukkan' : 'Not entered'}
                                 </span>
                               )}
@@ -1030,11 +1111,11 @@ export function HistoryView() {
                               type="button"
                               onClick={(e) => handleSyncLink(e, item)}
                               disabled={syncingId === item.id}
-                              className="shrink-0 flex items-center justify-center bg-gray-100 hover:bg-gray-200 hover:scale-110 active:scale-90 text-text p-1.5 rounded-full transition-all disabled:opacity-50"
+                              className="shrink-0 flex items-center justify-center bg-gray-100 hover:bg-gray-200 hover:scale-105 active:scale-95 text-text p-1 rounded-full transition-all disabled:opacity-50"
                               title={appLanguage === 'ms' ? 'Sync Link dari Google Sheet' : 'Sync Link from Google Sheet'}
                             >
                               <RefreshCcw
-                                className={`w-3.5 h-3.5 ${
+                                className={`w-3 h-3 ${
                                   syncingId === item.id ? 'animate-spin text-primary' : ''
                                 }`}
                               />
@@ -1042,18 +1123,18 @@ export function HistoryView() {
                           </div>
                         )}
 
-                        <div className="w-full pt-2 mt-1 border-t border-gray-100 flex items-center justify-between">
+                        <div className="w-full pt-1.5 mt-1 border-t border-gray-100/65 flex items-center justify-between">
                           <button
                             type="button"
                             onClick={(e) => handleDeliveredToggle(e, item, isDelivered)}
-                            className={`px-3 py-1.5 text-[11px] font-bold rounded-lg flex items-center hover:scale-[1.02] active:scale-95 transition-all duration-200 shadow-sm ${
+                            className={`px-2 py-1 text-[10px] font-bold rounded-md flex items-center hover:scale-[1.02] active:scale-95 transition-all duration-200 shadow-xs ${
                               isDelivered
-                                ? 'bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-100 hover:border-blue-300'
-                                : 'bg-white text-gray-500 border border-gray-200 hover:bg-gray-50 hover:text-gray-700 hover:border-gray-300'
+                                ? 'bg-blue-50 text-blue-600 border border-blue-200/60 hover:bg-blue-100'
+                                : 'bg-white text-gray-400 border border-gray-150 hover:bg-gray-50 hover:text-gray-600'
                             }`}
                           >
                             <Check
-                              className={`w-3.5 h-3.5 mr-1.5 ${
+                              className={`w-3 h-3 mr-1 ${
                                 isDelivered ? 'text-blue-500' : 'text-gray-400'
                               }`}
                             />
@@ -1066,18 +1147,21 @@ export function HistoryView() {
                               : 'Not Delivered'}
                           </button>
 
-                          <div className="text-[10px] text-right text-subtext font-medium leading-tight select-none">
+                          <div className="text-[9.5px] text-right text-subtext font-medium leading-none select-none">
                             <span className="opacity-75">{appLanguage === 'ms' ? 'Disunting: ' : 'Edited: '}</span>
                             <span className="font-semibold text-text/80">{formattedLastEditedDate}</span>
                           </div>
                         </div>
                       </div>
                     </div>
-                  );
-                });
-            })()}
-          </div>
-          )
+                  </div>
+                );
+                })}
+              </div>
+            );
+        })()}
+      </div>
+      )
         ) : (
           /* Database Search Tab */
           <div className="space-y-4">
@@ -1120,7 +1204,7 @@ export function HistoryView() {
               >
                 <div className="flex items-center space-x-2">
                   <Settings className="w-4 h-4 text-primary" />
-                  <span>{appLanguage === 'ms' ? 'Pautan & Tetapan Database (3 Tahun)' : 'Database Connection & Settings (3 Years)'}</span>
+                  <span>{appLanguage === 'ms' ? 'Pautan & Tetapan Database Tahunan' : 'Annual Database Connection & Settings'}</span>
                 </div>
                 {showDbSettings ? (
                   <ChevronUp className="w-4 h-4 text-subtext/70" />
@@ -1137,24 +1221,51 @@ export function HistoryView() {
                       : 'Configure the Spreadsheet ID for each year. You can paste the full Google Sheet Link (URL) or directly the Spreadsheet ID.'}
                   </div>
 
+                  {/* Web App Script URL block shared for all */}
+                  <div className="p-3 bg-white rounded-lg border border-gray-100 shadow-sm space-y-1.5">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-primary block">
+                      {appLanguage === 'ms' ? 'Pautan Web App Apps Script (Kongsi Untuk Semua):' : 'Global Web App Apps Script URL (Shared for All):'}
+                    </span>
+                    <input
+                      type="text"
+                      className="w-full text-[11px] bg-gray-50 font-mono rounded px-2.5 py-1.5 border border-gray-200 outline-none text-text focus:bg-white"
+                      value={globalScriptUrl}
+                      onChange={(e) => setGlobalScriptUrl(e.target.value)}
+                      placeholder="https://script.google.com/macros/s/.../exec"
+                    />
+                  </div>
+
                   <div className="space-y-4">
                     {annualSheets.map((sheet, index) => (
-                      <div key={index} className="p-3 bg-white rounded-lg border border-gray-100 shadow-sm space-y-2.5">
+                      <div key={index} className="p-3 bg-white rounded-lg border border-gray-100 shadow-sm space-y-2.5 relative">
                         <div className="flex items-center justify-between">
-                          <label className="text-[10px] font-black uppercase tracking-wider text-primary">
-                            {appLanguage === 'ms' ? `Tahun ${sheet.year || (index + 1)}` : `Year ${sheet.year || (index + 1)}`}
-                          </label>
-                          <input
-                            type="text"
-                            value={sheet.year}
-                            onChange={(e) => {
-                              const updated = [...annualSheets];
-                              updated[index].year = e.target.value;
-                              setAnnualSheets(updated);
-                            }}
-                            className="bg-gray-50 px-2 py-0.5 rounded text-[10px] font-bold text-text border border-gray-200 max-w-[80px] outline-none text-center"
-                            placeholder="e.g. 2024"
-                          />
+                          <div className="flex items-center space-x-2">
+                            <label className="text-[10px] font-black uppercase tracking-wider text-primary shrink-0">
+                              {appLanguage === 'ms' ? 'Tahun:' : 'Year:'}
+                            </label>
+                            <input
+                              type="text"
+                              value={sheet.year}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setAnnualSheets(prev => prev.map((s, idx) => idx === index ? { ...s, year: val } : s));
+                              }}
+                              className="bg-gray-50 px-2 py-0.5 rounded text-[10px] font-bold text-text border border-gray-200 max-w-[80px] outline-none text-left"
+                              placeholder="e.g. 2024"
+                            />
+                          </div>
+                          {annualSheets.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setAnnualSheets(prev => prev.filter((_, idx) => idx !== index));
+                              }}
+                              className="p-1 hover:bg-red-50 text-red-500 rounded transition-colors"
+                              title={appLanguage === 'ms' ? 'Hapus' : 'Delete'}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                         </div>
 
                         <div className="space-y-1">
@@ -1166,9 +1277,8 @@ export function HistoryView() {
                               type="text"
                               value={sheet.spreadsheetId}
                               onChange={(e) => {
-                                const updated = [...annualSheets];
-                                updated[index].spreadsheetId = e.target.value;
-                                setAnnualSheets(updated);
+                                const val = e.target.value;
+                                setAnnualSheets(prev => prev.map((s, idx) => idx === index ? { ...s, spreadsheetId: val } : s));
                               }}
                               placeholder={appLanguage === 'ms' ? 'Salin pautan Google Sheet di sini...' : 'Paste Google Sheet Link here...'}
                               className="w-full text-[11px] bg-gray-50 font-mono rounded px-2.5 py-1.5 border border-gray-200 outline-none text-text focus:bg-white"
@@ -1182,23 +1292,6 @@ export function HistoryView() {
                             )}
                           </div>
                         </div>
-
-                        <div className="space-y-1">
-                          <span className="text-[10px] text-subtext font-medium block flex items-center space-x-1">
-                            <span>{appLanguage === 'ms' ? 'Pautan Apps Script (Pilihan):' : 'Web App Apps Script URL (Optional):'}</span>
-                          </span>
-                          <input
-                            type="text"
-                            value={sheet.scriptUrl}
-                            onChange={(e) => {
-                              const updated = [...annualSheets];
-                              updated[index].scriptUrl = e.target.value;
-                              setAnnualSheets(updated);
-                            }}
-                            placeholder={appLanguage === 'ms' ? 'Guna default jika sama...' : 'Uses global script link if blank...'}
-                            className="w-full text-[11px] bg-gray-50 font-mono rounded px-2.5 py-1.5 border border-gray-200 outline-none text-text focus:bg-white"
-                          />
-                        </div>
                       </div>
                     ))}
                   </div>
@@ -1206,7 +1299,19 @@ export function HistoryView() {
                   <button
                     type="button"
                     onClick={() => {
+                      setAnnualSheets(prev => [...prev, { year: '', spreadsheetId: '', scriptUrl: '' }]);
+                    }}
+                    className="w-full py-2.5 border border-dashed border-gray-300 hover:border-blue-400 hover:text-blue-600 text-subtext font-bold rounded-xl flex items-center justify-center space-x-1.5 text-xs active:scale-[0.98] transition-all bg-white"
+                  >
+                    <span className="text-base font-normal">+</span>
+                    <span>{appLanguage === 'ms' ? 'Tambah Tahun Baru' : 'Add New Year'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
                       localStorage.setItem('db_annual_sheets', JSON.stringify(annualSheets));
+                      localStorage.setItem('db_global_script_url', globalScriptUrl);
                       // Save and sync with context state
                       const firstActive = annualSheets.find(s => s.spreadsheetId !== '');
                       if (firstActive) {
@@ -1228,7 +1333,7 @@ export function HistoryView() {
                     }}
                     className="w-full h-10 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl flex items-center justify-center space-x-1 text-xs active:scale-95 transition-all shadow-sm"
                   >
-                    <Save className="w-3.5 h-3.5 animate-pulse" />
+                    <Save className="w-3.5 h-3.5" />
                     <span>{appLanguage === 'ms' ? 'Simpan Tetapan' : 'Save Connection Settings'}</span>
                   </button>
                 </div>
@@ -1246,7 +1351,7 @@ export function HistoryView() {
               <div className="flex flex-col items-center justify-center py-16 text-subtext">
                 <RefreshCcw className="w-7 h-7 mb-3 animate-spin text-primary opacity-80" />
                 <p className="font-bold text-xs select-none">
-                  {appLanguage === 'ms' ? 'Sedang mencari di 3 lembaran tahunan...' : 'Searching across 3 annual sheets...'}
+                  {appLanguage === 'ms' ? 'Sedang mencari di lembaran tahunan...' : 'Searching across annual sheets...'}
                 </p>
               </div>
             )}
@@ -1436,8 +1541,8 @@ export function HistoryView() {
                 <Search className="w-16 h-16 mb-4 opacity-30 animate-pulse" />
                 <p className="font-bold text-center text-xs text-text/60 md:max-w-[260px] leading-relaxed">
                   {appLanguage === 'ms' 
-                    ? 'Masukkan nama, Order ID, atau No. telefon untuk mencari di 3 lembaran tahunan.' 
-                    : 'Enter customer name, Order ID, or Phone No to search across 3 annual sheets.'}
+                    ? 'Masukkan nama, Order ID, atau No. telefon untuk mencari di lembaran tahunan.' 
+                    : 'Enter customer name, Order ID, or Phone No to search across annual sheets.'}
                 </p>
               </div>
             )}

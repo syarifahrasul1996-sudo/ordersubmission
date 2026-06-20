@@ -80,6 +80,41 @@ export function CustomerInfoView() {
     }
     const initAddOn = initAddOnList.join(', ');
 
+    const validDropdownOptions = [
+      'Editable softcopy BI',
+      'Editable softcopy BM',
+      'ATS',
+      'Cover Letter BI',
+      'Cover Letter BM',
+      'Resign Letter',
+      'Fail',
+      'Nota Temuduga',
+      'Pakej Temuduga Kerajaan'
+    ];
+
+    let initAddOnDropdown = '';
+    const addOnToCheck = (state.customerAddOn || initAddOn).trim();
+    if (addOnToCheck) {
+      if (validDropdownOptions.includes(addOnToCheck)) {
+        initAddOnDropdown = addOnToCheck;
+      } else {
+        const normalizedCheck = addOnToCheck.toLowerCase();
+        const found = validDropdownOptions.find(opt => {
+          const normOpt = opt.toLowerCase();
+          return normalizedCheck.includes(normOpt) || normOpt.includes(normalizedCheck);
+        });
+        if (found) {
+          initAddOnDropdown = found;
+        } else {
+          const parts = addOnToCheck.split(',').map(p => p.trim().toLowerCase());
+          const matchPart = validDropdownOptions.find(opt => parts.includes(opt.toLowerCase()));
+          if (matchPart) {
+            initAddOnDropdown = matchPart;
+          }
+        }
+      }
+    }
+
     let initOrderId = state.orderId;
     if (!initOrderId) {
       initOrderId = generateOrderId();
@@ -95,7 +130,20 @@ export function CustomerInfoView() {
       initDueTimestamp: state.dueTimestamp || dl.getTime(),
       initTemplate: state.customerTemplate || initTemplate, 
       initAddOn: state.customerAddOn || initAddOn,
-      initInfo: state.customerInfo || '',
+      initAddOnDropdown,
+      initInfo: state.customerInfo || [
+        `--- ${appLanguage === 'ms' ? 'MAKLUMAT PELANGGAN' : 'CUSTOMER INFORMATION'} ---`,
+        `${appLanguage === 'ms' ? 'Nama Penuh' : 'Full Name'}: ${state.customerName || ''}`,
+        `${appLanguage === 'ms' ? 'No. Telefon' : 'Phone Number'}: ${state.customerPhone || ''}`,
+        `Order: ${state.customerOrder || initOrder || ''}`,
+        `Template: ${state.customerTemplate || initTemplate || ''}`,
+        `${appLanguage === 'ms' ? 'Bahasa' : 'Language'}: ${state.customerBahasa || initBahasa || ''}`,
+        `${appLanguage === 'ms' ? 'Add On' : 'Add On'}: ${state.customerAddOn || initAddOn || ''}`,
+        `Jenis: ${state.customerJenis || initJenis || ''}`,
+        `Due: ${state.customerDue || `${formattedDate} at ${formattedTime}`}`,
+        `Link: ${state.orderLink || state.googleSheetLink || ''}`,
+        `Order ID: ${initOrderId}`
+      ].join('\n'),
       initLink: state.orderLink || '',
       initOrderId,
     };
@@ -116,7 +164,7 @@ export function CustomerInfoView() {
   const [orderId, setOrderId] = useState('');
 
   const [spreadsheetId, setSpreadsheetId] = useState(state.spreadsheetId);
-  const webhookUrl = 'https://script.google.com/macros/s/AKfycbxc44wibGH5n6KfVUI0u1oxK8DbqPENGtTwhSkFCVdErBK8bqV1UTXJvrWMBE6fMKH1Tw/exec';
+  const webhookUrl = 'https://script.google.com/macros/s/AKfycbw5KpBvJyFpIXmsHueg4XPSRkZ0mg6kxHqjMGp3WEs8Hx_JodvKSoKEg6RMsdH54iCa/exec';
   const [isSaving, setIsSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
@@ -153,7 +201,7 @@ export function CustomerInfoView() {
       setOrder(initVals.initOrder);
       setTemplate(initVals.initTemplate);
       setBahasa(initVals.initBahasa);
-      setAddOn(initVals.initAddOn);
+      setAddOn(initVals.initAddOnDropdown);
       setJenis(initVals.initJenis);
       setDue(initVals.initDue);
       setDueTimestamp(initVals.initDueTimestamp);
@@ -298,8 +346,10 @@ export function CustomerInfoView() {
       let formattedPhone = phone.trim();
       if (formattedPhone.startsWith('+')) {
         formattedPhone = formattedPhone.substring(1);
-      } else if (formattedPhone.startsWith('0')) {
-        formattedPhone = '6' + formattedPhone;
+      }
+      formattedPhone = formattedPhone.replace(/\D/g, '');
+      if (formattedPhone.startsWith('0')) {
+        formattedPhone = '60' + formattedPhone.substring(1);
       }
 
       let formattedName = name.replace(/\w\S*/g, (txt) => txt.charAt(0).toUpperCase() + txt.substring(1).toLowerCase());
@@ -552,11 +602,16 @@ export function CustomerInfoView() {
               onChange={(e) => setAddOn(e.target.value)}
               className="w-full h-14 bg-surface text-text rounded-[16px] px-4 font-medium border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all appearance-none text-[16px]" 
             >
-              <option value="Cover Letter">Cover Letter</option>
-              <option value="Softcopy Word">Softcopy Word</option>
-              <option value="Cover Letter + Softcopy Word">Cover Letter + Softcopy Word</option>
-              <option value="Lain2">Lain2</option>
               <option value=""></option>
+              <option value="Editable softcopy BI">Editable softcopy BI</option>
+              <option value="Editable softcopy BM">Editable softcopy BM</option>
+              <option value="ATS">ATS</option>
+              <option value="Cover Letter BI">Cover Letter BI</option>
+              <option value="Cover Letter BM">Cover Letter BM</option>
+              <option value="Resign Letter">Resign Letter</option>
+              <option value="Fail">Fail</option>
+              <option value="Nota Temuduga">Nota Temuduga</option>
+              <option value="Pakej Temuduga Kerajaan">Pakej Temuduga Kerajaan</option>
             </select>
             <div className="absolute top-0 right-4 h-full flex items-center pointer-events-none">
               <svg className="w-4 h-4 text-subtext" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>

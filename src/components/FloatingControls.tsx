@@ -10,7 +10,7 @@ export function FloatingControls() {
   const formViews = ['resume-type', 'resume-form-fields', 'general-form'];
   if (!formViews.includes(currentView)) return null;
 
-  let isReady = !!state.urgency && (state.isEditMode || state.mainType !== 'Resume' || state.resumeLangs.length > 0);
+  let isReady = !!state.urgency && (state.isEditMode || state.mainType !== 'Resume' || (state.resumeLangs || []).length > 0);
   if (state.mainType === 'Lain-lain' && !state.customDoc.trim()) {
     isReady = false;
   }

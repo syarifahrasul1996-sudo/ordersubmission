@@ -30,6 +30,8 @@ export interface AppState {
   orderLink?: string;
   googleSheetLink?: string;
   orderId?: string;
+  hasThreeHourChecked?: boolean;
+  threeHourAlerted?: boolean;
 }
 
 export type ViewType = 'home' | 'resume-type' | 'resume-form-fields' | 'general-form' | 'confirmation' | 'output' | 'history' | 'customer-info';
@@ -71,4 +73,6 @@ export const INITIAL_STATE: AppState = {
   orderLink: '',
   googleSheetLink: '',
   orderId: '',
+  hasThreeHourChecked: false,
+  threeHourAlerted: false,
 };

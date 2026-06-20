@@ -52,7 +52,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AppState>(() => {
     try {
       const saved = localStorage.getItem('appState');
-      return saved ? { ...INITIAL_STATE, ...JSON.parse(saved) } : INITIAL_STATE;
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return {
+          ...INITIAL_STATE,
+          ...parsed,
+          addons: Array.isArray(parsed.addons) ? parsed.addons : INITIAL_STATE.addons,
+          clLangs: Array.isArray(parsed.clLangs) ? parsed.clLangs : INITIAL_STATE.clLangs,
+          resumeLangs: Array.isArray(parsed.resumeLangs) ? parsed.resumeLangs : INITIAL_STATE.resumeLangs
+        };
+      }
+      return INITIAL_STATE;
     } catch {
       return INITIAL_STATE;
     }
@@ -121,38 +131,177 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [appLanguage]);
 
   useEffect(() => {
+    const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbw5KpBvJyFpIXmsHueg4XPSRkZ0mg6kxHqjMGp3WEs8Hx_JodvKSoKEg6RMsdH54iCa/exec';
+
+    const extractId = (input: string) => {
+      if (!input) return '';
+      const trimmed = input.trim();
+      if (trimmed.includes('docs.google.com/spreadsheets/d/')) {
+        const matches = trimmed.match(/\/d\/([a-zA-Z0-9-_]+)/);
+        return matches ? matches[1] : trimmed;
+      }
+      return trimmed;
+    };
+
+    const getActiveScriptUrl = (sId?: string) => {
+      const globalUrl = localStorage.getItem('db_global_script_url');
+      if (globalUrl && globalUrl.trim() !== '') {
+        return globalUrl.trim();
+      }
+      const savedSheets = localStorage.getItem('db_annual_sheets');
+      const annualSheets = savedSheets ? JSON.parse(savedSheets) : [];
+      if (sId) {
+        const targetId = extractId(sId);
+        const found = annualSheets.find((s: any) => extractId(s.spreadsheetId) === targetId);
+        if (found && found.scriptUrl && found.scriptUrl.trim() !== '') {
+          return found.scriptUrl.trim();
+        }
+      }
+      const firstActive = annualSheets.find((s: any) => s.scriptUrl && s.scriptUrl.trim() !== '');
+      if (firstActive) {
+        return firstActive.scriptUrl.trim();
+      }
+      return GOOGLE_SCRIPT_URL;
+    };
+
+    const jsonpRequest = (url: URL, callbackName: string): Promise<any> => {
+      return new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = url.toString();
+        script.async = true;
+
+        const timeout = setTimeout(() => {
+          cleanup();
+          reject(new Error('Request timeout'));
+        }, 15000);
+
+        const cleanup = () => {
+          clearTimeout(timeout);
+          try {
+            document.body.removeChild(script);
+          } catch (e) {}
+          delete (window as any)[callbackName];
+        };
+
+        (window as any)[callbackName] = (data: any) => {
+          cleanup();
+          resolve(data);
+        };
+
+        script.onerror = () => {
+          cleanup();
+          reject(new Error('Script load error'));
+        };
+
+        document.body.appendChild(script);
+      });
+    };
+
     const checkAlerts = () => {
       const now = Date.now();
       const TWENTY_MINS = 20 * 60 * 1000;
+      const THREE_HOURS = 3 * 60 * 60 * 1000;
       
       let updatedHistory = false;
       const newHistory = history.map(item => {
-        const { dueTimestamp, hasNotified, customerName, subType, mainType, orderId, isDelivered } = item.state;
-        if (dueTimestamp && !hasNotified && !isDelivered) {
+        const { dueTimestamp, hasNotified, hasThreeHourChecked, customerName, subType, mainType, orderId, isDelivered } = item.state;
+        
+        let itemUpdated = false;
+        let newState = { ...item.state };
+
+        if (dueTimestamp && !isDelivered) {
           const timeUntilDue = dueTimestamp - now;
-          if (timeUntilDue > 0 && timeUntilDue <= TWENTY_MINS) {
-            // Due in 20 minutes or less!
+
+          // 1. Check 3 hours logic: 3 hours before due time
+          if (timeUntilDue <= THREE_HOURS && !hasThreeHourChecked) {
+            newState.hasThreeHourChecked = true;
+            itemUpdated = true;
+
+            const spreadsheetId = item.state?.spreadsheetId || '1kUAJYUVhr9bPYErtpnohpvuGGyhBSvJyEOIyzEFivJo';
+            const oId = item.state?.orderId;
+
+            if (oId && spreadsheetId) {
+              const callbackName = 'jsonp_auto_sync_' + Math.round(100000 * Math.random()) + '_' + item.id;
+              const url = new URL(getActiveScriptUrl(spreadsheetId));
+              url.searchParams.append('action', 'get_link');
+              url.searchParams.append('orderId', oId);
+              url.searchParams.append('spreadsheetId', spreadsheetId);
+              url.searchParams.append('callback', callbackName);
+
+              jsonpRequest(url, callbackName)
+                .then((data) => {
+                  if (data && data.status === 'success' && data.link) {
+                    // Update successfully and save link
+                    updateSpecificHistoryItem(item.id, {
+                      googleSheetLink: data.link,
+                      orderLink: data.link,
+                      hasThreeHourChecked: true,
+                      threeHourAlerted: true
+                    });
+                  } else {
+                    // Not updated, send custom status query notification!
+                    if (!item.state.googleSheetLink || item.state.googleSheetLink.trim() === '') {
+                      const notifyTitle = appLanguage === 'ms' ? 'Tanya Status Tempahan' : 'Ask Order Status';
+                      const notifyBody = `${customerName || 'Customer'} (${mainType || 'Tempahan'}) - Dah siap ke belum? Link masih belum dimasukkan.`;
+                      
+                      if ('Notification' in window && Notification.permission === 'granted') {
+                        new Notification(notifyTitle, { body: notifyBody });
+                      }
+                    }
+                    updateSpecificHistoryItem(item.id, {
+                      hasThreeHourChecked: true,
+                      threeHourAlerted: true
+                    });
+                  }
+                })
+                .catch((err) => {
+                  console.warn('Auto background sync failed:', err);
+                  if (!item.state.googleSheetLink || item.state.googleSheetLink.trim() === '') {
+                    const notifyTitle = appLanguage === 'ms' ? 'Tanya Status Tempahan' : 'Ask Order Status';
+                    const notifyBody = `${customerName || 'Customer'} (${mainType || 'Tempahan'}) - Dah siap ke belum? Link masih belum dimasukkan.`;
+                    
+                    if ('Notification' in window && Notification.permission === 'granted') {
+                      new Notification(notifyTitle, { body: notifyBody });
+                    }
+                  }
+                  updateSpecificHistoryItem(item.id, {
+                    hasThreeHourChecked: true,
+                    threeHourAlerted: true
+                  });
+                });
+            } else {
+              // No spreadsheetId or orderId, just ask for status if no link
+              if (!item.state.googleSheetLink || item.state.googleSheetLink.trim() === '') {
+                const notifyTitle = appLanguage === 'ms' ? 'Tanya Status Tempahan' : 'Ask Order Status';
+                const notifyBody = `${customerName || 'Customer'} (${mainType || 'Tempahan'}) - Dah siap ke belum? Link masih belum dimasukkan.`;
+                
+                if ('Notification' in window && Notification.permission === 'granted') {
+                  new Notification(notifyTitle, { body: notifyBody });
+                }
+              }
+              newState.threeHourAlerted = true;
+            }
+          }
+
+          // 2. Check 20 mins logic
+          if (!hasNotified && timeUntilDue > 0 && timeUntilDue <= TWENTY_MINS) {
             const title = 'Order Due Soon!';
             const body = `Order for ${customerName || 'Customer'} (${mainType} ${subType}) is due in less than 20 minutes!`;
             
-            // Try Notification API if supported and granted
             if ('Notification' in window && Notification.permission === 'granted') {
               new Notification(title, { body });
-            } else {
-              // Fallback to alert if no notification permission (though alert is blocky)
-              // Only alert if we aren't completely in the background. But browser might block it.
-              // To avoid annoying blocking alerts on reload, we only alert if it wasn't due a long time ago.
-              // Actually, better to just use Notification or nothing, but the user asked for webapp to send alert.
-              // Let's use a standard browser alert for now if no permission (or try asking for permission).
             }
-
-            // We update state to hasNotified = true
-            updatedHistory = true;
-            return {
-              ...item,
-              state: { ...item.state, hasNotified: true }
-            };
+            newState.hasNotified = true;
+            itemUpdated = true;
           }
+        }
+
+        if (itemUpdated) {
+          updatedHistory = true;
+          return {
+            ...item,
+            state: newState
+          };
         }
         return item;
       });
@@ -167,8 +316,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       Notification.requestPermission();
     }
 
-    const interval = setInterval(checkAlerts, 60000); // check every minute
-    checkAlerts(); // check right away
+    const interval = setInterval(checkAlerts, 60000); // Check every minute
+    checkAlerts(); // Check right away
     
     return () => clearInterval(interval);
   }, [history]);
@@ -232,7 +381,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
   };
 
   const loadOrder = (item: OrderHistoryItem) => {
-    setState({ ...item.state, timestamp: item.timestamp, historyId: item.id });
+    setState({
+      ...INITIAL_STATE,
+      ...item.state,
+      addons: Array.isArray(item.state?.addons) ? item.state.addons : INITIAL_STATE.addons,
+      clLangs: Array.isArray(item.state?.clLangs) ? item.state.clLangs : INITIAL_STATE.clLangs,
+      resumeLangs: Array.isArray(item.state?.resumeLangs) ? item.state.resumeLangs : INITIAL_STATE.resumeLangs,
+      timestamp: item.timestamp,
+      historyId: item.id
+    });
     setViewStack(['home', 'history', 'customer-info']);
   };
 

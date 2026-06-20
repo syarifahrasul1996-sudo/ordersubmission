@@ -8,11 +8,11 @@ export function ResumeFormFieldsView() {
   const { state, setState, appLanguage } = useAppContext();
   const [customAddon, setCustomAddon] = useState('');
 
-  const isMulti = state.resumeLangs.length > 1;
+  const isMulti = (state.resumeLangs || []).length > 1;
 
   const toggleResumeLang = (lang: string) => {
     setState(prev => {
-      let nextLangs = [...prev.resumeLangs];
+      let nextLangs = [...(prev.resumeLangs || [])];
       if (nextLangs.includes(lang)) {
         if (nextLangs.length > 1) {
           nextLangs = nextLangs.filter(l => l !== lang);
@@ -26,7 +26,7 @@ export function ResumeFormFieldsView() {
 
   const toggleAddon = (addon: string) => {
     setState(prev => {
-      let nextAddons = [...prev.addons];
+      let nextAddons = [...(prev.addons || [])];
       if (nextAddons.includes(addon)) {
         nextAddons = nextAddons.filter(a => a !== addon);
       } else {
@@ -40,7 +40,7 @@ export function ResumeFormFieldsView() {
 
   const toggleClLang = (lang: string) => {
     setState(prev => {
-      let nextLangs = [...prev.clLangs];
+      let nextLangs = [...(prev.clLangs || [])];
       if (nextLangs.includes(lang)) {
         if (nextLangs.length > 1) nextLangs = nextLangs.filter(l => l !== lang);
       } else {
@@ -52,13 +52,16 @@ export function ResumeFormFieldsView() {
 
   // Sync softcopy/CL lang when not multi
   React.useEffect(() => {
-    if (!isMulti && state.resumeLangs.length > 0) {
-      if (state.softcopyLang !== state.resumeLangs[0] || state.clLangs[0] !== state.resumeLangs[0] || state.clLangs.length > 1) {
+    if (!isMulti && (state.resumeLangs || []).length > 0) {
+      const firstLang = state.resumeLangs?.[0] || '';
+      const firstClLang = state.clLangs?.[0] || '';
+      const clLangsLen = (state.clLangs || []).length;
+      if (state.softcopyLang !== firstLang || firstClLang !== firstLang || clLangsLen > 1) {
         setState(prev => ({
           ...prev,
-          softcopyLang: prev.resumeLangs[0],
-          clLangs: [prev.resumeLangs[0]],
-          addons: prev.addons.filter(a => a !== "Soft Copy Dua Bahasa")
+          softcopyLang: firstLang,
+          clLangs: [firstLang],
+          addons: (prev.addons || []).filter(a => a !== "Soft Copy Dua Bahasa")
         }));
       }
     }
