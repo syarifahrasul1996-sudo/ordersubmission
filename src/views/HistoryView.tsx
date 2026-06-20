@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Clock, Trash2, Calendar, AlertCircle, RefreshCcw, Save, Bell, Check, Search, Database, Phone, Settings, ChevronDown, ChevronUp, Link, X } from 'lucide-react';
 import { useAppContext } from '../AppContext';
 
@@ -70,7 +70,7 @@ export function HistoryView() {
     updateSpecificHistoryItem,
     updateOrderHistoryState
   } = useAppContext();
-
+  const [currentTime, setCurrentTime] = useState(() => Date.now());
   const [showConfirm, setShowConfirm] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [pullProgress, setPullProgress] = useState(0);
@@ -88,6 +88,15 @@ export function HistoryView() {
   const [globalScriptUrl, setGlobalScriptUrl] = useState<string>(() => {
     return localStorage.getItem('db_global_script_url') || GOOGLE_SCRIPT_URL;
   });
+  useEffect(() => {
+  const timer = window.setInterval(() => {
+    setCurrentTime(Date.now());
+  }, 60 * 1000);
+
+  return () => {
+    window.clearInterval(timer);
+  };
+}, []);
 
   const [annualSheets, setAnnualSheets] = useState<{ year: string; spreadsheetId: string; scriptUrl: string }[]>(() => {
     try {
@@ -132,6 +141,51 @@ export function HistoryView() {
     }
     return trimmed;
   };
+const parseDueTimestamp = (value: unknown): number => {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value !== 'string' || !value.trim()) {
+    return 0;
+  }
+
+  const due = value.trim();
+
+  const match = due.match(
+    /^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+at\s+|\s+)(\d{1,2}):(\d{2})(?:\s*(AM|PM))?$/i
+  );
+
+  if (match) {
+    const [, day, month, year, rawHour, minute, period] = match;
+
+    let hour = Number(rawHour);
+
+    if (period?.toUpperCase() === 'PM' && hour !== 12) {
+      hour += 12;
+    }
+
+    if (period?.toUpperCase() === 'AM' && hour === 12) {
+      hour = 0;
+    }
+
+    return new Date(
+      Number(year),
+      Number(month) - 1,
+      Number(day),
+      hour,
+      Number(minute),
+      0,
+      0
+    ).getTime();
+  }
+
+  const nativeTimestamp = Date.parse(
+    due.replace(/\s+at\s+/i, ' ')
+  );
+
+  return Number.isNaN(nativeTimestamp) ? 0 : nativeTimestamp;
+};
 
   const getActiveScriptUrl = (sId?: string) => {
     return globalScriptUrl.trim() || GOOGLE_SCRIPT_URL;
@@ -313,27 +367,7 @@ export function HistoryView() {
             h => h.state?.orderId === generatedOrderId
           );
 
-          const dueStr = orderData.due || '';
-          let dueTs = 0;
-
-          if (dueStr) {
-            const parsedStr = dueStr.replace(' at ', ' ');
-            const testDate = new Date(parsedStr);
-
-            if (!isNaN(testDate.getTime())) {
-              dueTs = testDate.getTime();
-            } else {
-              const parts = dueStr.split(' ')[0].split('/');
-              if (parts.length === 3) {
-                const parsedDME = new Date(
-                  parseInt(parts[2]),
-                  parseInt(parts[1]) - 1,
-                  parseInt(parts[0])
-                );
-                if (!isNaN(parsedDME.getTime())) dueTs = parsedDME.getTime();
-              }
-            }
-          }
+         const dueTs = parseDueTimestamp(orderData.due);
 
           const newState = {
             isDelivered: !!orderData.isDelivered,
@@ -529,27 +563,7 @@ export function HistoryView() {
         .replace(/\s+/g, '-')
         .replace(/[^a-zA-Z0-9-]/g, '');
 
-    const dueStr = orderData.due || '';
-    let dueTs = 0;
-
-    if (dueStr) {
-      const parsedStr = dueStr.replace(' at ', ' ');
-      const testDate = new Date(parsedStr);
-
-      if (!isNaN(testDate.getTime())) {
-        dueTs = testDate.getTime();
-      } else {
-        const parts = dueStr.split(' ')[0].split('/');
-        if (parts.length === 3) {
-          const parsedDME = new Date(
-            parseInt(parts[2]),
-            parseInt(parts[1]) - 1,
-            parseInt(parts[0])
-          );
-          if (!isNaN(parsedDME.getTime())) dueTs = parsedDME.getTime();
-        }
-      }
-    }
+    const dueTs = parseDueTimestamp(orderData.due);
 
     const stateToApply = {
       isDelivered: !!orderData.isDelivered,
@@ -808,7 +822,7 @@ export function HistoryView() {
 
                 // Date filter: only show today's order, 2 days before and 3 days onward relative to today
                 const orderTime = item.state?.dueTimestamp || item.timestamp || Date.now();
-                const now = new Date();
+                const now = new Date(currentTime);
                 
                 const minDate = new Date(now);
                 minDate.setDate(now.getDate() - 2);
@@ -841,34 +855,57 @@ export function HistoryView() {
               return (
                 <div className="space-y-2">
                   {matchedItems
-                    .sort((a, b) => {
-                      const aDelivered = !!a.state?.isDelivered;
-                      const bDelivered = !!b.state?.isDelivered;
+  .sort((a, b) => {
+    const aDelivered = !!a.state?.isDelivered;
+    const bDelivered = !!b.state?.isDelivered;
 
-                      // 1. Not delivered on top, delivered at the bottom
-                      if (!aDelivered && bDelivered) return -1;
-                      if (aDelivered && !bDelivered) return 1;
+    // Pending orders appear above delivered orders
+    if (!aDelivered && bDelivered) return -1;
+    if (aDelivered && !bDelivered) return 1;
 
-                      // 2. Both are same delivery status
-                      const now = Date.now();
-                      const aDue = a.state?.dueTimestamp || a.timestamp || now;
-                      const bDue = b.state?.dueTimestamp || b.timestamp || now;
+    const now = currentTime;
 
-                      if (!aDelivered) {
-                        // Pending orders: sort chronologically so that overdue & today's orders are always on top of tomorrow's / future orders
-                        if (aDue !== bDue) {
-                          return aDue - bDue;
-                        }
-                        return (b.timestamp || 0) - (a.timestamp || 0);
-                      } else {
-                        // Completed (delivered) orders: sort by latest completed/due date on top
-                        if (aDue !== bDue) {
-                          return bDue - aDue;
-                        }
-                        return (b.timestamp || 0) - (a.timestamp || 0);
-                      }
-                    })
-                    .map((item) => {
+    // Read the visible due date again first.
+    // This also repairs older records with incorrect timestamps.
+    const aDue =
+      parseDueTimestamp(a.state?.customerDue) ||
+      Number(a.state?.dueTimestamp) ||
+      Number(a.timestamp) ||
+      now;
+
+    const bDue =
+      parseDueTimestamp(b.state?.customerDue) ||
+      Number(b.state?.dueTimestamp) ||
+      Number(b.timestamp) ||
+      now;
+
+    if (!aDelivered) {
+      // Pending orders nearest to the current time appear first
+      const aDistance = Math.abs(aDue - now);
+      const bDistance = Math.abs(bDue - now);
+
+      if (aDistance !== bDistance) {
+        return aDistance - bDistance;
+      }
+
+      // If both are equally close, show the latest edited order first
+      return (
+        (Number(b.timestamp) || 0) -
+        (Number(a.timestamp) || 0)
+      );
+    }
+
+    // Delivered orders: latest due date first
+    if (aDue !== bDue) {
+      return bDue - aDue;
+    }
+
+    return (
+      (Number(b.timestamp) || 0) -
+      (Number(a.timestamp) || 0)
+    );
+  })
+  .map((item) => {
                   const lastEditedDateObj = new Date(item.timestamp || Date.now());
                   const formattedLastEditedDate = lastEditedDateObj.toLocaleString(
                     appLanguage === 'ms' ? 'ms-MY' : 'en-US',
@@ -894,7 +931,7 @@ export function HistoryView() {
                     }
                   );
 
-                  const now = Date.now();
+                  const now = currentTime;
                   const isDelivered = !!item.state?.isDelivered;
                   const timeUntilDue = item.state?.dueTimestamp ? item.state.dueTimestamp - now : 0;
                   const isDueSoon = !isDelivered && timeUntilDue > 0 && timeUntilDue <= 20 * 60 * 1000;
