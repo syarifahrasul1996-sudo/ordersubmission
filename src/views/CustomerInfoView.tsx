@@ -530,30 +530,30 @@ setInfo(updatedInfo);
   }
 
   return (
-    <div className="flex flex-col p-4 sm:p-6 pb-[calc(env(safe-area-inset-bottom)+4rem)]">
-      <div className="mb-6">
-        <div className="flex items-center justify-between mb-2">
-          <h2 className="text-2xl font-black text-text tracking-tighter">
+    <div className="flex flex-col p-4 sm:p-5 pb-[calc(env(safe-area-inset-bottom)+4rem)]">
+      <div className="mb-4">
+        <div className="flex items-center justify-between mb-1.5">
+          <h2 className="text-xl font-black text-text tracking-tighter">
             {appLanguage === 'ms' ? 'Maklumat Pelanggan' : 'Customer Info'}
           </h2>
         </div>
-        <p className="text-subtext text-sm">
+        <p className="text-subtext text-xs">
           {appLanguage === 'ms' 
             ? 'Simpan maklumat pelanggan untuk rujukan masa depan.' 
             : 'Save customer info for future reference.'}
         </p>
       </div>
 
-      <div className="space-y-4">
+      <div className="space-y-3.5">
         {orderId && (
           <div className="flex items-center space-x-2 ml-1">
-            <span className="text-[11px] font-bold text-subtext uppercase tracking-widest whitespace-nowrap">Order ID</span>
-            <span className="text-[11px] font-mono text-text bg-gray-100 dark:bg-gray-800 px-2 py-0.5 rounded cursor-default border border-gray-200 dark:border-gray-700 select-all">{orderId}</span>
+            <span className="text-[10px] font-bold text-subtext uppercase tracking-widest whitespace-nowrap">Order ID</span>
+            <span className="text-[10px] font-mono text-text bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded cursor-default border border-gray-200 dark:border-gray-700 select-all">{orderId}</span>
           </div>
         )}
 
         <div className="space-y-1">
-          <label className="text-[13px] font-bold text-text ml-1 uppercase tracking-wider">
+          <label className="text-[11px] font-black text-gray-400 ml-1 uppercase tracking-widest">
             {appLanguage === 'ms' ? 'Nama Pelanggan' : 'Customer Name'}
           </label>
           <input 
@@ -561,12 +561,12 @@ setInfo(updatedInfo);
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder={appLanguage === 'ms' ? 'Cth: Ali bin Abu' : 'E.g. John Doe'}
-            className="w-full h-14 bg-surface rounded-[16px] px-4 font-medium text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all placeholder:text-gray-300 text-[16px]" 
+            className="w-full h-[46px] bg-surface rounded-[12px] px-4 font-bold text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all placeholder:text-gray-300 text-sm" 
           />
         </div>
 
         <div className="space-y-1">
-          <label className="text-[13px] font-bold text-text ml-1 uppercase tracking-wider">
+          <label className="text-[11px] font-black text-gray-400 ml-1 uppercase tracking-widest">
             {appLanguage === 'ms' ? 'No. Telefon' : 'Phone Number'}
           </label>
           <input 
@@ -575,17 +575,17 @@ setInfo(updatedInfo);
             onChange={(e) => setPhone(e.target.value)}
             onBlur={() => setPhone(formatPhoneUniversal(phone))}
             placeholder="01X-XXX XXXX"
-            className="w-full h-14 bg-surface rounded-[16px] px-4 font-medium text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all placeholder:text-gray-300 text-[16px]" 
+            className="w-full h-[46px] bg-surface rounded-[12px] px-4 font-bold text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all placeholder:text-gray-300 text-sm" 
           />
         </div>
 
         <div className="space-y-1">
-          <label className="text-[13px] font-bold text-text ml-1 uppercase tracking-wider">Order</label>
+          <label className="text-[11px] font-black text-gray-400 ml-1 uppercase tracking-widest">Order</label>
           <div className="relative">
             <select 
               value={order}
               onChange={(e) => setOrder(e.target.value)}
-              className="w-full h-14 bg-surface text-text rounded-[16px] px-4 font-medium border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all appearance-none text-[16px]" 
+              className="w-full h-[46px] bg-surface text-text rounded-[12px] px-4 font-bold border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all appearance-none text-sm" 
             >
               <option value="Resume">Resume</option>
               <option value="Surat">Surat</option>
@@ -601,22 +601,22 @@ setInfo(updatedInfo);
         </div>
 
         <div className="space-y-1">
-          <label className="text-[13px] font-bold text-text ml-1 uppercase tracking-wider">Template</label>
+          <label className="text-[11px] font-black text-gray-400 ml-1 uppercase tracking-widest">Template</label>
           <input 
             type="text" 
             value={template}
             onChange={(e) => setTemplate(e.target.value)}
-            className="w-full h-14 bg-surface rounded-[16px] px-4 font-medium text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all text-[16px]" 
+            className="w-full h-[46px] bg-surface rounded-[12px] px-4 font-bold text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all text-sm" 
           />
         </div>
 
         <div className="space-y-1">
-          <label className="text-[13px] font-bold text-text ml-1 uppercase tracking-wider">Bahasa</label>
+          <label className="text-[11px] font-black text-gray-400 ml-1 uppercase tracking-widest">Bahasa</label>
           <div className="relative">
             <select 
               value={bahasa}
               onChange={(e) => setBahasa(e.target.value)}
-              className="w-full h-14 bg-surface text-text rounded-[16px] px-4 font-medium border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all appearance-none text-[16px]" 
+              className="w-full h-[46px] bg-surface text-text rounded-[12px] px-4 font-bold border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all appearance-none text-sm" 
             >
               <option value="Melayu">Melayu</option>
               <option value="English">English</option>
@@ -624,18 +624,18 @@ setInfo(updatedInfo);
               <option value=""></option>
             </select>
             <div className="absolute top-0 right-4 h-full flex items-center pointer-events-none">
-              <svg className="w-4 h-4 text-subtext" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7-7-7-7"></path></svg>
+              <svg className="w-4 h-4 text-subtext" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
             </div>
           </div>
         </div>
 
         <div className="space-y-1">
-          <label className="text-[13px] font-bold text-text ml-1 uppercase tracking-wider">Add On</label>
+          <label className="text-[11px] font-black text-gray-400 ml-1 uppercase tracking-widest">Add On</label>
           <div className="relative">
             <select 
               value={addOn}
               onChange={(e) => setAddOn(e.target.value)}
-              className="w-full h-14 bg-surface text-text rounded-[16px] px-4 font-medium border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all appearance-none text-[16px]" 
+              className="w-full h-[46px] bg-surface text-text rounded-[12px] px-4 font-bold border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all appearance-none text-sm" 
             >
               <option value=""></option>
               <option value="Editable softcopy BI">Editable softcopy BI</option>
@@ -655,26 +655,26 @@ setInfo(updatedInfo);
         </div>
 
         <div className="space-y-1">
-          <label className="text-[13px] font-bold text-text ml-1 uppercase tracking-wider">Jenis</label>
+          <label className="text-[11px] font-black text-gray-400 ml-1 uppercase tracking-widest">Jenis</label>
           <div className="relative">
             {(() => {
               let selectColorClass = "border-gray-100/50";
               const v = (jenis || '').toLowerCase();
               if (v.includes('super')) {
-                selectColorClass = "border-super focus:border-super focus:ring-super/20 text-super font-black bg-super/5 dark:bg-super/10";
+                selectColorClass = "border-super focus:border-super focus:ring-super/20 text-super font-black bg-super/5 dark:bg-super/10 ml-0";
               } else if (v.includes('semi')) {
-                selectColorClass = "border-semi focus:border-semi focus:ring-semi/20 text-semi font-black bg-semi/5 dark:bg-semi/10";
+                selectColorClass = "border-semi focus:border-semi focus:ring-semi/20 text-semi font-black bg-semi/5 dark:bg-semi/10 ml-0";
               } else if (v.includes('urgent')) {
-                selectColorClass = "border-urgent focus:border-urgent focus:ring-urgent/20 text-urgent font-black bg-urgent/5 dark:bg-urgent/10";
+                selectColorClass = "border-urgent focus:border-urgent focus:ring-urgent/20 text-urgent font-black bg-urgent/5 dark:bg-urgent/10 ml-0";
               } else if (v.includes('tidak') || v.includes('normal') || v.includes('not')) {
-                selectColorClass = "border-noturgent focus:border-noturgent focus:ring-noturgent/20 text-noturgent font-black bg-noturgent/5 dark:bg-noturgent/10";
+                selectColorClass = "border-noturgent focus:border-noturgent focus:ring-noturgent/20 text-noturgent font-black bg-noturgent/5 dark:bg-noturgent/10 ml-0";
               }
               return (
                 <select 
                   value={jenis}
                   onChange={(e) => setJenis(e.target.value)}
                   className={cn(
-                    "w-full h-14 bg-surface text-text rounded-[16px] px-4 font-medium border outline-none focus:ring-2 transition-all appearance-none text-[16px]",
+                    "w-full h-[46px] bg-surface text-text rounded-[12px] px-4 font-bold border outline-none focus:ring-2 transition-all appearance-none text-sm",
                     selectColorClass
                   )} 
                 >
@@ -693,34 +693,34 @@ setInfo(updatedInfo);
         </div>
 
         <div className="space-y-1">
-          <label className="text-[13px] font-bold text-text ml-1 uppercase tracking-wider">Due</label>
+          <label className="text-[11px] font-black text-gray-400 ml-1 uppercase tracking-widest">Due</label>
           <input 
             type="text" 
             value={due}
             onChange={(e) => setDue(e.target.value)}
-            className="w-full h-14 bg-surface rounded-[16px] px-4 font-medium text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all text-[16px]" 
+            className="w-full h-[46px] bg-surface rounded-[12px] px-4 font-bold text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all text-sm" 
           />
         </div>
 
         <div className="space-y-1">
-          <label className="text-[13px] font-bold text-text ml-1 uppercase tracking-wider">Link</label>
+          <label className="text-[11px] font-black text-gray-400 ml-1 uppercase tracking-widest">Link</label>
           <input 
             type="text" 
             value={link}
             onChange={(e) => setLink(e.target.value)}
             placeholder="https://..."
-            className="w-full h-14 bg-surface rounded-[16px] px-4 font-medium text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all text-[16px]" 
+            className="w-full h-[46px] bg-surface rounded-[12px] px-4 font-bold text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all text-sm" 
           />
         </div>
 
         <div className="space-y-1">
           <div className="flex items-center justify-between ml-1 mb-1">
-            <label className="text-[13px] font-bold text-text uppercase tracking-wider">
+            <label className="text-[11px] font-black text-gray-400 uppercase tracking-widest">
               {appLanguage === 'ms' ? 'Maklumat Pelanggan' : 'Customer Information'}
             </label>
             <button
               onClick={handleAutoFill}
-              className="text-[12px] font-bold text-blue-600 bg-blue-50 px-3 py-1 rounded-[12px] hover:bg-blue-100 transition-colors active:scale-95"
+              className="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-[8px] hover:bg-blue-100 transition-colors active:scale-95"
             >
               {appLanguage === 'ms' ? 'Auto-isi' : 'Auto-fill'}
             </button>
@@ -728,37 +728,33 @@ setInfo(updatedInfo);
           <textarea 
             value={info}
             onChange={(e) => setInfo(e.target.value)}
-            rows={12}
+            rows={8}
             placeholder={appLanguage === 'ms' ? 'Salin dan tampal maklumat pelanggan/resume di sini...' : 'Copy and paste customer/resume details here...'}
-            className="w-full bg-surface rounded-[16px] p-4 font-medium text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all placeholder:text-gray-300 text-[16px] resize-y min-h-[14rem]" 
+            className="w-full bg-surface rounded-[12px] p-3 font-medium text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all placeholder:text-gray-300 text-sm resize-y min-h-[10rem]" 
           />
         </div>
 
-
-
         {errorMsg && (
-          <div className="p-4 bg-red-50 text-red-600 rounded-xl text-sm font-medium border border-red-100 whitespace-pre-wrap">
+          <div className="p-3 bg-red-50 text-red-600 rounded-lg text-xs font-medium border border-red-100 whitespace-pre-wrap">
             {errorMsg}
           </div>
         )}
 
-        <div className="pt-4 space-y-4">
-          <div className="space-y-4">
-            <button
-              onClick={handleSaveInfo}
-              disabled={isSaving}
-              className="w-full h-16 bg-blue-600 hover:bg-blue-700 text-white font-black text-[16px] rounded-[18px] flex items-center justify-center space-x-2 active:scale-[0.98] transition-all disabled:opacity-70 shadow-sm"
-            >
-              {isSaving ? (
-                <RefreshCcw className="w-5 h-5 animate-spin" />
-              ) : (
-                <>
-                  <span>{appLanguage === 'ms' ? 'Hantar Ke Google Sheet' : 'Save To Google Sheet'}</span>
-                  <Save className="w-5 h-5 ml-1" />
-                </>
-              )}
-            </button>
-          </div>
+        <div className="pt-2">
+          <button
+            onClick={handleSaveInfo}
+            disabled={isSaving}
+            className="w-full h-[58px] bg-blue-600 hover:bg-blue-700 text-white font-black text-[15px] sm:text-[16px] rounded-[16px] flex items-center justify-center space-x-2 active:scale-[0.98] transition-all disabled:opacity-70 shadow-md shadow-blue-500/10"
+          >
+            {isSaving ? (
+              <RefreshCcw className="w-4 h-4 animate-spin" />
+            ) : (
+              <>
+                <span>{appLanguage === 'ms' ? 'Hantar Ke Google Sheet' : 'Save To Google Sheet'}</span>
+                <Save className="w-4 h-4 ml-1" />
+              </>
+            )}
+          </button>
         </div>
       </div>
       <Toast show={showToast} message={toastMsg} />

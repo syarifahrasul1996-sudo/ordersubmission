@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { useAppContext } from '../AppContext';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LabelList, CartesianGrid } from 'recharts';
 import { RefreshCcw, AlertCircle, Clock } from 'lucide-react';
@@ -43,6 +43,59 @@ const jsonpRequest = (url: URL, callbackName: string) => {
     document.body.appendChild(script);
   });
 };
+
+interface SafeResponsiveContainerProps {
+  children: React.ReactElement;
+}
+
+function SafeResponsiveContainer({ children }: SafeResponsiveContainerProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+
+    const resizeObserver = new ResizeObserver((entries) => {
+      if (!entries || entries.length === 0) return;
+      
+      const { width, height } = entries[0].contentRect;
+      
+      setDimensions({
+        width: Math.max(1, Math.floor(width)),
+        height: Math.max(1, Math.floor(height || containerRef.current?.clientHeight || 200)),
+      });
+    });
+
+    resizeObserver.observe(containerRef.current);
+
+    const initialWidth = containerRef.current.clientWidth;
+    const initialHeight = containerRef.current.clientHeight;
+    if (initialWidth > 0 && initialHeight > 0) {
+      setDimensions({
+        width: initialWidth,
+        height: initialHeight,
+      });
+    }
+
+    return () => {
+      resizeObserver.disconnect();
+    };
+  }, []);
+
+  return (
+    <div ref={containerRef} className="w-full h-full min-h-[50px] relative" style={{ minWidth: 1, minHeight: 1 }}>
+      {dimensions.width > 0 && dimensions.height > 0 ? (
+        <ResponsiveContainer width={dimensions.width} height={dimensions.height}>
+          {children}
+        </ResponsiveContainer>
+      ) : (
+        <div className="w-full h-full flex items-center justify-center text-xs text-gray-400">
+          Loading...
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function DashboardView() {
   const { appLanguage } = useAppContext();
@@ -366,7 +419,7 @@ export function DashboardView() {
             onChange={(e) => setFilterYear(e.target.value)}
             className="flex-1 sm:flex-none h-10 bg-surface border border-gray-200 text-text text-sm font-semibold rounded-xl px-3 outline-none focus:border-primary/50 focus:ring-2 ring-primary/20 cursor-pointer shadow-sm"
           >
-            <option value="all">{appLanguage === 'ms' ? 'Sepanjang Masa' : 'All Time'}</option>
+            <option value="all">{appLanguage === 'ms' ? 'Semua Masa' : 'All Time'}</option>
             {stats.years.map(year => (
               <option key={year} value={year}>{year}</option>
             ))}
@@ -444,7 +497,7 @@ export function DashboardView() {
                     : (appLanguage === 'ms' ? `Order Mengikut Bulan (${filterYear})` : `Orders By Month (${filterYear})`)}
                 </h3>
                 <div className="h-[200px] w-full">
-                  <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+                  <SafeResponsiveContainer>
                     <LineChart data={stats.ordersByMonth} margin={{ top: 20, right: 10, left: -20, bottom: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
                       <XAxis dataKey="name" tick={{fontSize: 10}} tickLine={false} axisLine={false} />
@@ -454,7 +507,7 @@ export function DashboardView() {
                         <LabelList dataKey="value" position="top" style={{ fontSize: '10px', fontWeight: 'bold', fill: '#636366' }} />
                       </Line>
                     </LineChart>
-                  </ResponsiveContainer>
+                  </SafeResponsiveContainer>
                 </div>
               </div>
 
@@ -462,7 +515,7 @@ export function DashboardView() {
                 <h3 className="text-sm font-bold text-text mb-4">{appLanguage === 'ms' ? 'Jenis Pelanggan' : 'Customer Types'}</h3>
                 <div className="h-[180px] w-full flex items-center justify-center">
                   <div className="w-[180px] h-full relative">
-                    <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+                    <SafeResponsiveContainer>
                       <PieChart>
                         <Pie
                           data={stats.customerTypes}
@@ -480,7 +533,7 @@ export function DashboardView() {
                         </Pie>
                         <Tooltip contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)'}} />
                       </PieChart>
-                    </ResponsiveContainer>
+                    </SafeResponsiveContainer>
                     <div className="absolute inset-0 flex items-center justify-center pointer-events-none flex-col">
                       <span className="text-xl font-black text-text">{stats.totalUniqueCustomers}</span>
                       <span className="text-[9px] font-bold text-gray-400 uppercase">{appLanguage === 'ms' ? 'Jumlah' : 'Total'}</span>
@@ -503,7 +556,7 @@ export function DashboardView() {
               <div>
                 <h3 className="text-sm font-bold text-text mb-4">{appLanguage === 'ms' ? 'Kategori Tempahan' : 'Order Categories'}</h3>
                 <div className="h-[200px] w-full">
-                  <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+                  <SafeResponsiveContainer>
                     <PieChart>
                       <Pie
                         data={stats.typesChart}
@@ -521,7 +574,7 @@ export function DashboardView() {
                       </Pie>
                       <Tooltip contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)'}} />
                     </PieChart>
-                  </ResponsiveContainer>
+                  </SafeResponsiveContainer>
                 </div>
                 <div className="flex flex-wrap justify-center gap-3 mt-2">
                   {stats.typesChart.map((entry, index) => (
@@ -537,7 +590,7 @@ export function DashboardView() {
               <div>
                 <h3 className="text-sm font-bold text-text mb-4">{appLanguage === 'ms' ? 'Prioriti (Tahap Urgency)' : 'Priority (Urgency Level)'}</h3>
                 <div className="h-[160px] w-full">
-                  <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+                  <SafeResponsiveContainer>
                     <BarChart data={stats.urgencyChart} layout="vertical" margin={{ top: 0, right: 30, left: 10, bottom: 0 }}>
                       <XAxis type="number" hide />
                       <YAxis dataKey="name" type="category" tick={{fontSize: 10}} tickLine={false} axisLine={false} width={80} />
@@ -546,7 +599,7 @@ export function DashboardView() {
                         <LabelList dataKey="value" position="right" style={{ fontSize: '10px', fontWeight: 'bold', fill: '#636366' }} />
                       </Bar>
                     </BarChart>
-                  </ResponsiveContainer>
+                  </SafeResponsiveContainer>
                 </div>
               </div>
             </div>

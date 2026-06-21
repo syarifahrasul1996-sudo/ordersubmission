@@ -843,65 +843,55 @@ const parseDueTimestamp = (value: unknown): number => {
             <span>{appLanguage === 'ms' ? 'Cari Database' : 'Search Database'}</span>
           </button>
         </div>
-        {activeTab === 'local' && (
-          <div className="flex justify-between items-center mb-2">
-            <button
-              type="button"
-              onClick={() => handleGlobalSync(false)}
-              disabled={refreshing}
-              className={`flex items-center text-[13px] font-bold px-3.5 py-1.5 rounded-full transition-all duration-200 ${
-                refreshing
-                  ? 'bg-blue-100 text-blue-400 cursor-not-allowed'
-                  : 'bg-blue-50 text-blue-600 hover:bg-blue-100 hover:scale-[1.02] active:scale-95'
-              }`}
-              title={appLanguage === 'ms' ? 'Sync dari Google Sheet' : 'Sync from Google Sheet'}
-            >
-              <RefreshCcw className={`w-4 h-4 mr-1.5 ${refreshing ? 'animate-spin' : ''}`} />
-              Sync
-            </button>
-
-            {history.length > 0 && (
-              <button
-                type="button"
-                onClick={() => setShowConfirm(true)}
-                className="flex items-center text-[13px] font-bold text-red-500 hover:bg-red-50 hover:text-red-600 hover:scale-[1.02] px-3.5 py-1.5 rounded-full transition-all duration-200 active:scale-95"
-              >
-                <Trash2 className="w-4 h-4 mr-1" />
-                {appLanguage === 'ms' ? 'Padam Semua' : 'Delete All'}
-              </button>
-            )}
-          </div>
-        )}
-
         {activeTab === 'local' ? (
           history.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-20 text-subtext">
-              <Clock className="w-16 h-16 mb-4 opacity-50" />
+            <div className="flex flex-col items-center justify-center py-20 text-subtext space-y-4">
+              <Clock className="w-16 h-16 opacity-50" />
               <p className="font-bold">
                 {appLanguage === 'ms' ? 'Tiada sejarah tempahan' : 'No order history'}
               </p>
+              <button
+                type="button"
+                onClick={() => handleGlobalSync(false)}
+                disabled={refreshing}
+                className="inline-flex items-center text-xs font-semibold px-4 py-2 rounded-xl bg-gray-100 text-subtext border border-transparent hover:bg-gray-200 active:scale-95 transition-all duration-200"
+              >
+                <RefreshCcw className={`w-3.5 h-3.5 mr-1.5 ${refreshing ? 'animate-spin' : ''}`} />
+                {appLanguage === 'ms' ? 'Sync dari Google Sheet' : 'Sync from Google Sheet'}
+              </button>
             </div>
           ) : (
           <div className="space-y-4">
             {/* Carian Tempatan / Local Search Input */}
-            <div className="relative">
-              <input
-                type="text"
-                value={localSearchQuery}
-                onChange={(e) => setLocalSearchQuery(e.target.value)}
-                placeholder={appLanguage === 'ms' ? 'Cari nama, Order ID, atau no. telefon...' : 'Search name, Order ID, or phone...'}
-                className="w-full h-11 bg-gray-100 rounded-xl pl-10 pr-10 font-semibold text-text border border-transparent outline-none focus:bg-white focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all text-xs placeholder:text-gray-400"
-              />
-              <Search className="w-4 h-4 text-subtext/75 absolute left-3.5 top-3.5" />
-              {localSearchQuery && (
-                <button
-                  type="button"
-                  onClick={() => setLocalSearchQuery('')}
-                  className="absolute right-3.5 top-3 w-5 h-5 rounded-full bg-gray-200 hover:bg-gray-300 text-subtext flex items-center justify-center transition-colors"
-                >
-                  <X className="w-3" />
-                </button>
-              )}
+            <div className="flex gap-2 mt-2.5">
+              <div className="relative flex-1">
+                <input
+                  type="text"
+                  value={localSearchQuery}
+                  onChange={(e) => setLocalSearchQuery(e.target.value)}
+                  placeholder={appLanguage === 'ms' ? 'Cari nama, Order ID, atau no. telefon...' : 'Search name, Order ID, or phone...'}
+                  className="w-full h-11 bg-gray-100 rounded-xl pl-10 pr-10 font-semibold text-text border border-transparent outline-none focus:bg-white focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all text-xs placeholder:text-gray-400"
+                />
+                <Search className="w-4 h-4 text-subtext/75 absolute left-3.5 top-3.5" />
+                {localSearchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setLocalSearchQuery('')}
+                    className="absolute right-3.5 top-3 w-5 h-5 rounded-full bg-gray-200 hover:bg-gray-300 text-subtext flex items-center justify-center transition-colors"
+                  >
+                    <X className="w-3" />
+                  </button>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => handleGlobalSync(false)}
+                disabled={refreshing}
+                title={appLanguage === 'ms' ? 'Sync dari Google Sheet' : 'Sync from Google Sheet'}
+                className="w-11 h-11 bg-gray-100 text-subtext hover:bg-gray-200 active:scale-95 flex items-center justify-center rounded-xl transition-all duration-200 shadow-sm"
+              >
+                <RefreshCcw className={`w-4 h-4 ${refreshing ? 'animate-spin text-primary' : ''}`} />
+              </button>
             </div>
 
             <div className="flex bg-gray-100 p-1 rounded-xl">
@@ -1367,7 +1357,7 @@ const parseDueTimestamp = (value: unknown): number => {
       )
         ) : (
           /* Database Search Tab */
-          <div className="space-y-4">
+          <div className="space-y-4 mt-2.5">
             <div className="bg-surface border border-gray-100 p-4 rounded-xl shadow-sm space-y-3">
               <div className="relative">
                 <input

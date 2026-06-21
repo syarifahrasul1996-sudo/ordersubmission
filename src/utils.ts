@@ -62,7 +62,10 @@ export function generateMessages(state: any, dl: { formatted: string, total: num
       if (!isE) {
           let m2 = `${t.template}: ${((state.template || '').trim() || '-').toUpperCase()}\n${t.language}: ${(state.resumeLangs || []).join(' & ')}\n${t.addon}: ${addsForDisplay.length ? addsForDisplay.join(', ') : '-'}\n\n${t.disc}`;
           out.push(m2);
-      } else { out.push(t.disc); }
+      } else {
+          let m2 = `${t.template}: ${((state.template || '').trim() || '-').toUpperCase()}\n\n${t.disc}`;
+          out.push(m2);
+      }
   }
 
   return out;

@@ -8,24 +8,24 @@ export function GeneralFormView() {
   const isSurat = state.mainType === 'Surat';
 
   return (
-    <div className="flex flex-col p-4 sm:p-6 space-y-8 pb-[calc(env(safe-area-inset-bottom)+8rem)]">
+    <div className="flex flex-col p-4 sm:p-5 space-y-4 pb-[calc(env(safe-area-inset-bottom)+5rem)]">
       {!isSurat && (
         <section>
-          <label className="block text-[13px] font-black uppercase tracking-widest mb-4 text-gray-400">{appLanguage === 'ms' ? 'Nama Dokumen' : 'Document Name'}</label>
+          <label className="block text-[11px] font-black uppercase tracking-widest mb-2 text-gray-400">{appLanguage === 'ms' ? 'Nama Dokumen' : 'Document Name'}</label>
           <input 
             type="text" 
             maxLength={25} 
             placeholder={appLanguage === 'ms' ? 'Contoh: Assignment' : 'Example: Assignment'}
             value={state.customDoc}
             onChange={(e) => setState(prev => ({...prev, customDoc: e.target.value}))} 
-            className="w-full bg-surface border-2 border-transparent rounded-[16px] h-[56px] px-5 sm:px-6 focus:outline-none focus:border-primary font-bold shadow-inner transition-all text-text select-text text-[16px]" 
+            className="w-full bg-surface border-2 border-transparent rounded-[12px] h-[46px] px-4 focus:outline-none focus:border-primary font-bold shadow-inner transition-all text-text select-text text-sm" 
           />
         </section>
       )}
 
       <section>
-        <h2 className="text-[13px] font-black uppercase tracking-widest mb-4 text-gray-400">{appLanguage === 'ms' ? 'Bahasa Dokumen' : 'Document Language'}</h2>
-        <div className="flex bg-surface p-1.5 rounded-[16px] h-[56px] sm:h-[64px] gap-2 mb-3">
+        <h2 className="text-[11px] font-black uppercase tracking-widest mb-2 text-gray-400">{appLanguage === 'ms' ? 'Bahasa Dokumen' : 'Document Language'}</h2>
+        <div className="flex bg-surface p-1 rounded-[12px] h-[46px] gap-1.5 mb-1">
           {['Melayu', 'English'].map((lang) => (
             <button
               key={lang}
@@ -41,8 +41,8 @@ export function GeneralFormView() {
                 setState(prev => ({ ...prev, resumeLangs: newLangs }));
               }}
               className={cn(
-                "flex-1 rounded-[12px] font-bold transition-all text-[13px] sm:text-[14px]",
-                state.resumeLangs.includes(lang) ? "bg-[#1C1C1E] text-white shadow-md transform scale-[1.02]" : "text-text active:bg-gray-200"
+                "flex-1 rounded-[8px] sm:rounded-[10px] font-bold transition-all text-[12px] sm:text-[13px]",
+                state.resumeLangs.includes(lang) ? "bg-[#1C1C1E] text-white shadow-sm transform scale-[1.01]" : "text-text active:bg-gray-200"
               )}
             >
               {lang}
@@ -52,7 +52,7 @@ export function GeneralFormView() {
       </section>
 
       <section>
-        <h2 className="text-[13px] font-black uppercase tracking-widest mb-4 text-gray-400">{appLanguage === 'ms' ? 'Pilihan Pakej' : 'Package Option'}</h2>
+        <h2 className="text-[11px] font-black uppercase tracking-widest mb-2 text-gray-400">{appLanguage === 'ms' ? 'Pilihan Pakej' : 'Package Option'}</h2>
         <UrgencyGrid mode={isSurat ? 'surat' : 'lain-lain'} />
       </section>
     </div>
