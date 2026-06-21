@@ -148,21 +148,31 @@ export function HomeView() {
           )}
         </div>
 
-        <div className="grid grid-cols-2 p-1.5 bg-[#e5e5ea] rounded-[16px] gap-1.5 mb-4 shadow-inner">
-          {urgencyOptions.map(opt => (
-            <button
-              key={opt.id}
-              onClick={() => setCalcUrgency(prev => prev === opt.id ? 'all' : opt.id)}
-              className={cn(
-                "py-2.5 rounded-[12px] font-black text-[12px] transition-all",
-                calcUrgency === opt.id 
-                  ? "bg-white text-text shadow-sm" 
-                  : "text-subtext md:hover:bg-white/50"
-              )}
-            >
-              {opt.label}
-            </button>
-          ))}
+        <div className="grid grid-cols-2 p-1.5 bg-gray-200/50 dark:bg-gray-800/50 rounded-[16px] gap-1.5 mb-4 shadow-inner">
+          {urgencyOptions.map(opt => {
+            const isSelected = calcUrgency === opt.id;
+            let activeBg = "bg-white text-text";
+            if (isSelected) {
+              if (opt.id === 'super') activeBg = "bg-super text-white shadow-[0_4px_12px_-2px_rgba(225,29,72,0.3)]";
+              else if (opt.id === 'urgent') activeBg = "bg-urgent text-white shadow-[0_4px_12px_-2px_rgba(234,88,12,0.3)]";
+              else if (opt.id === 'semi') activeBg = "bg-semi text-white shadow-[0_4px_12px_-2px_rgba(217,119,6,0.3)]";
+              else activeBg = "bg-noturgent text-white shadow-[0_4px_12px_-2px_rgba(5,150,105,0.3)]";
+            }
+            return (
+              <button
+                key={opt.id}
+                onClick={() => setCalcUrgency(prev => prev === opt.id ? 'all' : opt.id)}
+                className={cn(
+                  "py-2.5 rounded-[12px] font-black text-[12px] transition-all",
+                  isSelected 
+                    ? activeBg 
+                    : "text-subtext md:hover:bg-white/50 dark:md:hover:bg-gray-700/50"
+                )}
+              >
+                {opt.label}
+              </button>
+            );
+          })}
         </div>
 
         <div className={cn(

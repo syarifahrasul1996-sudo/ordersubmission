@@ -24,6 +24,12 @@ interface AppContextType {
   toggleTheme: () => void;
   appLanguage: 'ms' | 'en';
   toggleLanguage: () => void;
+  isOnline: boolean;
+  isSyncing: boolean;
+  queueSize: number;
+  lastSyncTime: number | null;
+  syncOfflineQueue: () => Promise<void>;
+  addToOfflineQueue: (payload: any, webhookUrl: string, orderId: string) => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -173,7 +179,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const timeout = setTimeout(() => {
           cleanup();
           reject(new Error('Request timeout'));
-        }, 15000);
+        }, 45000);
 
         const cleanup = () => {
           clearTimeout(timeout);
@@ -334,70 +340,161 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return () => clearInterval(interval);
   }, [appLanguage]);
 
-  useEffect(() => {
-    const processOfflineQueue = async () => {
-      if (!navigator.onLine) return;
+  const [isOnline, setIsOnline] = useState<boolean>(() => typeof navigator !== 'undefined' ? navigator.onLine : true);
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const [queueSize, setQueueSize] = useState<number>(() => {
+    try {
+      const q = localStorage.getItem('db_offline_sync_queue');
+      if (q) {
+        const parsed = JSON.parse(q);
+        return Array.isArray(parsed) ? parsed.length : 0;
+      }
+    } catch {}
+    return 0;
+  });
+  const [lastSyncTime, setLastSyncTime] = useState<number | null>(() => {
+    try {
+      const t = localStorage.getItem('db_last_sync_time');
+      return t ? parseInt(t, 10) : null;
+    } catch {
+      return null;
+    }
+  });
 
-      const queueStr = localStorage.getItem('db_offline_sync_queue');
-      if (!queueStr) return;
-
-      let queue: any[] = [];
-      try {
-        queue = JSON.parse(queueStr);
-      } catch (e) {
-        localStorage.removeItem('db_offline_sync_queue');
+  const updateQueueSize = () => {
+    try {
+      const q = localStorage.getItem('db_offline_sync_queue');
+      if (q) {
+        const parsed = JSON.parse(q);
+        setQueueSize(Array.isArray(parsed) ? parsed.length : 0);
         return;
       }
+    } catch {}
+    setQueueSize(0);
+  };
 
-      if (!Array.isArray(queue) || queue.length === 0) return;
+  const addToOfflineQueue = (payload: any, webhookUrl: string, orderId: string) => {
+    try {
+      const queueStr = localStorage.getItem('db_offline_sync_queue');
+      const queue = queueStr ? JSON.parse(queueStr) : [];
+      queue.push({
+        payload,
+        webhookUrl,
+        id: orderId,
+        timestamp: Date.now()
+      });
+      localStorage.setItem('db_offline_sync_queue', JSON.stringify(queue));
+      updateQueueSize();
+    } catch (e) {
+      console.warn('Failed to add to offline queue', e);
+    }
+  };
 
-      let remainingQueue = [...queue];
-      let processedCount = 0;
+  const syncOfflineQueue = async () => {
+    if (!navigator.onLine) {
+      setIsOnline(false);
+      return;
+    }
+    setIsOnline(true);
 
-      for (let i = 0; i < queue.length; i++) {
-        const item = queue[i];
-        if (!navigator.onLine) break;
+    const queueStr = localStorage.getItem('db_offline_sync_queue');
+    if (!queueStr) {
+      updateQueueSize();
+      return;
+    }
 
-        try {
-          const response = await fetch(item.webhookUrl, {
-            method: 'POST',
-            mode: 'no-cors',
-            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-            body: JSON.stringify(item.payload)
+    let queue: any[] = [];
+    try {
+      queue = JSON.parse(queueStr);
+    } catch (e) {
+      localStorage.removeItem('db_offline_sync_queue');
+      updateQueueSize();
+      return;
+    }
+
+    if (!Array.isArray(queue) || queue.length === 0) {
+      updateQueueSize();
+      return;
+    }
+
+    setIsSyncing(true);
+    let remainingQueue = [...queue];
+    let processedCount = 0;
+
+    for (let i = 0; i < queue.length; i++) {
+      const item = queue[i];
+      if (!navigator.onLine) {
+        setIsOnline(false);
+        break;
+      }
+
+      try {
+        await fetch(item.webhookUrl, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify(item.payload)
+        });
+        remainingQueue = remainingQueue.filter(q => q.id !== item.id);
+        processedCount++;
+        
+        if (remainingQueue.length === 0) {
+          localStorage.removeItem('db_offline_sync_queue');
+        } else {
+          localStorage.setItem('db_offline_sync_queue', JSON.stringify(remainingQueue));
+        }
+        updateQueueSize();
+      } catch (e) {
+        console.warn('Failed to sync offline item', e);
+      }
+    }
+
+    setIsSyncing(false);
+    updateQueueSize();
+
+    if (processedCount > 0) {
+      const now = Date.now();
+      setLastSyncTime(now);
+      localStorage.setItem('db_last_sync_time', String(now));
+
+      try {
+        if ('Notification' in window && Notification.permission === 'granted') {
+          new Notification(appLanguage === 'ms' ? 'Penyegerakan Selesai' : 'Sync Completed', { 
+            body: appLanguage === 'ms' 
+              ? `${processedCount} rekod luar talian telah berjaya disegerakkan.` 
+              : `${processedCount} records from queue synced.` 
           });
-          remainingQueue = remainingQueue.filter(q => q !== item);
-          processedCount++;
-        } catch (e) {
-          console.warn('Failed to sync offline item', e);
         }
-      }
+      } catch(e) {}
+    }
+  };
 
-      if (remainingQueue.length === 0) {
-        localStorage.removeItem('db_offline_sync_queue');
-        if (processedCount > 0) {
-          try {
-            if ('Notification' in window && Notification.permission === 'granted') {
-              new Notification(appLanguage === 'ms' ? 'Sync Selesai' : 'Sync Completed', { 
-                body: appLanguage === 'ms' 
-                  ? `${processedCount} rekod dari luar talian telah disync.` 
-                  : `${processedCount} offline records synced.` 
-              });
-            }
-          } catch(e) {}
-        }
-      } else if (remainingQueue.length !== queue.length) {
-        localStorage.setItem('db_offline_sync_queue', JSON.stringify(remainingQueue));
-      }
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+      syncOfflineQueue();
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
     };
 
-    window.addEventListener('online', processOfflineQueue);
-    
-    // Check initially in case app loaded when online but had queue
-    const timeoutId = setTimeout(processOfflineQueue, 5000);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'db_offline_sync_queue') {
+        updateQueueSize();
+      }
+    };
+    window.addEventListener('storage', handleStorageChange);
+
+    // Initial check
+    syncOfflineQueue();
 
     return () => {
-      window.removeEventListener('online', processOfflineQueue);
-      clearTimeout(timeoutId);
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('storage', handleStorageChange);
     };
   }, [appLanguage]);
 
@@ -505,7 +602,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AppContext.Provider value={{ state, setState, viewStack, pushView, startNewOrder, popView, goHome, reset, generatedMessages, setGeneratedMessages, history, setHistory, saveOrderToHistory, updateOrderHistoryState, updateSpecificHistoryItem, deleteOrderFromHistory, clearHistory, loadOrder, theme, toggleTheme, appLanguage, toggleLanguage }}>
+    <AppContext.Provider value={{ state, setState, viewStack, pushView, startNewOrder, popView, goHome, reset, generatedMessages, setGeneratedMessages, history, setHistory, saveOrderToHistory, updateOrderHistoryState, updateSpecificHistoryItem, deleteOrderFromHistory, clearHistory, loadOrder, theme, toggleTheme, appLanguage, toggleLanguage, isOnline, isSyncing, queueSize, lastSyncTime, syncOfflineQueue, addToOfflineQueue }}>
       {children}
     </AppContext.Provider>
   );

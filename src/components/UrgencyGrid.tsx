@@ -25,7 +25,9 @@ export function UrgencyGrid({ mode }: UrgencyGridProps) {
           onClick={() => handleSelect('super', 1, 'Super Urgent')}
           className={cn(
             "col-span-2 h-[72px] sm:h-20 rounded-[18px] flex items-center justify-between px-5 sm:px-7 transition-all active:scale-[0.98]",
-            state.urgency === 'super' ? "bg-super text-white shadow-[0_8px_20px_-4px_rgba(225,29,72,0.3)]" : "bg-surface text-text"
+            state.urgency === 'super' 
+              ? "bg-super text-white shadow-[0_8px_20px_-4px_rgba(225,29,72,0.45)]" 
+              : "bg-surface text-text hover:bg-gray-200/50 dark:hover:bg-gray-800/40"
           )}
         >
           <span className="font-black text-[15px] sm:text-[17px]">Super Urgent</span>
@@ -35,7 +37,9 @@ export function UrgencyGrid({ mode }: UrgencyGridProps) {
           onClick={() => handleSelect('urgent', 24, 'Urgent')}
           className={cn(
             "col-span-2 h-[72px] sm:h-20 rounded-[18px] flex items-center justify-between px-5 sm:px-7 transition-all active:scale-[0.98]",
-            state.urgency === 'urgent' ? "bg-urgent text-white shadow-[0_8px_20px_-4px_rgba(234,88,12,0.3)]" : "bg-surface text-text"
+            state.urgency === 'urgent' 
+              ? "bg-urgent text-white shadow-[0_8px_20px_-4px_rgba(234,88,12,0.45)]" 
+              : "bg-surface text-text hover:bg-gray-200/50 dark:hover:bg-gray-800/40"
           )}
         >
           <span className="font-black text-[15px] sm:text-[17px]">Urgent</span>
@@ -57,9 +61,23 @@ export function UrgencyGrid({ mode }: UrgencyGridProps) {
     <div className="grid grid-cols-2 gap-3 sm:gap-4" role="radiogroup">
       {options.map(opt => {
         const isSelected = state.urgency === opt.id;
-        let bgClass = "bg-surface text-text";
+        let bgClass = "bg-surface text-text hover:bg-gray-200/50 dark:hover:bg-gray-800/40";
+        let shadowClass = "";
+        
         if (isSelected) {
-          bgClass = opt.id === 'super' || opt.h <= 2 ? "bg-super text-white" : "bg-urgent text-white";
+          if (opt.id === 'super') {
+            bgClass = "bg-super text-white";
+            shadowClass = "shadow-[0_8px_20px_-4px_rgba(225,29,72,0.45)]";
+          } else if (opt.id === 'urgent') {
+            bgClass = "bg-urgent text-white";
+            shadowClass = "shadow-[0_8px_20px_-4px_rgba(234,88,12,0.45)]";
+          } else if (opt.id === 'semi') {
+            bgClass = "bg-semi text-white";
+            shadowClass = "shadow-[0_8px_20px_-4px_rgba(217,119,6,0.45)]";
+          } else {
+            bgClass = "bg-noturgent text-white";
+            shadowClass = "shadow-[0_8px_20px_-4px_rgba(5,150,105,0.45)]";
+          }
         }
 
         return (
@@ -69,7 +87,7 @@ export function UrgencyGrid({ mode }: UrgencyGridProps) {
             className={cn(
               "h-[76px] sm:h-[88px] rounded-[18px] sm:rounded-btn flex flex-col items-center justify-center transition-all active:scale-[0.98]",
               bgClass,
-              isSelected && (opt.id === 'super' || opt.h <= 2 ? "shadow-[0_8px_20px_-4px_rgba(225,29,72,0.3)]" : "shadow-[0_8px_20px_-4px_rgba(234,88,12,0.3)]")
+              shadowClass
             )}
           >
             <span className="font-black text-[16px] sm:text-[18px] leading-tight">{opt.l}</span>

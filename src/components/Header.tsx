@@ -1,13 +1,14 @@
 import React from 'react';
-import { ChevronLeft, Clock, History, Moon, Sun, Home } from 'lucide-react';
+import { ChevronLeft, Clock, History, Home } from 'lucide-react';
 import { useAppContext } from '../AppContext';
+import { SettingsDropdown } from './SettingsDropdown';
 
 export function Header() {
   const { viewStack, popView, goHome, state, pushView, theme, toggleTheme, appLanguage, toggleLanguage } = useAppContext();
   const currentView = viewStack[viewStack.length - 1];
 
   const titles: Record<string, { ms: string, en: string }> = {
-    'home': { ms: 'Order Submission', en: 'Order Submission' },
+    'home': { ms: 'Penghantaran Pesanan', en: 'Order Submission' },
     'resume-type': { ms: 'Jenis Resume', en: 'Resume Type' },
     'resume-form-fields': { ms: 'Butiran Resume', en: 'Resume Details' },
     'general-form': { ms: 'Butiran Dokumen', en: 'Document Details' },
@@ -45,34 +46,19 @@ export function Header() {
         </div>
       )}
       {currentView === 'home' ? (
-        <div className="flex items-center">
-          <button 
-            onClick={toggleLanguage}
-            className="w-10 h-10 flex items-center justify-center rounded-full active:bg-surface text-text font-black text-sm active:scale-95 transition-all md:hover:bg-surface uppercase"
-            aria-label="Toggle Language"
-            title="Language"
-          >
-            {appLanguage}
-          </button>
-          <button 
-            onClick={toggleTheme}
-            className="w-10 h-10 flex items-center justify-center rounded-full active:bg-surface text-text active:scale-95 transition-all md:hover:bg-surface"
-            aria-label="Toggle Theme"
-            title="Theme"
-          >
-            {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-          </button>
+        <div className="flex items-center space-x-1">
           <button 
             onClick={() => pushView('history')}
-            className="w-10 h-10 flex items-center justify-center rounded-full active:bg-surface text-text active:scale-95 transition-all md:hover:bg-surface ml-1"
+            className="w-10 h-10 flex items-center justify-center rounded-full active:bg-surface text-text active:scale-95 transition-all md:hover:bg-surface mr-1"
             aria-label="Sejarah Tempahan"
             title="Sejarah"
           >
             <History className="w-5 h-5" />
           </button>
+          <SettingsDropdown />
         </div>
       ) : (
-        <div className="flex items-center">
+        <div className="flex items-center space-x-1">
           <button 
             onClick={goHome}
             className="w-10 h-10 flex items-center justify-center rounded-full active:bg-surface text-text active:scale-95 transition-all md:hover:bg-surface"
@@ -81,6 +67,7 @@ export function Header() {
           >
             <Home className="w-5 h-5" />
           </button>
+          <SettingsDropdown />
         </div>
       )}
     </header>

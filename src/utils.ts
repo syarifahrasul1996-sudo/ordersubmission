@@ -67,3 +67,120 @@ export function generateMessages(state: any, dl: { formatted: string, total: num
 
   return out;
 }
+
+export function formatPhoneUniversal(phone?: string): string {
+  if (!phone) return '';
+
+  // Clean all non-digit characters
+  const digits = phone.replace(/\D/g, '');
+  if (!digits) return phone.trim(); // fallback to trimmed input if no digits
+
+  // 1. Malaysia (Country Code: 60)
+  // If starts with domestic '0', replace with '60'. E.g. '0189864891' -> '60189864891'
+  let normalized = digits;
+  if (digits.startsWith('0')) {
+    normalized = '6' + digits;
+  } else if (digits.startsWith('1') && (digits.length === 9 || digits.length === 10)) {
+    // If entered without country code (e.g. 189864891), prefix with '60'
+    normalized = '60' + digits;
+  }
+
+  if (normalized.startsWith('60')) {
+    const rawSuffix = normalized.substring(2);
+    // Malaysian mobile operator codes have 2 or 3 digits (11 or 10,12,13,14,15,16,17,18,19)
+    if (rawSuffix.startsWith('11')) {
+      if (rawSuffix.length >= 10) {
+        // Format: 60 11-3957 6582
+        return `60 11-${rawSuffix.substring(2, 6)} ${rawSuffix.substring(6, 10)}`;
+      } else {
+        return `60 11-${rawSuffix.substring(2)}`;
+      }
+    } else if (
+      rawSuffix.startsWith('10') ||
+      rawSuffix.startsWith('12') ||
+      rawSuffix.startsWith('13') ||
+      rawSuffix.startsWith('14') ||
+      rawSuffix.startsWith('15') ||
+      rawSuffix.startsWith('16') ||
+      rawSuffix.startsWith('17') ||
+      rawSuffix.startsWith('18') ||
+      rawSuffix.startsWith('19')
+    ) {
+      const op = rawSuffix.substring(0, 2);
+      const rest = rawSuffix.substring(2);
+      if (rest.length >= 7) {
+        // Format: 60 18-986 4891
+        return `60 ${op}-${rest.substring(0, 3)} ${rest.substring(3, 7)}`;
+      } else {
+        return `60 ${op}-${rest}`;
+      }
+    } else if (rawSuffix.startsWith('3')) {
+      // KL Landline: e.g. 60 3-1234 5678 (8 digits suffix)
+      const rest = rawSuffix.substring(1);
+      if (rest.length >= 8) {
+        return `60 3-${rest.substring(0, 4)} ${rest.substring(4, 8)}`;
+      } else {
+        return `60 3-${rest}`;
+      }
+    } else if (
+      rawSuffix.startsWith('4') ||
+      rawSuffix.startsWith('5') ||
+      rawSuffix.startsWith('6') ||
+      rawSuffix.startsWith('7') ||
+      rawSuffix.startsWith('8') ||
+      rawSuffix.startsWith('9')
+    ) {
+      // Other states landline: e.g. 60 9-123 4567
+      const op = rawSuffix.substring(0, 1);
+      const rest = rawSuffix.substring(1);
+      if (rest.length >= 7) {
+        return `60 ${op}-${rest.substring(0, 3)} ${rest.substring(3, 7)}`;
+      } else {
+        return `60 ${op}-${rest}`;
+      }
+    }
+    // General fallback for other formats of Malaysian numbers
+    return `60 ${rawSuffix}`;
+  }
+
+  // 2. Singapore (Country Code: 65) - 8 digits suffix typically
+  if (digits.startsWith('65')) {
+    const suffix = digits.substring(2);
+    if (suffix.length >= 8) {
+      return `65 ${suffix.substring(0, 4)} ${suffix.substring(4, 8)}`;
+    }
+    return `65 ${suffix}`;
+  }
+
+  // 3. Indonesia (Country Code: 62) - e.g. 62 812-3456-7890
+  if (digits.startsWith('62')) {
+    const suffix = digits.substring(2);
+    if (suffix.length >= 9) {
+      return `62 ${suffix.substring(0, 3)}-${suffix.substring(3, 7)}-${suffix.substring(7, 11)}`;
+    }
+    return `62 ${suffix}`;
+  }
+
+  // 4. US/Canada (Country Code: 1) - 10 digits
+  if (digits.startsWith('1') && digits.length === 11) {
+    return `1 (${digits.substring(1, 4)}) ${digits.substring(4, 7)}-${digits.substring(7)}`;
+  }
+  if (digits.length === 10) {
+    return `1 (${digits.substring(0, 3)}) ${digits.substring(3, 6)}-${digits.substring(6)}`;
+  }
+
+  // 5. United Kingdom (Country Code: 44) - e.g. 44 7123 456789
+  if (digits.startsWith('44')) {
+    const suffix = digits.substring(2);
+    if (suffix.length >= 10) {
+      return `44 ${suffix.substring(0, 4)} ${suffix.substring(4)}`;
+    }
+  }
+
+  // Generic Default Fallback (spaced representation) or original input
+  if (digits.length >= 10) {
+    return `+${digits.substring(0, 3)} ${digits.substring(3, 6)} ${digits.substring(6)}`;
+  }
+
+  return phone.trim();
+}

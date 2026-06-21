@@ -19,7 +19,13 @@ const jsonpRequest = (url: URL, callbackName: string) => {
     script.src = url.toString();
     script.async = true;
 
+    const timeoutId = setTimeout(() => {
+      cleanup();
+      reject(new Error('Request timed out'));
+    }, 45000);
+
     const cleanup = () => {
+      clearTimeout(timeoutId);
       if (script.parentNode) script.parentNode.removeChild(script);
       delete (window as any)[callbackName];
     };
@@ -86,19 +92,66 @@ export function DashboardView() {
   }, []);
 
   const fetchDashboardOrders = async (year: string) => {
+    setIsLoading(true);
+    setError(null);
+
+    if (year === 'all') {
+      const activeConfigs = annualSheets.filter((s: any) => s.year && s.spreadsheetId?.trim() !== '');
+      if (activeConfigs.length === 0) {
+        setRemoteOrders([]);
+        setError(appLanguage === 'ms' 
+          ? `Tiada Database Cloud dikonfigurasikan. Sila tetapkan di Sejarah > Tetapan.`
+          : `No Cloud Database configured. Please configure in History > Settings.`
+        );
+        setIsLoading(false);
+        return;
+      }
+
+      try {
+        const fetchPromises = activeConfigs.map(async (sheetConfig: any) => {
+          try {
+            const sId = extractId(sheetConfig.spreadsheetId);
+            const sUrl = sheetConfig.scriptUrl?.trim() || globalScriptUrl;
+            const callbackName = 'jsonp_callback_dashboard_' + Math.round(1000000 * Math.random()) + '_' + sheetConfig.year;
+            const url = new URL(sUrl);
+
+            url.searchParams.append('action', 'get_dashboard_orders');
+            url.searchParams.append('spreadsheetId', sId);
+            url.searchParams.append('year', sheetConfig.year);
+            url.searchParams.append('callback', callbackName);
+
+            const data = await jsonpRequest(url, callbackName);
+            if (data && data.status === 'success' && Array.isArray(data.orders)) {
+              return data.orders;
+            }
+          } catch (e) {
+            console.warn(`Failed to fetch dashboard orders for ${sheetConfig.year}:`, e);
+          }
+          return [];
+        });
+
+        const results = await Promise.all(fetchPromises);
+        setRemoteOrders(results.flat());
+        setLastUpdated(Date.now());
+      } catch (err: any) {
+        console.warn('All-time fetch failed:', err);
+        setError(appLanguage === 'ms' ? `Ralat mendapatkan data: ${err.message}` : `Failed to fetch data: ${err.message}`);
+      } finally {
+        setIsLoading(false);
+      }
+      return;
+    }
+
     const sheetConfig = annualSheets.find((s: any) => s.year === year && s.spreadsheetId?.trim() !== '');
-    
     if (!sheetConfig) {
       setRemoteOrders([]);
       setError(appLanguage === 'ms' 
         ? `Tiada Database Cloud dikonfigurasikan untuk tahun ${year}. Sila tetapkan di Sejarah > Tetapan.`
         : `No Cloud Database configured for year ${year}. Please configure in History > Settings.`
       );
+      setIsLoading(false);
       return;
     }
-
-    setIsLoading(true);
-    setError(null);
 
     const sId = extractId(sheetConfig.spreadsheetId);
     const sUrl = sheetConfig.scriptUrl?.trim() || globalScriptUrl;
@@ -121,7 +174,7 @@ export function DashboardView() {
         throw new Error(data?.message || 'Invalid response format');
       }
     } catch (err: any) {
-      console.error('Dashboard fetch failed:', err);
+      console.warn('Dashboard fetch failed:', err);
       setError(appLanguage === 'ms' ? `Ralat mendapatkan data: ${err.message}` : `Failed to fetch data: ${err.message}`);
     } finally {
       setIsLoading(false);
@@ -129,14 +182,21 @@ export function DashboardView() {
   };
 
   useEffect(() => {
-  fetchDashboardOrders(filterYear);
-}, [filterYear, annualSheets, globalScriptUrl]);
+    fetchDashboardOrders(filterYear);
+  }, [filterYear, annualSheets, globalScriptUrl]);
 
   const stats = useMemo(() => {
     const orders = remoteOrders;
     
     const availableYearsSet = new Set<string>(annualSheets.filter((s:any) => s.year).map((s:any) => s.year));
-    if (!availableYearsSet.has(filterYear)) availableYearsSet.add(filterYear);
+    if (filterYear !== 'all' && !availableYearsSet.has(filterYear)) {
+      availableYearsSet.add(filterYear);
+    }
+
+    const yearCounts = new Map<string, number>();
+    availableYearsSet.forEach(yr => {
+      yearCounts.set(yr, 0);
+    });
     
     const monthCounts = new Map<string, number>();
     for (let i = 1; i <= 12; i++) {
@@ -144,7 +204,7 @@ export function DashboardView() {
     }
 
     const filteredOrders = orders.filter(order => {
-      if (filterMonth !== 'all') {
+      if (filterMonth !== 'all' && filterYear !== 'all') {
         if (!order.dueTimestamp || order.dueTimestamp === 0) return false;
         
         const date = new Date(order.dueTimestamp);
@@ -164,8 +224,8 @@ export function DashboardView() {
     filteredOrders.forEach(order => {
       // Order ID deduplication
       if (String(order.name || '').trim() !== '') {
-  totalOrders++;
-}
+        totalOrders++;
+      }
 
       // Customer Phone normalization
       let phone = order.phone || '';
@@ -179,38 +239,41 @@ export function DashboardView() {
 
       // Urgency
       // Urgency
-const urgencyRaw = String(order.jenis || order.urgency || '')
-  .trim()
-  .toLowerCase();
+      const urgencyRaw = String(order.jenis || order.urgency || '')
+        .trim()
+        .toLowerCase();
 
-let urgency = 'Tak Urgent';
+      let urgency = 'Tak Urgent';
 
-if (urgencyRaw === 'urgent') {
-  urgency = 'Urgent';
-} else if (
-  urgencyRaw === 'semi urgent' ||
-  urgencyRaw === 'semi-urgent' ||
-  urgencyRaw === 'semu urgent'
-) {
-  urgency = 'Semi Urgent';
-} else if (
-  urgencyRaw === 'super urgent' ||
-  urgencyRaw === 'super-urgent'
-) {
-  urgency = 'Super Urgent';
-}
+      if (urgencyRaw === 'urgent') {
+        urgency = 'Urgent';
+      } else if (
+        urgencyRaw === 'semi urgent' ||
+        urgencyRaw === 'semi-urgent' ||
+        urgencyRaw === 'semu urgent'
+      ) {
+        urgency = 'Semi Urgent';
+      } else if (
+        urgencyRaw === 'super urgent' ||
+        urgencyRaw === 'super-urgent'
+      ) {
+        urgency = 'Super Urgent';
+      }
 
-urgencyCounts.set(urgency, (urgencyCounts.get(urgency) || 0) + 1);
+      urgencyCounts.set(urgency, (urgencyCounts.get(urgency) || 0) + 1);
 
-// Monthly chart aggregation (only if valid date)
-if (order.dueTimestamp && order.dueTimestamp > 0) {
-  const date = new Date(order.dueTimestamp);
-  const mStr = String(date.getMonth() + 1).padStart(2, '0');
-  monthCounts.set(mStr, (monthCounts.get(mStr) || 0) + 1);
-} else {
-  invalidDatesCount++;
-}
-});
+      // Monthly chart aggregation (only if valid date)
+      if (order.dueTimestamp && order.dueTimestamp > 0) {
+        const date = new Date(order.dueTimestamp);
+        const mStr = String(date.getMonth() + 1).padStart(2, '0');
+        const yStr = String(date.getFullYear());
+        monthCounts.set(mStr, (monthCounts.get(mStr) || 0) + 1);
+        yearCounts.set(yStr, (yearCounts.get(yStr) || 0) + 1);
+      } else {
+        invalidDatesCount++;
+      }
+    });
+
     let repeatCustomers = 0;
     customers.forEach(count => {
       if (count > 1) repeatCustomers++;
@@ -225,12 +288,19 @@ if (order.dueTimestamp && order.dueTimestamp > 0) {
     const monthNamesEn = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     const months = appLanguage === 'ms' ? monthNamesMs : monthNamesEn;
 
-    const ordersByMonth = Array.from(monthCounts.entries())
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([mStr, value]) => ({ 
-        name: months[parseInt(mStr, 10) - 1], 
-        value 
-      }));
+    const ordersChartData = filterYear === 'all'
+      ? Array.from(yearCounts.entries())
+          .sort((a, b) => a[0].localeCompare(b[0]))
+          .map(([yStr, value]) => ({ 
+            name: yStr, 
+            value 
+          }))
+      : Array.from(monthCounts.entries())
+          .sort((a, b) => a[0].localeCompare(b[0]))
+          .map(([mStr, value]) => ({ 
+            name: months[parseInt(mStr, 10) - 1], 
+            value 
+          }));
 
     const customerTypes = [
       { name: appLanguage === 'ms' ? 'Baru' : 'New', value: totalUniqueCustomers - repeatCustomers },
@@ -252,7 +322,7 @@ if (order.dueTimestamp && order.dueTimestamp > 0) {
       totalUniqueCustomers,
       repeatCustomers,
       repeatCustomerRate,
-      ordersByMonth,
+      ordersByMonth: ordersChartData,
       customerTypes,
       typesChart,
       urgencyChart,
@@ -296,22 +366,25 @@ if (order.dueTimestamp && order.dueTimestamp > 0) {
             onChange={(e) => setFilterYear(e.target.value)}
             className="flex-1 sm:flex-none h-10 bg-surface border border-gray-200 text-text text-sm font-semibold rounded-xl px-3 outline-none focus:border-primary/50 focus:ring-2 ring-primary/20 cursor-pointer shadow-sm"
           >
+            <option value="all">{appLanguage === 'ms' ? 'Sepanjang Masa' : 'All Time'}</option>
             {stats.years.map(year => (
               <option key={year} value={year}>{year}</option>
             ))}
           </select>
           
-          <select 
-            value={filterMonth}
-            onChange={(e) => setFilterMonth(e.target.value)}
-            className="flex-1 sm:flex-none h-10 bg-surface border border-gray-200 text-text text-sm font-semibold rounded-xl px-3 outline-none focus:border-primary/50 focus:ring-2 ring-primary/20 cursor-pointer shadow-sm"
-          >
-            <option value="all">{appLanguage === 'ms' ? 'Sepanjang Tahun' : 'Whole Year'}</option>
-            {stats.months.map((month, idx) => {
-              const mVal = String(idx + 1).padStart(2, '0');
-              return <option key={mVal} value={mVal}>{month}</option>;
-            })}
-          </select>
+          {filterYear !== 'all' && (
+            <select 
+              value={filterMonth}
+              onChange={(e) => setFilterMonth(e.target.value)}
+              className="flex-1 sm:flex-none h-10 bg-surface border border-gray-200 text-text text-sm font-semibold rounded-xl px-3 outline-none focus:border-primary/50 focus:ring-2 ring-primary/20 cursor-pointer shadow-sm"
+            >
+              <option value="all">{appLanguage === 'ms' ? 'Sepanjang Tahun' : 'Whole Year'}</option>
+              {stats.months.map((month, idx) => {
+                const mVal = String(idx + 1).padStart(2, '0');
+                return <option key={mVal} value={mVal}>{month}</option>;
+              })}
+            </select>
+          )}
         </div>
       </div>
 
@@ -366,10 +439,12 @@ if (order.dueTimestamp && order.dueTimestamp > 0) {
             <div className="bg-surface border border-gray-100 rounded-[24px] p-5 shadow-sm space-y-6">
               <div>
                 <h3 className="text-sm font-bold text-text mb-4">
-                  {appLanguage === 'ms' ? `Order Mengikut Bulan (${filterYear})` : `Orders By Month (${filterYear})`}
+                  {filterYear === 'all'
+                    ? (appLanguage === 'ms' ? 'Order Mengikut Tahun' : 'Orders By Year')
+                    : (appLanguage === 'ms' ? `Order Mengikut Bulan (${filterYear})` : `Orders By Month (${filterYear})`)}
                 </h3>
                 <div className="h-[200px] w-full">
-                  <ResponsiveContainer width="100%" height="100%">
+                  <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
                     <LineChart data={stats.ordersByMonth} margin={{ top: 20, right: 10, left: -20, bottom: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
                       <XAxis dataKey="name" tick={{fontSize: 10}} tickLine={false} axisLine={false} />
@@ -387,7 +462,7 @@ if (order.dueTimestamp && order.dueTimestamp > 0) {
                 <h3 className="text-sm font-bold text-text mb-4">{appLanguage === 'ms' ? 'Jenis Pelanggan' : 'Customer Types'}</h3>
                 <div className="h-[180px] w-full flex items-center justify-center">
                   <div className="w-[180px] h-full relative">
-                    <ResponsiveContainer width="100%" height="100%">
+                    <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
                       <PieChart>
                         <Pie
                           data={stats.customerTypes}
@@ -428,7 +503,7 @@ if (order.dueTimestamp && order.dueTimestamp > 0) {
               <div>
                 <h3 className="text-sm font-bold text-text mb-4">{appLanguage === 'ms' ? 'Kategori Tempahan' : 'Order Categories'}</h3>
                 <div className="h-[200px] w-full">
-                  <ResponsiveContainer width="100%" height="100%">
+                  <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
                     <PieChart>
                       <Pie
                         data={stats.typesChart}
@@ -462,7 +537,7 @@ if (order.dueTimestamp && order.dueTimestamp > 0) {
               <div>
                 <h3 className="text-sm font-bold text-text mb-4">{appLanguage === 'ms' ? 'Prioriti (Tahap Urgency)' : 'Priority (Urgency Level)'}</h3>
                 <div className="h-[160px] w-full">
-                  <ResponsiveContainer width="100%" height="100%">
+                  <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
                     <BarChart data={stats.urgencyChart} layout="vertical" margin={{ top: 0, right: 30, left: 10, bottom: 0 }}>
                       <XAxis type="number" hide />
                       <YAxis dataKey="name" type="category" tick={{fontSize: 10}} tickLine={false} axisLine={false} width={80} />

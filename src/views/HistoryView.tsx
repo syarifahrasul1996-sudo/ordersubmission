@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Clock, Trash2, Calendar, AlertCircle, RefreshCcw, Save, Bell, Check, Search, Database, Phone, Settings, ChevronDown, ChevronUp, Link, X } from 'lucide-react';
 import { useAppContext } from '../AppContext';
+import { formatPhoneUniversal } from '../utils';
 
 const GOOGLE_SCRIPT_URL =
   'https://script.google.com/macros/s/AKfycbw5KpBvJyFpIXmsHueg4XPSRkZ0mg6kxHqjMGp3WEs8Hx_JodvKSoKEg6RMsdH54iCa/exec';
@@ -12,20 +13,9 @@ const formatCustomerName = (name?: string) => {
     .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
     .join(' ');
 };
+
 const formatDisplayPhone = (phone?: string) => {
-  if (!phone) return '';
-
-  const digits = phone.replace(/\D/g, '');
-
-  const normalized = digits.startsWith('0')
-    ? `6${digits}`
-    : digits;
-
-  if (!normalized.startsWith('60')) {
-    return phone;
-  }
-
-  return `60 ${normalized.substring(2, 4)}-${normalized.substring(4, 7)} ${normalized.substring(7)}`;
+  return formatPhoneUniversal(phone);
 };
 
 const getRelativeDayDetails = (orderTime: number, appLanguage: string) => {
@@ -241,7 +231,7 @@ const parseDueTimestamp = (value: unknown): number => {
       const timeoutId = setTimeout(() => {
         cleanup();
         reject(new Error('Request timed out'));
-      }, 15000);
+      }, 45000);
 
       const cleanup = () => {
         clearTimeout(timeoutId);
@@ -257,7 +247,7 @@ const parseDueTimestamp = (value: unknown): number => {
       script.onerror = () => {
         console.warn('JSONP failed URL:', url.toString());
         cleanup();
-        reject(new Error('Failed to update'));
+        reject(new Error('Connection failure or script load error'));
       };
 
       document.body.appendChild(script);
@@ -418,7 +408,7 @@ const parseDueTimestamp = (value: unknown): number => {
             return { year: sheet.year, orders: data.orders, spreadsheetId: sId };
           }
         } catch (e) {
-          console.error(`Sync failed for year ${sheet.year}:`, e);
+          console.warn(`Sync failed for year ${sheet.year}:`, e);
         }
         return { year: sheet.year, orders: [], spreadsheetId: sId };
       });
@@ -490,7 +480,7 @@ const parseDueTimestamp = (value: unknown): number => {
       if (!silent) {
         alert(
           appLanguage === 'ms'
-            ? `Berjaya disync daripada ${activeConfigs.length} database tahunan!\nBaru: ${totalNewCou}\nDikemaskini: ${totalUpdCou}`
+            ? `Berjaya disegerakkan daripada ${activeConfigs.length} database tahunan!\nBaru: ${totalNewCou}\nDikemaskini: ${totalUpdCou}`
             : `Aggregated sync complete across ${activeConfigs.length} annual sheets!\nNew: ${totalNewCou}\nUpdated: ${totalUpdCou}`
         );
       }
@@ -1213,14 +1203,27 @@ const parseDueTimestamp = (value: unknown): number => {
                           </div>
                         )}
 
-                        {item.state?.customerJenis && (
-                          <div>
-                            <span className="text-subtext">
-                              {appLanguage === 'ms' ? 'Jenis' : 'Type'}:
-                            </span>{' '}
-                            <span className="font-medium text-text">{item.state.customerJenis}</span>
-                          </div>
-                        )}
+                        {item.state?.customerJenis && (() => {
+                          const val = String(item.state.customerJenis).toLowerCase();
+                          let badgeStyle = "bg-noturgent/10 text-noturgent border border-noturgent/20";
+                          if (val.includes('super')) {
+                            badgeStyle = "bg-super/10 text-super border border-super/20";
+                          } else if (val.includes('semi')) {
+                            badgeStyle = "bg-semi/10 text-semi border border-semi/20";
+                          } else if (val.includes('urgent')) {
+                            badgeStyle = "bg-urgent/10 text-urgent border border-urgent/20";
+                          }
+                          return (
+                            <div className="flex items-center gap-1">
+                              <span className="text-subtext">
+                                {appLanguage === 'ms' ? 'Jenis' : 'Type'}:
+                              </span>
+                              <span className={`px-2 py-0.5 rounded-md text-[10.5px] font-black tracking-wide ${badgeStyle}`}>
+                                {item.state.customerJenis}
+                              </span>
+                            </div>
+                          );
+                        })()}
 
                         {item.state?.customerAddOn && (
                           <div className="w-full">
@@ -1675,12 +1678,25 @@ const parseDueTimestamp = (value: unknown): number => {
                           </div>
                         )}
 
-                        {item.jenis && (
-                          <div>
-                            <span className="text-subtext">Urgency:</span>{' '}
-                            <span className="font-medium text-text">{item.jenis}</span>
-                          </div>
-                        )}
+                        {item.jenis && (() => {
+                          const val = String(item.jenis).toLowerCase();
+                          let badgeStyle = "bg-noturgent/10 text-noturgent border border-noturgent/20";
+                          if (val.includes('super')) {
+                            badgeStyle = "bg-super/10 text-super border border-super/20";
+                          } else if (val.includes('semi')) {
+                            badgeStyle = "bg-semi/10 text-semi border border-semi/20";
+                          } else if (val.includes('urgent')) {
+                            badgeStyle = "bg-urgent/10 text-urgent border border-urgent/20";
+                          }
+                          return (
+                            <div className="flex items-center gap-1">
+                              <span className="text-subtext">Urgency:</span>
+                              <span className={`px-2 py-0.5 rounded-md text-[10.5px] font-black tracking-wide ${badgeStyle}`}>
+                                {item.jenis}
+                              </span>
+                            </div>
+                          );
+                        })()}
 
                         {item.addon && (
                           <div className="w-full">

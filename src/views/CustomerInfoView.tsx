@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { RefreshCcw, Save, Check } from 'lucide-react';
 import { useAppContext } from '../AppContext';
-import { calculateDeadline } from '../utils';
+import { calculateDeadline, formatPhoneUniversal } from '../utils';
 import { Toast } from '../components/Toast';
 import { SetupHelper } from '../components/SetupHelper';
+import { cn } from '../cn';
 
 function generateOrderId() {
   const now = new Date();
@@ -12,7 +13,7 @@ function generateOrderId() {
 }
 
 export function CustomerInfoView() {
-  const { appLanguage, state, setState, goHome, viewStack, updateOrderHistoryState } = useAppContext();
+  const { appLanguage, state, setState, goHome, viewStack, updateOrderHistoryState, addToOfflineQueue } = useAppContext();
   const isActive = viewStack[viewStack.length - 1] === 'customer-info';
 
   const computeInitialValues = () => {
@@ -317,35 +318,9 @@ export function CustomerInfoView() {
         resolvedSpreadsheetId = '1kUAJYUVhr9bPYErtpnohpvuGGyhBSvJyEOIyzEFivJo';
       }
     }
-// format phone first
-
-let formattedPhone = phone.trim();
-const digits = formattedPhone.replace(/\D/g, '');
-
-// Malaysian numbers already starting with 60
-if (digits.startsWith('60') && digits.length >= 11) {
-  formattedPhone =
-    digits.substring(0, 4) +
-    '-' +
-    digits.substring(4, 7) +
-    ' ' +
-    digits.substring(7);
-}
-// Malaysian numbers starting with 0
-else if (digits.startsWith('0') && digits.length >= 10) {
-  const normalized = '60' + digits.substring(1);
-
-  formattedPhone =
-    normalized.substring(0, 4) +
-    '-' +
-    normalized.substring(4, 7) +
-    ' ' +
-    normalized.substring(7);
-}
-// Foreign numbers copied from WhatsApp
-else if (formattedPhone.startsWith('+')) {
-  formattedPhone = formattedPhone.substring(1);
-}
+// Format phone first using our universal helper
+const formattedPhone = formatPhoneUniversal(phone);
+setPhone(formattedPhone);
 
 const updatedInfo = info.replace(
   /(No\.?\s*Telefon|Phone Number)\s*:\s*.*/i,
@@ -417,15 +392,7 @@ setInfo(updatedInfo);
       // Offline check & queue
       if (!navigator.onLine) {
         try {
-          const queueStr = localStorage.getItem('db_offline_sync_queue');
-          const queue = queueStr ? JSON.parse(queueStr) : [];
-          queue.push({
-            payload,
-            webhookUrl: resolvedWebhookUrl,
-            id: orderId,
-            timestamp: Date.now()
-          });
-          localStorage.setItem('db_offline_sync_queue', JSON.stringify(queue));
+          addToOfflineQueue(payload, resolvedWebhookUrl, orderId);
           setSaved(true);
           showToastMessage(appLanguage === 'ms' ? 'Luar Talian: Disimpan dalam Que' : 'Offline: Saved to Queue');
           setTimeout(() => goHome(), 1800);
@@ -448,15 +415,7 @@ setInfo(updatedInfo);
       } catch (fetchErr: any) {
         // Fallback to offline queue if network fails
         try {
-          const queueStr = localStorage.getItem('db_offline_sync_queue');
-          const queue = queueStr ? JSON.parse(queueStr) : [];
-          queue.push({
-            payload,
-            webhookUrl: resolvedWebhookUrl,
-            id: orderId,
-            timestamp: Date.now()
-          });
-          localStorage.setItem('db_offline_sync_queue', JSON.stringify(queue));
+          addToOfflineQueue(payload, resolvedWebhookUrl, orderId);
           setSaved(true);
           showToastMessage(appLanguage === 'ms' 
             ? 'Sambungan gagal: Disimpan dalam Que' 
@@ -614,6 +573,7 @@ setInfo(updatedInfo);
             type="tel" 
             value={phone}
             onChange={(e) => setPhone(e.target.value)}
+            onBlur={() => setPhone(formatPhoneUniversal(phone))}
             placeholder="01X-XXX XXXX"
             className="w-full h-14 bg-surface rounded-[16px] px-4 font-medium text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all placeholder:text-gray-300 text-[16px]" 
           />
@@ -697,17 +657,35 @@ setInfo(updatedInfo);
         <div className="space-y-1">
           <label className="text-[13px] font-bold text-text ml-1 uppercase tracking-wider">Jenis</label>
           <div className="relative">
-            <select 
-              value={jenis}
-              onChange={(e) => setJenis(e.target.value)}
-              className="w-full h-14 bg-surface text-text rounded-[16px] px-4 font-medium border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all appearance-none text-[16px]" 
-            >
-              <option value="Tidak Urgent">Tidak Urgent</option>
-              <option value="Semi Urgent">Semi Urgent</option>
-              <option value="Urgent">Urgent</option>
-              <option value="Super Urgent">Super Urgent</option>
-              <option value=""></option>
-            </select>
+            {(() => {
+              let selectColorClass = "border-gray-100/50";
+              const v = (jenis || '').toLowerCase();
+              if (v.includes('super')) {
+                selectColorClass = "border-super focus:border-super focus:ring-super/20 text-super font-black bg-super/5 dark:bg-super/10";
+              } else if (v.includes('semi')) {
+                selectColorClass = "border-semi focus:border-semi focus:ring-semi/20 text-semi font-black bg-semi/5 dark:bg-semi/10";
+              } else if (v.includes('urgent')) {
+                selectColorClass = "border-urgent focus:border-urgent focus:ring-urgent/20 text-urgent font-black bg-urgent/5 dark:bg-urgent/10";
+              } else if (v.includes('tidak') || v.includes('normal') || v.includes('not')) {
+                selectColorClass = "border-noturgent focus:border-noturgent focus:ring-noturgent/20 text-noturgent font-black bg-noturgent/5 dark:bg-noturgent/10";
+              }
+              return (
+                <select 
+                  value={jenis}
+                  onChange={(e) => setJenis(e.target.value)}
+                  className={cn(
+                    "w-full h-14 bg-surface text-text rounded-[16px] px-4 font-medium border outline-none focus:ring-2 transition-all appearance-none text-[16px]",
+                    selectColorClass
+                  )} 
+                >
+                  <option className="text-text font-normal bg-surface" value="Tidak Urgent">Tidak Urgent</option>
+                  <option className="text-text font-normal bg-surface" value="Semi Urgent">Semi Urgent</option>
+                  <option className="text-text font-normal bg-surface" value="Urgent">Urgent</option>
+                  <option className="text-text font-normal bg-surface" value="Super Urgent">Super Urgent</option>
+                  <option className="text-text font-normal bg-surface" value=""></option>
+                </select>
+              );
+            })()}
             <div className="absolute top-0 right-4 h-full flex items-center pointer-events-none">
               <svg className="w-4 h-4 text-subtext" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
             </div>
