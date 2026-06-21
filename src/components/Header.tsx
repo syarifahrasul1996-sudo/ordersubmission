@@ -16,7 +16,8 @@ export function Header() {
     'output': { ms: 'Order Selesai', en: 'Order Complete' },
     'history': { ms: 'Sejarah Tempahan', en: 'Order History' },
     'dashboard': { ms: 'Tinjauan Perniagaan', en: 'Business Overview' },
-    'customer-info': { ms: 'Maklumat Pelanggan', en: 'Customer Info' }
+    'customer-info': { ms: 'Maklumat Pelanggan', en: 'Customer Info' },
+    'contacts-sync': { ms: 'Sinkronisasi Kenalan', en: 'Sync Contacts' }
   };
 
   const title = titles[currentView]?.[appLanguage] || (appLanguage === 'ms' ? 'Butiran' : 'Details');

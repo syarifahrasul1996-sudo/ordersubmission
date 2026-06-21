@@ -459,9 +459,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       try {
         if ('Notification' in window && Notification.permission === 'granted') {
-          new Notification(appLanguage === 'ms' ? 'Penyegerakan Selesai' : 'Sync Completed', { 
+          new Notification(appLanguage === 'ms' ? 'Kemaskini Selesai' : 'Sync Completed', { 
             body: appLanguage === 'ms' 
-              ? `${processedCount} rekod luar talian telah berjaya disegerakkan.` 
+              ? `${processedCount} rekod luar talian telah berjaya dikemaskini.` 
               : `${processedCount} records from queue synced.` 
           });
         }

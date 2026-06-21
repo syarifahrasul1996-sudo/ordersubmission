@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { X, Copy, Check, Code } from 'lucide-react';
 import { Toast } from './Toast';
 
@@ -339,7 +340,7 @@ function doOptions(e) {
     }, 2000);
   };
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
       <div className="bg-surface w-full max-w-2xl rounded-[24px] shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
         <div className="flex items-center justify-between p-6 border-b border-gray-100/10">
@@ -409,6 +410,7 @@ function doOptions(e) {
         </div>
       </div>
       <Toast show={showToast} message={appLanguage === 'ms' ? "Kod berjaya disalin!" : "Code copied!"} />
-    </div>
+    </div>,
+    document.body
   );
 }

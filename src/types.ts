@@ -38,7 +38,7 @@ export interface AppState {
   syncFailCount?: number;
 }
 
-export type ViewType = 'home' | 'resume-type' | 'resume-form-fields' | 'general-form' | 'confirmation' | 'output' | 'history' | 'customer-info';
+export type ViewType = 'home' | 'resume-type' | 'resume-form-fields' | 'general-form' | 'confirmation' | 'output' | 'history' | 'customer-info' | 'dashboard' | 'contacts-sync';
 
 export interface OrderHistoryItem {
   id: string;

@@ -187,3 +187,60 @@ export function formatPhoneUniversal(phone?: string): string {
 
   return phone.trim();
 }
+
+/**
+ * Parses any date-time string (DD/MM/YYYY with optional time, or standard formats)
+ * in a robust manner. Returns both the timestamp and a Date object.
+ */
+export function parseDateStringToTimestamp(dueText: string, defaultTimestamp: number): { timestamp: number; date: Date } {
+  if (!dueText || !dueText.trim()) {
+    return { timestamp: defaultTimestamp, date: new Date(defaultTimestamp) };
+  }
+
+  const cleanText = dueText.replace(/\s+at\s+/i, ' ').trim();
+  const directDate = new Date(cleanText);
+  if (!isNaN(directDate.getTime())) {
+    return { timestamp: directDate.getTime(), date: directDate };
+  }
+
+  // Attempt custom DD/MM/YYYY parses with optional time
+  const parts = cleanText.split(/\s+/);
+  const datePart = parts[0];
+  const timePart = parts[1] || '00:00';
+
+  const dateSegs = datePart.split('/');
+  if (dateSegs.length === 3) {
+    const day = parseInt(dateSegs[0], 10);
+    const month = parseInt(dateSegs[1], 10) - 1;
+    const year = parseInt(dateSegs[2], 10);
+
+    const timeSegs = timePart.split(':');
+    let hours = parseInt(timeSegs[0] || '0', 10);
+    const minutes = parseInt(timeSegs[1] || '0', 10);
+    const seconds = parseInt(timeSegs[2] || '0', 10);
+
+    const isPM = cleanText.toUpperCase().includes('PM');
+    const isAM = cleanText.toUpperCase().includes('AM');
+    if (isPM && hours < 12) {
+      hours += 12;
+    } else if (isAM && hours === 12) {
+      hours = 0;
+    }
+
+    const parsedDME = new Date(year, month, day, hours, minutes, seconds);
+    if (!isNaN(parsedDME.getTime())) {
+      return { timestamp: parsedDME.getTime(), date: parsedDME };
+    }
+  }
+
+  // Try parsing first segment DD/MM/YYYY directly
+  const dateParts = dueText.split(' ')[0].split('/');
+  if (dateParts.length === 3) {
+    const parsedDME = new Date(parseInt(dateParts[2], 10), parseInt(dateParts[1], 10) - 1, parseInt(dateParts[0], 10));
+    if (!isNaN(parsedDME.getTime())) {
+      return { timestamp: parsedDME.getTime(), date: parsedDME };
+    }
+  }
+
+  return { timestamp: defaultTimestamp, date: new Date(defaultTimestamp) };
+}

@@ -1,7 +1,8 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { Clock, Trash2, Calendar, AlertCircle, RefreshCcw, Save, Bell, Check, Search, Database, Phone, Settings, ChevronDown, ChevronUp, Link, X } from 'lucide-react';
 import { useAppContext } from '../AppContext';
-import { formatPhoneUniversal } from '../utils';
+import { formatPhoneUniversal, parseDateStringToTimestamp } from '../utils';
 
 const GOOGLE_SCRIPT_URL =
   'https://script.google.com/macros/s/AKfycbw5KpBvJyFpIXmsHueg4XPSRkZ0mg6kxHqjMGp3WEs8Hx_JodvKSoKEg6RMsdH54iCa/exec';
@@ -62,6 +63,18 @@ const getRelativeDayDetails = (orderTime: number, appLanguage: string) => {
   return null;
 };
 
+const parseDueTimestamp = (value: unknown): number => {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value !== 'string' || !value.trim()) {
+    return 0;
+  }
+
+  return parseDateStringToTimestamp(value, 0).timestamp;
+};
+
 export function HistoryView() {
   const {
     state,
@@ -76,7 +89,8 @@ export function HistoryView() {
     updateOrderHistoryState
   } = useAppContext();
   const [currentTime, setCurrentTime] = useState(() => Date.now());
-  const [showConfirm, setShowConfirm] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<{ title?: string; message: string; onConfirm: () => void } | null>(null);
+  const [alertMsg, setAlertMsg] = useState<{ title?: string; message: string; type: 'success' | 'error' | 'info' } | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [pullProgress, setPullProgress] = useState(0);
   const [startY, setStartY] = useState(0);
@@ -164,6 +178,87 @@ export function HistoryView() {
     ];
   });
 
+  const localizedHistoryItems = useMemo(() => {
+    return history.filter(Boolean).filter((item) => {
+      if (deliveryFilter === 'delivered' && !item.state?.isDelivered) return false;
+      if (deliveryFilter === 'pending' && item.state?.isDelivered) return false;
+      
+      if (localSearchQuery.trim()) {
+        const query = localSearchQuery.toLowerCase().trim();
+        const nameMatch = String(item.state?.customerName || '').toLowerCase().includes(query);
+        const idMatch = String(item.state?.orderId || '').toLowerCase().includes(query);
+        const phoneMatch = String(item.state?.customerPhone || '').toLowerCase().includes(query);
+        if (!nameMatch && !idMatch && !phoneMatch) return false;
+      }
+
+      // Date filter: only show today's order, 2 days before and 3 days onward relative to today
+      const orderTime = item.state?.dueTimestamp || item.timestamp || Date.now();
+      const now = new Date(currentTime);
+      
+      const minDate = new Date(now);
+      minDate.setDate(now.getDate() - 2);
+      minDate.setHours(0, 0, 0, 0);
+
+      const maxDate = new Date(now);
+      maxDate.setDate(now.getDate() + 3);
+      maxDate.setHours(23, 59, 59, 999);
+
+      if (orderTime < minDate.getTime() || orderTime > maxDate.getTime()) {
+        return false;
+      }
+
+      return true;
+    }).sort((a, b) => {
+      const aDelivered = !!a.state?.isDelivered;
+      const bDelivered = !!b.state?.isDelivered;
+
+      // Pending orders appear above delivered orders
+      if (!aDelivered && bDelivered) return -1;
+      if (aDelivered && !bDelivered) return 1;
+
+      const now = currentTime;
+
+      // Read the visible due date again first.
+      const aDue =
+        parseDueTimestamp(a.state?.customerDue) ||
+        Number(a.state?.dueTimestamp) ||
+        Number(a.timestamp) ||
+        now;
+
+      const bDue =
+        parseDueTimestamp(b.state?.customerDue) ||
+        Number(b.state?.dueTimestamp) ||
+        Number(b.timestamp) ||
+        now;
+
+      if (!aDelivered) {
+        // Pending orders nearest to the current time appear first
+        const aDistance = Math.abs(aDue - now);
+        const bDistance = Math.abs(bDue - now);
+
+        if (aDistance !== bDistance) {
+          return aDistance - bDistance;
+        }
+
+        // If both are equally close, show the latest edited order first
+        return (
+          (Number(b.timestamp) || 0) -
+          (Number(a.timestamp) || 0)
+        );
+      }
+
+      // Delivered orders: latest due date first
+      if (aDue !== bDue) {
+        return bDue - aDue;
+      }
+
+      return (
+        (Number(b.timestamp) || 0) -
+        (Number(a.timestamp) || 0)
+      );
+    });
+  }, [history, deliveryFilter, localSearchQuery, currentTime]);
+
   const extractId = (input: string) => {
     const trimmed = input.trim();
     if (trimmed.includes('docs.google.com/spreadsheets/d/')) {
@@ -172,51 +267,6 @@ export function HistoryView() {
     }
     return trimmed;
   };
-const parseDueTimestamp = (value: unknown): number => {
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return value;
-  }
-
-  if (typeof value !== 'string' || !value.trim()) {
-    return 0;
-  }
-
-  const due = value.trim();
-
-  const match = due.match(
-    /^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+at\s+|\s+)(\d{1,2}):(\d{2})(?:\s*(AM|PM))?$/i
-  );
-
-  if (match) {
-    const [, day, month, year, rawHour, minute, period] = match;
-
-    let hour = Number(rawHour);
-
-    if (period?.toUpperCase() === 'PM' && hour !== 12) {
-      hour += 12;
-    }
-
-    if (period?.toUpperCase() === 'AM' && hour === 12) {
-      hour = 0;
-    }
-
-    return new Date(
-      Number(year),
-      Number(month) - 1,
-      Number(day),
-      hour,
-      Number(minute),
-      0,
-      0
-    ).getTime();
-  }
-
-  const nativeTimestamp = Date.parse(
-    due.replace(/\s+at\s+/i, ' ')
-  );
-
-  return Number.isNaN(nativeTimestamp) ? 0 : nativeTimestamp;
-};
 
   const getActiveScriptUrl = (sId?: string) => {
     return globalScriptUrl.trim() || GOOGLE_SCRIPT_URL;
@@ -261,7 +311,7 @@ const parseDueTimestamp = (value: unknown): number => {
     const spreadsheetId = item.state?.spreadsheetId || state.spreadsheetId;
 
     if (!item.state?.orderId || !spreadsheetId) {
-      alert(appLanguage === 'ms' ? 'Kekurangan Order ID atau Spreadsheet ID.' : 'Missing Order ID or Spreadsheet ID.');
+      setAlertMsg({ type: 'error', message: appLanguage === 'ms' ? 'Kekurangan Order ID atau Spreadsheet ID.' : 'Missing Order ID or Spreadsheet ID.' });
       return;
     }
 
@@ -283,14 +333,14 @@ const parseDueTimestamp = (value: unknown): number => {
           googleSheetLink: data.link,
           spreadsheetId
         });
-        alert(appLanguage === 'ms' ? 'Pautan berjaya dikemaskini!' : 'Link successfully updated!');
+        setAlertMsg({ type: 'success', message: appLanguage === 'ms' ? 'Pautan berjaya dikemaskini!' : 'Link successfully updated!' });
       } else if (data.status === 'success') {
-        alert(appLanguage === 'ms' ? 'Tiada pautan dijumpai dalam rekod Google Sheet.' : 'No link found in the Google Sheet record.');
+        setAlertMsg({ type: 'info', message: appLanguage === 'ms' ? 'Tiada pautan dijumpai dalam rekod Google Sheet.' : 'No link found in the Google Sheet record.' });
       } else {
-        alert('Error: ' + (data.message || 'Unknown error'));
+        setAlertMsg({ type: 'error', message: 'Error: ' + (data.message || 'Unknown error') });
       }
     } catch (err) {
-      alert('Failed to sync link: ' + String(err));
+      setAlertMsg({ type: 'error', message: 'Failed to sync link: ' + String(err) });
     } finally {
       setSyncingId(null);
     }
@@ -372,11 +422,12 @@ const parseDueTimestamp = (value: unknown): number => {
 
     if (activeConfigs.length === 0) {
       if (!silent) {
-        alert(
-          appLanguage === 'ms'
+        setAlertMsg({
+          type: 'error',
+          message: appLanguage === 'ms'
             ? 'Sila konfigurasikan sekurang-kurangnya satu spreadsheet ID di bahagian Tetapan Database terlebih dahulu.'
             : 'Please configure at least one spreadsheet ID in Database Settings first.'
-        );
+        });
       }
       return;
     }
@@ -478,15 +529,16 @@ const parseDueTimestamp = (value: unknown): number => {
       setHistory(existingHistory);
 
       if (!silent) {
-        alert(
-          appLanguage === 'ms'
-            ? `Berjaya disegerakkan daripada ${activeConfigs.length} database tahunan!\nBaru: ${totalNewCou}\nDikemaskini: ${totalUpdCou}`
+        setAlertMsg({
+          type: 'success',
+          message: appLanguage === 'ms'
+            ? `Berjaya dikemaskini daripada ${activeConfigs.length} database tahunan!\nBaru: ${totalNewCou}\nDikemaskini: ${totalUpdCou}`
             : `Aggregated sync complete across ${activeConfigs.length} annual sheets!\nNew: ${totalNewCou}\nUpdated: ${totalUpdCou}`
-        );
+        });
       }
     } catch (e) {
       if (!silent) {
-        alert('Sync failed: ' + e);
+        setAlertMsg({ type: 'error', message: 'Sync failed: ' + e });
       }
     } finally {
       setRefreshing(false);
@@ -526,19 +578,28 @@ const parseDueTimestamp = (value: unknown): number => {
   };
 
   const handleClearConfirm = () => {
-    clearHistory();
-    setShowConfirm(false);
+    setConfirmAction({
+      title: appLanguage === 'ms' ? 'Padam Semua Sejarah?' : 'Delete All History?',
+      message: appLanguage === 'ms'
+        ? 'Tindakan ini tidak boleh diundurkan. Semua rekod tempahan akan dipadam.'
+        : 'This action cannot be undone. All order records will be deleted.',
+      onConfirm: () => {
+        clearHistory();
+        setConfirmAction(null);
+      }
+    });
   };
 
   const handleRemoteSearch = async () => {
     const activeConfigs = annualSheets.filter(s => s.spreadsheetId.trim() !== '');
 
     if (activeConfigs.length === 0) {
-      alert(
-        appLanguage === 'ms'
+      setAlertMsg({
+        type: 'error',
+        message: appLanguage === 'ms'
           ? 'Sila tetapkan sekurang-kurangnya satu Spreadsheet ID/Pautan di dalam Tetapan sebelum mencari.'
           : 'Please set at least one Spreadsheet ID/Link in settings before searching.'
-      );
+      });
       setShowDbSettings(true);
       return;
     }
@@ -654,19 +715,7 @@ const parseDueTimestamp = (value: unknown): number => {
           ? 'Surat'
           : orderData.order || 'Lain-lain',
       subType: '',
-      customerInfo: [
-        `--- MAKLUMAT PELANGGAN ---`,
-        `Nama Penuh: ${orderData.name || ''}`,
-        `No. Telefon: ${orderData.phone || ''}`,
-        `Order: ${orderData.order || ''}`,
-        `Template: ${orderData.template || ''}`,
-        `Bahasa: ${orderData.bahasa || ''}`,
-        `Add On: ${orderData.addon || ''}`,
-        `Jenis: ${orderData.jenis || ''}`,
-        `Due: ${orderData.due || ''}`,
-        `Link: ${orderData.link || ''}`,
-        `Order ID: ${generatedOrderId}`
-      ].join('\n')
+      customerInfo: ''
     };
 
     const randomId = orderData.orderId || 'synced_' + Math.round(Math.random() * 100000);
@@ -691,7 +740,7 @@ const parseDueTimestamp = (value: unknown): number => {
     const newStatus = !currentStatus;
 
     if (!spreadsheetId || !orderId) {
-      alert(appLanguage === 'ms' ? 'Kekurangan Order ID atau Spreadsheet ID.' : 'Missing Order ID or Spreadsheet ID.');
+      setAlertMsg({ type: 'error', message: appLanguage === 'ms' ? 'Kekurangan Order ID atau Spreadsheet ID.' : 'Missing Order ID or Spreadsheet ID.' });
       return;
     }
 
@@ -924,36 +973,7 @@ const parseDueTimestamp = (value: unknown): number => {
             </div>
 
             {(() => {
-              const matchedItems = history.filter(Boolean).filter((item) => {
-                if (deliveryFilter === 'delivered' && !item.state?.isDelivered) return false;
-                if (deliveryFilter === 'pending' && item.state?.isDelivered) return false;
-                
-                if (localSearchQuery.trim()) {
-                  const query = localSearchQuery.toLowerCase().trim();
-                  const nameMatch = String(item.state?.customerName || '').toLowerCase().includes(query);
-                  const idMatch = String(item.state?.orderId || '').toLowerCase().includes(query);
-                  const phoneMatch = String(item.state?.customerPhone || '').toLowerCase().includes(query);
-                  if (!nameMatch && !idMatch && !phoneMatch) return false;
-                }
-
-                // Date filter: only show today's order, 2 days before and 3 days onward relative to today
-                const orderTime = item.state?.dueTimestamp || item.timestamp || Date.now();
-                const now = new Date(currentTime);
-                
-                const minDate = new Date(now);
-                minDate.setDate(now.getDate() - 2);
-                minDate.setHours(0, 0, 0, 0);
-
-                const maxDate = new Date(now);
-                maxDate.setDate(now.getDate() + 3);
-                maxDate.setHours(23, 59, 59, 999);
-
-                if (orderTime < minDate.getTime() || orderTime > maxDate.getTime()) {
-                  return false;
-                }
-
-                return true;
-              });
+              const matchedItems = localizedHistoryItems;
 
               if (matchedItems.length === 0) {
                 return (
@@ -970,58 +990,7 @@ const parseDueTimestamp = (value: unknown): number => {
 
               return (
                 <div className="space-y-2">
-                  {matchedItems
-  .sort((a, b) => {
-    const aDelivered = !!a.state?.isDelivered;
-    const bDelivered = !!b.state?.isDelivered;
-
-    // Pending orders appear above delivered orders
-    if (!aDelivered && bDelivered) return -1;
-    if (aDelivered && !bDelivered) return 1;
-
-    const now = currentTime;
-
-    // Read the visible due date again first.
-    // This also repairs older records with incorrect timestamps.
-    const aDue =
-      parseDueTimestamp(a.state?.customerDue) ||
-      Number(a.state?.dueTimestamp) ||
-      Number(a.timestamp) ||
-      now;
-
-    const bDue =
-      parseDueTimestamp(b.state?.customerDue) ||
-      Number(b.state?.dueTimestamp) ||
-      Number(b.timestamp) ||
-      now;
-
-    if (!aDelivered) {
-      // Pending orders nearest to the current time appear first
-      const aDistance = Math.abs(aDue - now);
-      const bDistance = Math.abs(bDue - now);
-
-      if (aDistance !== bDistance) {
-        return aDistance - bDistance;
-      }
-
-      // If both are equally close, show the latest edited order first
-      return (
-        (Number(b.timestamp) || 0) -
-        (Number(a.timestamp) || 0)
-      );
-    }
-
-    // Delivered orders: latest due date first
-    if (aDue !== bDue) {
-      return bDue - aDue;
-    }
-
-    return (
-      (Number(b.timestamp) || 0) -
-      (Number(a.timestamp) || 0)
-    );
-  })
-  .map((item) => {
+                  {matchedItems.map((item) => {
                   const lastEditedDateObj = new Date(item.timestamp || Date.now());
                   const formattedLastEditedDate = lastEditedDateObj.toLocaleString(
                     appLanguage === 'ms' ? 'ms-MY' : 'en-US',
@@ -1136,38 +1105,27 @@ const parseDueTimestamp = (value: unknown): number => {
                             </p>
                           </div>
 
-                        <div className="flex items-center space-x-1 shrink-0 ml-1.5">
+                        <div className="flex items-center space-x-1.5 shrink-0 ml-1.5 cursor-default" onClick={(e) => e.stopPropagation()}>
                           <button
                             type="button"
                             onClick={(e) => {
                               e.preventDefault();
                               e.stopPropagation();
-                              pushView('customer-info', {
-                                ...item.state,
-                                spreadsheetId: item.state?.spreadsheetId || state.spreadsheetId,
-                                timestamp: item.timestamp,
-                                historyId: item.id
+                              setConfirmAction({
+                                title: appLanguage === 'ms' ? 'Padam Rekod?' : 'Delete Record?',
+                                message: appLanguage === 'ms' 
+                                  ? 'Adakah anda pasti mahu memadam rekod ini?' 
+                                  : 'Are you sure you want to delete this record?',
+                                onConfirm: () => {
+                                  deleteOrderFromHistory(item.id);
+                                  setConfirmAction(null);
+                                }
                               });
                             }}
-                            className="w-7 h-7 bg-green-100 text-green-600 rounded-full flex items-center justify-center hover:bg-green-200 hover:text-green-700 hover:scale-[1.05] active:scale-95 transition-all shadow-xs duration-200"
-                            title={appLanguage === 'ms' ? 'Kemaskini data & hantar ke Google Sheet' : 'Edit details & sync to Google Sheets'}
-                          >
-                            <Save className="w-3 h-3" />
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              if (window.confirm(appLanguage === 'ms' ? 'Adakah anda pasti mahu pemadam rekod ini?' : 'Are you sure you want to delete this record?')) {
-                                deleteOrderFromHistory(item.id);
-                              }
-                            }}
-                            className="w-7 h-7 bg-red-100 text-red-500 rounded-full flex items-center justify-center hover:bg-red-200 hover:text-red-700 hover:scale-[1.05] active:scale-95 transition-all shadow-xs duration-200"
+                            className="relative z-20 w-8 h-8 pointer-events-auto bg-red-100/90 text-red-500 rounded-full flex items-center justify-center hover:bg-red-500 hover:text-white hover:scale-110 active:scale-90 transition-all shadow-xs duration-200"
                             title={appLanguage === 'ms' ? 'Padam' : 'Delete'}
                           >
-                            <Trash2 className="w-3 h-3" />
+                            <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         </div>
                       </div>
@@ -1451,7 +1409,16 @@ const parseDueTimestamp = (value: unknown): number => {
                             <button
                               type="button"
                               onClick={() => {
-                                setAnnualSheets(prev => prev.filter((_, idx) => idx !== index));
+                                setConfirmAction({
+                                  title: appLanguage === 'ms' ? 'Padam Konfigurasi?' : 'Delete Configuration?',
+                                  message: appLanguage === 'ms' 
+                                    ? `Anda pasti mahu memadam konfigurasi tahun ${sheet.year}?` 
+                                    : `Are you sure you want to delete year ${sheet.year} configuration?`,
+                                  onConfirm: () => {
+                                    setAnnualSheets(prev => prev.filter((_, idx) => idx !== index));
+                                    setConfirmAction(null);
+                                  }
+                                });
                               }}
                               className="p-1 hover:bg-red-50 text-red-500 rounded transition-colors"
                               title={appLanguage === 'ms' ? 'Hapus' : 'Delete'}
@@ -1517,11 +1484,12 @@ const parseDueTimestamp = (value: unknown): number => {
                         };
                         updateOrderHistoryState({ spreadsheetId: extractId(firstActive.spreadsheetId) });
                       }
-                      alert(
-                        appLanguage === 'ms' 
+                      setAlertMsg({
+                        type: 'success',
+                        message: appLanguage === 'ms' 
                           ? 'Konfigurasi pautan database tahunan berjaya disimpan!' 
                           : 'Annual database configurations successfully saved!'
-                      );
+                      });
                       setShowDbSettings(false);
                     }}
                     className="w-full h-10 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl flex items-center justify-center space-x-1 text-xs active:scale-95 transition-all shadow-sm"
@@ -1578,203 +1546,189 @@ const parseDueTimestamp = (value: unknown): number => {
                     <div
                       key={orderId + '-' + idx}
                       onClick={() => handleLoadRemoteOrder(item)}
-                      className={`bg-surface border ${
+                      className={`bg-surface border relative overflow-hidden ${
                         isDelivered
-                          ? 'border-blue-200 bg-blue-50/10 hover:border-blue-300'
-                          : 'border-gray-100 hover:border-gray-200 shadow-sm'
-                      } rounded-[16px] p-2.5 flex flex-col space-y-1 hover:bg-gray-50/80 cursor-pointer active:scale-[0.99] transition-all duration-200`}
+                          ? 'border-blue-100 bg-blue-50/5 hover:border-blue-200'
+                          : 'border-gray-200/60 hover:border-gray-300 shadow-sm'
+                      } rounded-xl p-2.5 flex flex-col space-y-1 hover:bg-gray-50/65 cursor-pointer active:scale-[0.995] transition-all duration-200`}
                     >
-                      <div className="flex justify-between items-start border-b border-gray-100 pb-1.5">
-                        <div className="flex-1">
-                          <div className="flex items-center flex-wrap gap-1 mb-1">
-                            <span className="text-[9px] font-black uppercase tracking-widest text-[#2563eb] bg-[#eff6ff] px-1.5 py-0.5 rounded flex items-center space-x-1">
-                              <Database className="w-2.5 h-2.5 mr-0.5" />
-                              <span>{item.sheetName || 'Google Sheet'}</span>
-                            </span>
-                            {isDelivered ? (
-                              <span className="text-[9px] font-black uppercase tracking-widest text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded flex items-center">
-                                <Check className="w-2.5 h-2.5 mr-0.5" />
-                                <span>{appLanguage === 'ms' ? 'Dihantar' : 'Delivered'}</span>
-                              </span>
-                            ) : (
-                              <span className="text-[9px] font-black uppercase tracking-widest text-orange-600 bg-orange-50 px-1.5 py-0.5 rounded">
-                                {appLanguage === 'ms' ? 'Belum Dihantar' : 'Pending'}
-                              </span>
-                            )}
-                          </div>
+                      {/* Left Accent Bar */}
+                      <div className={`absolute left-0 top-0 bottom-0 w-1 rounded-r ${isDelivered ? 'bg-blue-400' : 'bg-gray-300'}`} />
 
-                          <p className="font-bold text-[13px] leading-tight text-text">
-                            {item.order === 'Lain-lain' || item.order === 'Lain2'
-                              ? item.order
-                              : item.order}
-                            {item.name ? ` - ${formatCustomerName(item.name)}` : ''}
-                          </p>
-                        </div>
-
-                        <div className="flex items-center space-x-1 shrink-0 ml-2">
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              handleLoadRemoteOrder(item);
-                            }}
-                            className="w-7 h-7 bg-green-100 text-green-600 rounded-full flex items-center justify-center hover:bg-green-200 hover:text-green-700 hover:scale-[1.10] active:scale-90 transition-all shadow-sm duration-200"
-                            title={appLanguage === 'ms' ? 'Kemaskini data & hantar ke Google Sheet' : 'Edit details & sync to Google Sheets'}
-                          >
-                            <Save className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </div>
-
-                      <div className="flex flex-wrap gap-x-2 text-[11px] leading-snug">
-                        {item.phone && (
-                          <div className="w-full flex items-center space-x-1.5 mt-0.5">
-                            <span className="text-subtext">Tel:</span>{' '}
-                            <a
-                              href={`https://wa.me/${String(item.phone).replace(/\D/g, '').startsWith('0') ? '6' + String(item.phone).replace(/\D/g, '') : String(item.phone).replace(/\D/g, '')}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              onClick={(e) => e.stopPropagation()}
-                              className="font-semibold text-blue-600 hover:underline hover:text-blue-700 bg-blue-50/70 px-2 py-0.5 rounded flex items-center space-x-1 inline-flex text-[11px]"
-                              title={appLanguage === 'ms' ? 'Hubungi di WhatsApp' : 'Contact on WhatsApp'}
-                            >
-                              <Phone className="w-3 h-3 text-blue-500 shrink-0" />
-                              <span className="select-all font-mono">
-                              {formatDisplayPhone(item.phone)}
-                            </span>
-                            </a>
-                          </div>
-                        )}
-                        
-                        {item.orderId && (
-                          <div className="w-full">
-                            <span className="text-subtext">Order ID:</span>{' '}
-                            <span className="font-mono text-[10px] text-text/80 select-all font-semibold bg-gray-55 px-1 rounded">{item.orderId}</span>
-                          </div>
-                        )}
-
-                        {item.template && (
-                          <div>
-                            <span className="text-subtext">{appLanguage === 'ms' ? 'Templat: ' : 'Template: '}</span>{' '}
-                            <span className="font-medium text-text">{item.template}</span>
-                          </div>
-                        )}
-
-                        {item.bahasa && (
-                          <div>
-                            <span className="text-subtext">{appLanguage === 'ms' ? 'Bahasa: ' : 'Language: '}</span>{' '}
-                            <span className="font-medium text-text">{item.bahasa}</span>
-                          </div>
-                        )}
-
-                        {item.jenis && (() => {
-                          const val = String(item.jenis).toLowerCase();
-                          let badgeStyle = "bg-noturgent/10 text-noturgent border border-noturgent/20";
-                          if (val.includes('super')) {
-                            badgeStyle = "bg-super/10 text-super border border-super/20";
-                          } else if (val.includes('semi')) {
-                            badgeStyle = "bg-semi/10 text-semi border border-semi/20";
-                          } else if (val.includes('urgent')) {
-                            badgeStyle = "bg-urgent/10 text-urgent border border-urgent/20";
-                          }
-                          return (
-                            <div className="flex items-center gap-1">
-                              <span className="text-subtext">Urgency:</span>
-                              <span className={`px-2 py-0.5 rounded-md text-[10.5px] font-black tracking-wide ${badgeStyle}`}>
-                                {item.jenis}
-                              </span>
-                            </div>
-                          );
-                        })()}
-
-                        {item.addon && (
-                          <div className="w-full">
-                            <span className="text-subtext">{appLanguage === 'ms' ? 'Tambahan: ' : 'Add On: '}</span>{' '}
-                            <span className="font-medium text-text">{item.addon}</span>
-                          </div>
-                        )}
-
-                        {item.due && (
-                          <div className="w-full flex items-center space-x-1 text-primary">
-                            <Calendar className="w-3 h-3 mr-1" />
-                            <span className="text-[12px] font-bold">{item.due}</span>
-                          </div>
-                        )}
-
-                        {item.link && (
-                          <div className="w-full pt-1">
-                            <span className="text-subtext">Link:</span>{' '}
-                            <div className="flex flex-col gap-1">
-                              {item.link
-                                .split(/[\n,]+/)
-                                .filter(Boolean)
-                                .map((lnk: string, lIdx: number) => (
-                                  <a
-                                    key={lIdx}
-                                    href={lnk.trim()}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="text-blue-500 hover:underline font-medium truncate inline-block max-w-[200px] sm:max-w-[300px]"
-                                    onClick={(e) => e.stopPropagation()}
-                                    title={lnk.trim()}
-                                  >
-                                    {lnk.trim()}
-                                  </a>
-                                ))}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="w-full pt-2 mt-1 border-t border-gray-100 flex items-center justify-between">
-                        <button
-                          type="button"
-                          onClick={(e) => handleRemoteDeliveredToggle(e, idx, item)}
-                          className={`px-3 py-1.5 text-[11px] font-bold rounded-lg flex items-center hover:scale-[1.02] active:scale-95 transition-all duration-200 shadow-sm ${
-                            isDelivered
-                              ? 'bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-100 hover:border-blue-300'
-                              : 'bg-white text-gray-500 border border-gray-200 hover:bg-gray-50 hover:text-gray-700 hover:border-gray-300'
-                          }`}
-                        >
-                          <Check
-                            className={`w-3.5 h-3.5 mr-1.5 ${
-                              isDelivered ? 'text-blue-500' : 'text-gray-400'
-                            }`}
-                          />
-                          {appLanguage === 'ms'
-                            ? isDelivered
-                              ? 'Dihantar'
-                              : 'Belum Dihantar'
-                            : isDelivered
-                            ? 'Delivered'
-                            : 'Not Delivered'}
-                        </button>
-                      </div>
-
-                      {item.syncStatus && (
-                        <div className="w-full pt-2 mt-1.5 border-t border-dashed border-gray-100/80 flex items-start justify-between bg-gray-50/50 -mx-2.5 -mb-2.5 px-3 py-2 rounded-b-xl">
-                          <div className="text-[9.5px] flex items-center">
-                            {item.syncStatus === 'syncing' && <span className="text-blue-500 font-semibold animate-pulse flex items-center"><RefreshCcw className="w-2.5 h-2.5 mr-1 animate-spin" /> Syncing…</span>}
-                            {item.syncStatus === 'synced' && <span className="text-emerald-600 font-bold flex items-center"><Check className="w-2.5 h-2.5 mr-1"/> Synced</span>}
-                            {item.syncStatus === 'failed' && (
-                              <button 
-                                type="button"
-                                className="text-red-600 font-bold hover:underline flex items-center active:scale-95 transition-transform"
-                                onClick={(e) => handleRemoteDeliveredToggle(e, idx, item)}
+                      <div className="pl-1.5">
+                        <div className="flex justify-between items-start border-b border-gray-100/60 pb-1">
+                          <div className="flex-1">
+                            <div className="flex flex-wrap items-center gap-1 mb-0.5">
+                              <div
+                                className={`flex items-center ${
+                                  isDelivered
+                                    ? 'text-blue-500 font-bold'
+                                    : 'text-primary/75 font-semibold'
+                                } text-[10px] sm:text-[10.5px] uppercase tracking-wider`}
                               >
-                                <AlertCircle className="w-2.5 h-2.5 mr-1" /> Sync failed — tap to retry
-                              </button>
-                            )}
+                                {isDelivered ? (
+                                  <Check className="w-3 h-3 mr-1 text-blue-500" />
+                                ) : (
+                                  <Calendar className="w-3 h-3 mr-1" />
+                                )}
+                                {item.due || (appLanguage === 'ms' ? 'Tiada Tarikh' : 'No Date')}
+
+                                {isDelivered && (
+                                  <span className="ml-1 text-blue-500 lowercase">
+                                    ({appLanguage === 'ms' ? 'Dihantar' : 'Delivered'})
+                                  </span>
+                                )}
+                              </div>
+                              <span className="px-2 py-0.5 rounded-full text-[9px] font-black tracking-wider bg-purple-100 text-purple-700">
+                                <Database className="w-2.5 h-2.5 inline mr-0.5" />
+                                {item.sheetName || 'Google Sheet'}
+                              </span>
+                            </div>
+
+                            <p className="font-bold text-[13px] sm:text-[13.5px] leading-tight text-[#111827]">
+                              {item.order === 'Lain-lain' || item.order === 'Lain2'
+                                ? item.order
+                                : item.order}
+                              {item.name ? ` - ${formatCustomerName(item.name)}` : ''}
+                            </p>
                           </div>
-                          {(item.syncLastSuccess || item.syncFailCount) && (
-                            <div className="text-[8.5px] text-gray-400 text-right leading-tight">
-                              {item.syncLastSuccess && <div>Last sync: <span className="font-medium text-gray-500">{new Date(item.syncLastSuccess).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></div>}
-                              {!!item.syncFailCount && item.syncFailCount > 0 && <div className="text-red-400 font-medium mt-0.5">Failed attempts: {item.syncFailCount}</div>}
+                        </div>
+
+                        <div className="flex flex-wrap gap-x-2.5 gap-y-0.5 text-[11px] mt-1 leading-normal">
+                          {item.template && (
+                            <div>
+                              <span className="text-subtext">T: </span>
+                              <span className="font-medium text-[#374151]">{item.template}</span>
+                            </div>
+                          )}
+
+                          {item.bahasa && (
+                            <div>
+                              <span className="text-subtext">B: </span>
+                              <span className="font-medium text-[#374151]">{item.bahasa}</span>
+                            </div>
+                          )}
+
+                          {item.jenis && (() => {
+                            const val = String(item.jenis).toLowerCase();
+                            let bColor = "text-gray-500";
+                            if (val.includes('super')) bColor = "text-super font-bold";
+                            else if (val.includes('semi')) bColor = "text-semi font-bold";
+                            else if (val.includes('urgent')) bColor = "text-urgent font-bold";
+                            
+                            return (
+                              <div className={bColor}>
+                                {item.jenis}
+                              </div>
+                            );
+                          })()}
+                        </div>
+
+                        <div className="flex flex-col gap-0.5 mt-1 text-[11.5px] text-subtext leading-snug">
+                          {item.addon && (
+                            <div className="truncate">
+                              <span className="font-semibold text-gray-500">{(appLanguage === 'ms' ? 'Tambahan: ' : 'Add On: ')}</span>
+                              <span className="text-gray-700 font-medium">{item.addon}</span>
+                            </div>
+                          )}
+                          
+                          {item.phone && (
+                            <div className="flex items-center space-x-1.5 mt-0.5">
+                              <span className="font-semibold text-gray-500">{appLanguage === 'ms' ? 'Tel:' : 'Phone:'}</span>
+                              <a
+                                href={`https://wa.me/${String(item.phone).replace(/\D/g, '').startsWith('0') ? '6' + String(item.phone).replace(/\D/g, '') : String(item.phone).replace(/\D/g, '')}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="font-semibold text-blue-600 hover:underline hover:text-blue-700 bg-blue-50/50 px-1.5 py-0 rounded flex items-center space-x-1 inline-flex text-[10px]"
+                                title={appLanguage === 'ms' ? 'Hubungi di WhatsApp' : 'Contact on WhatsApp'}
+                              >
+                                <Phone className="w-2.5 h-2.5 text-blue-500 shrink-0" />
+                                <span className="select-all font-mono">
+                                  {formatDisplayPhone(item.phone)}
+                                </span>
+                              </a>
+                            </div>
+                          )}
+
+                          {item.orderId && (
+                            <div className="mt-0.5"><span className="font-semibold text-gray-500">ID:</span> <span className="font-mono text-[10.5px] font-semibold text-text/80 bg-gray-55 px-1 rounded">{item.orderId}</span></div>
+                          )}
+
+                          {item.link && (
+                            <div className="w-full pt-1">
+                              <span className="font-semibold text-gray-500">Link:</span>{' '}
+                              <div className="flex flex-col gap-0.5">
+                                {item.link
+                                  .split(/[\n,]+/)
+                                  .filter(Boolean)
+                                  .map((lnk: string, lIdx: number) => (
+                                    <a
+                                      key={lIdx}
+                                      href={lnk.trim()}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="text-blue-500 hover:underline font-medium truncate inline-block max-w-[200px] sm:max-w-[300px] text-[10.5px]"
+                                      onClick={(e) => e.stopPropagation()}
+                                      title={lnk.trim()}
+                                    >
+                                      {lnk.trim()}
+                                    </a>
+                                  ))}
+                              </div>
                             </div>
                           )}
                         </div>
-                      )}
+
+                        <div className="w-full pt-1.5 mt-1 border-t border-gray-100/65 flex items-center justify-between">
+                          <button
+                            type="button"
+                            onClick={(e) => handleRemoteDeliveredToggle(e, idx, item)}
+                            className={`px-2 py-1 text-[10px] font-bold rounded-md flex items-center hover:scale-[1.02] active:scale-95 transition-all duration-200 shadow-xs ${
+                              isDelivered
+                                ? 'bg-blue-50 text-blue-600 border border-blue-200/60 hover:bg-blue-100'
+                                : 'bg-white text-gray-400 border border-gray-150 hover:bg-gray-50 hover:text-gray-600'
+                            }`}
+                          >
+                            <Check
+                              className={`w-3 h-3 mr-1 ${
+                                isDelivered ? 'text-blue-500' : 'text-gray-400'
+                              }`}
+                            />
+                            {appLanguage === 'ms'
+                              ? isDelivered
+                                ? 'Dihantar'
+                                : 'Belum Dihantar'
+                              : isDelivered
+                              ? 'Delivered'
+                              : 'Not Delivered'}
+                          </button>
+                        </div>
+
+                        {item.syncStatus && (
+                          <div className="w-full pt-2 mt-1.5 border-t border-dashed border-gray-100/80 flex items-start justify-between bg-gray-50/50 -mx-3 -mb-3 px-3 py-2 rounded-b-xl">
+                            <div className="text-[9.5px] flex items-center">
+                              {item.syncStatus === 'syncing' && <span className="text-blue-500 font-semibold animate-pulse flex items-center"><RefreshCcw className="w-2.5 h-2.5 mr-1 animate-spin" /> Syncing…</span>}
+                              {item.syncStatus === 'synced' && <span className="text-emerald-600 font-bold flex items-center"><Check className="w-2.5 h-2.5 mr-1"/> Synced</span>}
+                              {item.syncStatus === 'failed' && (
+                                <button 
+                                  type="button"
+                                  className="text-red-600 font-bold hover:underline flex items-center active:scale-95 transition-transform"
+                                  onClick={(e) => handleRemoteDeliveredToggle(e, idx, item)}
+                                >
+                                  <AlertCircle className="w-2.5 h-2.5 mr-1" /> Sync failed — tap to retry
+                                </button>
+                              )}
+                            </div>
+                            {(item.syncLastSuccess || item.syncFailCount) && (
+                              <div className="text-[8.5px] text-gray-400 text-right leading-tight">
+                                {item.syncLastSuccess && <div>Last sync: <span className="font-medium text-gray-500">{new Date(item.syncLastSuccess).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></div>}
+                                {!!item.syncFailCount && item.syncFailCount > 0 && <div className="text-red-400 font-medium mt-0.5">Failed attempts: {item.syncFailCount}</div>}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   );
                 })}
@@ -1795,11 +1749,11 @@ const parseDueTimestamp = (value: unknown): number => {
         )}
       </div>
 
-      {showConfirm && (
+      {confirmAction && createPortal(
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
           <div
             className="absolute inset-0 bg-black/40 backdrop-blur-sm"
-            onClick={() => setShowConfirm(false)}
+            onClick={() => setConfirmAction(null)}
           />
 
           <div className="relative bg-white rounded-[24px] p-6 w-full max-w-[320px] shadow-2xl animate-fade-in-up">
@@ -1809,19 +1763,17 @@ const parseDueTimestamp = (value: unknown): number => {
               </div>
 
               <h3 className="text-[18px] font-bold text-text">
-                {appLanguage === 'ms' ? 'Padam Semua Sejarah?' : 'Delete All History?'}
+                {confirmAction.title || (appLanguage === 'ms' ? 'Pasti?' : 'Are you sure?')}
               </h3>
 
               <p className="text-[14px] text-subtext pb-4">
-                {appLanguage === 'ms'
-                  ? 'Tindakan ini tidak boleh diundurkan. Semua rekod tempahan akan dipadam.'
-                  : 'This action cannot be undone. All order records will be deleted.'}
+                {confirmAction.message}
               </p>
 
               <div className="flex w-full space-x-3">
                 <button
                   type="button"
-                  onClick={() => setShowConfirm(false)}
+                  onClick={() => setConfirmAction(null)}
                   className="flex-1 py-3 px-4 rounded-full font-bold text-[14px] text-text bg-gray-100 hover:bg-gray-200 active:scale-95 transition-all"
                 >
                   {appLanguage === 'ms' ? 'Batal' : 'Cancel'}
@@ -1829,7 +1781,7 @@ const parseDueTimestamp = (value: unknown): number => {
 
                 <button
                   type="button"
-                  onClick={handleClearConfirm}
+                  onClick={confirmAction.onConfirm}
                   className="flex-1 py-3 px-4 rounded-full font-bold text-[14px] text-white bg-red-500 hover:bg-red-600 active:scale-95 transition-all"
                 >
                   {appLanguage === 'ms' ? 'Padam' : 'Delete'}
@@ -1837,7 +1789,44 @@ const parseDueTimestamp = (value: unknown): number => {
               </div>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
+      )}
+
+      {alertMsg && createPortal(
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+            onClick={() => setAlertMsg(null)}
+          />
+          <div className="relative bg-white rounded-[24px] p-6 w-full max-w-[320px] shadow-2xl animate-fade-in-up">
+            <div className="flex flex-col items-center text-center space-y-4">
+              <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-2 ${
+                alertMsg.type === 'error' ? 'bg-red-100 text-red-500' :
+                alertMsg.type === 'success' ? 'bg-green-100 text-green-500' :
+                'bg-blue-100 text-blue-500'
+              }`}>
+                {alertMsg.type === 'success' ? <Check className="w-6 h-6" /> : <AlertCircle className="w-6 h-6" />}
+              </div>
+              {alertMsg.title && (
+                <h3 className="text-[18px] font-bold text-text">
+                  {alertMsg.title}
+                </h3>
+              )}
+              <p className="text-[14px] text-subtext pb-4">
+                {alertMsg.message}
+              </p>
+              <button
+                type="button"
+                onClick={() => setAlertMsg(null)}
+                className="w-full py-3 px-4 rounded-full font-bold text-[14px] text-white bg-blue-600 hover:bg-blue-700 active:scale-95 transition-all"
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
       )}
     </div>
   );

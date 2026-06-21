@@ -7,6 +7,7 @@ const auth = getAuth(app);
 
 const provider = new GoogleAuthProvider();
 provider.addScope('https://www.googleapis.com/auth/spreadsheets');
+provider.addScope('https://www.googleapis.com/auth/contacts');
 
 let isSigningIn = false;
 

@@ -1,10 +1,23 @@
-import React, { useState, useEffect } from 'react';
-import { RefreshCcw, Save, Check } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { RefreshCcw, Save, Check, FileText, ExternalLink, LogOut, Loader2 } from 'lucide-react';
 import { useAppContext } from '../AppContext';
-import { calculateDeadline, formatPhoneUniversal } from '../utils';
+import { calculateDeadline, formatPhoneUniversal, parseDateStringToTimestamp } from '../utils';
 import { Toast } from '../components/Toast';
 import { SetupHelper } from '../components/SetupHelper';
+import { googleSignIn, initAuth, getAccessToken, logout } from '../utils/googleAuth';
+import { User } from 'firebase/auth';
 import { cn } from '../cn';
+
+const TEMPLATE_SOURCES = {
+  agreement: {
+    docUrl: "https://docs.google.com/document/d/1Twi6iHoypMyWrpey9zC2GXUUOXBRZ8Op/edit",
+    mode: "strict"
+  },
+  letter: {
+    docUrl: "https://docs.google.com/document/d/135jL7gApNbIPMbnKs2bw1gdj53dFyg5i9fLTHb2yxP0/edit",
+    mode: "flexible"
+  }
+};
 
 function generateOrderId() {
   const now = new Date();
@@ -16,7 +29,7 @@ export function CustomerInfoView() {
   const { appLanguage, state, setState, goHome, viewStack, updateOrderHistoryState, addToOfflineQueue } = useAppContext();
   const isActive = viewStack[viewStack.length - 1] === 'customer-info';
 
-  const computeInitialValues = () => {
+  const computeInitialValues = useCallback(() => {
     let initOrder = '';
     if (state.mainType === 'Resume') {
       initOrder = state.isEditMode ? 'Edit Resume' : 'Resume';
@@ -132,23 +145,11 @@ export function CustomerInfoView() {
       initTemplate: state.customerTemplate || initTemplate, 
       initAddOn: state.customerAddOn || initAddOn,
       initAddOnDropdown,
-      initInfo: state.customerInfo || [
-        `--- ${appLanguage === 'ms' ? 'MAKLUMAT PELANGGAN' : 'CUSTOMER INFORMATION'} ---`,
-        `${appLanguage === 'ms' ? 'Nama Penuh' : 'Full Name'}: ${state.customerName || ''}`,
-        `${appLanguage === 'ms' ? 'No. Telefon' : 'Phone Number'}: ${state.customerPhone || ''}`,
-        `Order: ${state.customerOrder || initOrder || ''}`,
-        `Template: ${state.customerTemplate || initTemplate || ''}`,
-        `${appLanguage === 'ms' ? 'Bahasa' : 'Language'}: ${state.customerBahasa || initBahasa || ''}`,
-        `${appLanguage === 'ms' ? 'Add On' : 'Add On'}: ${state.customerAddOn || initAddOn || ''}`,
-        `Jenis: ${state.customerJenis || initJenis || ''}`,
-        `Due: ${state.customerDue || `${formattedDate} at ${formattedTime}`}`,
-        `Link: ${state.orderLink || state.googleSheetLink || ''}`,
-        `Order ID: ${initOrderId}`
-      ].join('\n'),
+      initInfo: state.customerInfo || '',
       initLink: state.orderLink || '',
       initOrderId,
     };
-  };
+  }, [state]);
 
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
@@ -173,6 +174,171 @@ export function CustomerInfoView() {
   const [toastMsg, setToastMsg] = useState('');
   const [showToast, setShowToast] = useState(false);
   const [showSetup, setShowSetup] = useState(false);
+  
+  // Google Docs Integration
+  const [googleUser, setGoogleUser] = useState<User | null>(null);
+  const [isGeneratingDoc, setIsGeneratingDoc] = useState(false);
+
+  useEffect(() => {
+    const unsubscribe = initAuth(
+      (u) => setGoogleUser(u),
+      () => setGoogleUser(null)
+    );
+    return () => unsubscribe();
+  }, []);
+
+  const handleGenerateDoc = async () => {
+    let token = await getAccessToken();
+    if (!googleUser || !token) {
+      try {
+        const authRes = await googleSignIn();
+        if (!authRes) return;
+        setGoogleUser(authRes.user);
+        token = authRes.accessToken;
+      } catch (err) {
+        showToastMessage("Ralat melog masuk ke Google");
+        return;
+      }
+    }
+
+    setIsGeneratingDoc(true);
+
+    try {
+      if (!token) throw new Error("Sila log masuk ke Google Drive/Docs dahulu.");
+
+      const fetchDocContent = async (docUrl: string): Promise<string> => {
+        const match = docUrl.match(/\/d\/(.+?)(?:\/|$)/);
+        if (!match) throw new Error("Templat link format tidak sah: " + docUrl);
+        const templateId = match[1];
+
+        const templateRes = await fetch(`https://docs.googleapis.com/v1/documents/${templateId}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (!templateRes.ok) {
+          throw new Error("Gagal membaca templat dokumen. Sila pastikan templat boleh diakses (shared).");
+        }
+        const templateDoc = await templateRes.json();
+        
+        let extractedText = "";
+        if (templateDoc.body && templateDoc.body.content) {
+          templateDoc.body.content.forEach((el: any) => {
+            if (el.paragraph && el.paragraph.elements) {
+              el.paragraph.elements.forEach((elem: any) => {
+                if (elem.textRun && elem.textRun.content) {
+                  extractedText += elem.textRun.content;
+                }
+              });
+            }
+          });
+        }
+        return extractedText;
+      };
+
+      let templateContent = "";
+      let mode = "letter";
+
+      if (order === "Surat") {
+        const letterTemplate = await fetchDocContent(TEMPLATE_SOURCES.letter.docUrl);
+        templateContent = letterTemplate || "";
+        mode = "letter";
+      } else if (order === "Agreement" || (template && template.includes("PERJANJIAN"))) {
+        const agreementTemplateSection = await fetchDocContent(TEMPLATE_SOURCES.agreement.docUrl);
+        templateContent = agreementTemplateSection || "";
+        mode = "agreement";
+      }
+
+      // Use backend generation (Gemini) - fetch template client-side first if needed, 
+      // but simpler: backend generates, then we create locally
+      const promptData = {
+        name, phone, order, template, bahasa, addOn, jenis, due, orderId, info
+      };
+      
+      const genRes = await fetch("/api/generate-letter", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          customerDetails: promptData,
+          templateContent,
+          documentMode: mode,
+          language: bahasa
+        })
+      });
+
+      if (!genRes.ok) {
+        const errText = await genRes.text();
+        throw new Error(`Gagal menjana teks dengan AI: ${errText}`);
+      }
+      const { text } = await genRes.json();
+      
+      // Create new doc
+      const createRes = await fetch('https://docs.googleapis.com/v1/documents', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: `${order || 'Surat'} - ${name || orderId}` })
+      });
+      if (!createRes.ok) throw new Error("Gagal membuat fail dokumen");
+      const docData = await createRes.json();
+      const documentId = docData.documentId;
+
+      // Insert text and apply formatting (Cambria font, 1.15 line spacing)
+      await fetch(`https://docs.googleapis.com/v1/documents/${documentId}:batchUpdate`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requests: [
+            {
+              insertText: {
+                location: { index: 1 },
+                text: text
+              }
+            },
+            {
+              updateTextStyle: {
+                textStyle: {
+                  weightedFontFamily: {
+                    fontFamily: "Cambria"
+                  }
+                },
+                fields: "weightedFontFamily",
+                range: {
+                  startIndex: 1,
+                  endIndex: 1 + text.length
+                }
+              }
+            },
+            {
+              updateParagraphStyle: {
+                paragraphStyle: {
+                  lineSpacing: 115
+                },
+                fields: "lineSpacing",
+                range: {
+                  startIndex: 1,
+                  endIndex: 1 + text.length
+                }
+              }
+            }
+          ]
+        })
+      });
+
+      // Update permissions
+      await fetch(`https://www.googleapis.com/drive/v3/files/${documentId}/permissions`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'anyone', role: 'writer' })
+      });
+
+      const newLink = `https://docs.google.com/document/d/${documentId}/edit`;
+      setLink(newLink);
+      showToastMessage(appLanguage === 'ms' ? "Surat berjaya dicipta!" : "Letter generated!");
+    } catch (e: any) {
+      console.error(e);
+      showToastMessage(e.message || (appLanguage === 'ms' ? "Gagal mencipta surat." : "Failed to generate letter."));
+    } finally {
+      setIsGeneratingDoc(false);
+    }
+  };
 
   const showToastMessage = (msg: string) => {
     setToastMsg(msg);
@@ -217,66 +383,10 @@ export function CustomerInfoView() {
       return;
     }
 
-    // Parse the edited "due" text field to dueTimestamp so card/history display is perfectly synchronized
-    let parsedTimestamp = dueTimestamp;
-    if (due && due.trim().length > 0) {
-      const dueStrClean = due.replace(/\s+at\s+/i, ' ').trim();
-      const directDate = new Date(dueStrClean);
-      if (!isNaN(directDate.getTime())) {
-        parsedTimestamp = directDate.getTime();
-      } else {
-        // Attempt custom DD/MM/YYYY parses with optional time
-        const parts = dueStrClean.split(/\s+/);
-        const datePart = parts[0];
-        const timePart = parts[1] || '00:00';
-
-        const dateSegs = datePart.split('/');
-        if (dateSegs.length === 3) {
-          const day = parseInt(dateSegs[0], 10);
-          const month = parseInt(dateSegs[1], 10) - 1;
-          const year = parseInt(dateSegs[2], 10);
-
-          const timeSegs = timePart.split(':');
-          let hours = parseInt(timeSegs[0] || '0', 10);
-          const minutes = parseInt(timeSegs[1] || '0', 10);
-          const seconds = parseInt(timeSegs[2] || '0', 10);
-
-          const isPM = dueStrClean.toUpperCase().includes('PM');
-          const isAM = dueStrClean.toUpperCase().includes('AM');
-          if (isPM && hours < 12) {
-            hours += 12;
-          } else if (isAM && hours === 12) {
-            hours = 0;
-          }
-
-          const parsedDME = new Date(year, month, day, hours, minutes, seconds);
-          if (!isNaN(parsedDME.getTime())) {
-            parsedTimestamp = parsedDME.getTime();
-          }
-        }
-      }
-    }
-    
-    // Determine monthly target sheet name on frontend to submit
-    let targetDate = new Date();
-    if (due && due.trim().length > 0) {
-      // Simple heuristic: try to parse the due string to a Date
-      // Since due might be "15/06/2026 at 10:00" or similar
-      const dueStr = due.replace(' at ', ' ');
-      const parsedDue = new Date(dueStr);
-      if (!isNaN(parsedDue.getTime())) {
-        targetDate = parsedDue;
-      } else {
-        // Attempt DD/MM/YYYY
-        const parts = due.split(' ')[0].split('/');
-        if (parts.length === 3) {
-          const parsedDME = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
-          if (!isNaN(parsedDME.getTime())) {
-            targetDate = parsedDME;
-          }
-        }
-      }
-    }
+    // Parse the edited "due" text field to dueTimestamp and native Date object using optimized helper helper
+    const parsedObj = parseDateStringToTimestamp(due, dueTimestamp);
+    const parsedTimestamp = parsedObj.timestamp;
+    const targetDate = parsedObj.date;
 
     const orderYear = String(targetDate.getFullYear());
     let resolvedSpreadsheetId = spreadsheetId || state.spreadsheetId || '1kUAJYUVhr9bPYErtpnohpvuGGyhBSvJyEOIyzEFivJo';
@@ -704,13 +814,34 @@ setInfo(updatedInfo);
 
         <div className="space-y-1">
           <label className="text-[11px] font-black text-gray-400 ml-1 uppercase tracking-widest">Link</label>
-          <input 
-            type="text" 
-            value={link}
-            onChange={(e) => setLink(e.target.value)}
-            placeholder="https://..."
-            className="w-full h-[46px] bg-surface rounded-[12px] px-4 font-bold text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all text-sm" 
-          />
+          <div className="flex gap-2">
+            <input 
+              type="text" 
+              value={link}
+              onChange={(e) => setLink(e.target.value)}
+              placeholder="https://..."
+              className="flex-1 w-full h-[46px] bg-surface rounded-[12px] px-4 font-bold text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all text-[13px] sm:text-sm" 
+            />
+            {link && (
+              <a 
+                href={link} 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="h-[46px] px-3 bg-blue-50 text-blue-600 rounded-[12px] border border-blue-100/50 flex items-center justify-center font-bold text-[12px] hover:bg-blue-100 transition-colors"
+                title={appLanguage === 'ms' ? "Buka Link" : "Open Link"}
+              >
+                <ExternalLink className="w-4 h-4" />
+              </a>
+            )}
+            <button
+              onClick={handleGenerateDoc}
+              disabled={isGeneratingDoc}
+              className="h-[46px] px-3 bg-purple-50 text-purple-600 rounded-[12px] border border-purple-100/50 flex items-center justify-center font-bold text-[12px] hover:bg-purple-100 transition-colors disabled:opacity-50"
+              title={appLanguage === 'ms' ? "Jana Surat dengan Gemini" : "Generate Letter with Gemini"}
+            >
+              {isGeneratingDoc ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
+            </button>
+          </div>
         </div>
 
         <div className="space-y-1">

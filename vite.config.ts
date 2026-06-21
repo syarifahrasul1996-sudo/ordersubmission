@@ -23,23 +23,17 @@ export default defineConfig(() => {
       VitePWA({
         registerType: 'autoUpdate',
         devOptions: {
-          enabled: true
+          enabled: false
         },
         manifest: {
           name: 'Order App Applet',
           short_name: 'Applet',
           description: 'Offline capable applet',
           theme_color: '#ffffff',
-          icons: [
-            {
-              src: '/favicon.ico',
-              sizes: '64x64 32x32 24x24 16x16',
-              type: 'image/x-icon'
-            }
-          ]
+          icons: []
         },
         workbox: {
-          globPatterns: ['**/*.{js,css,html,ico,png,svg,json}'],
+          globPatterns: ['**/*.{js,css,html,json}'],
           runtimeCaching: [
             {
               urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,

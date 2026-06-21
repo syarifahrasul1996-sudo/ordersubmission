@@ -1,9 +1,9 @@
 {
-  "projectId": "remixed-project-id",
-  "appId": "remixed-app-id",
-  "apiKey": "remixed-api-key",
-  "authDomain": "remixed-auth-domain",
-  "storageBucket": "remixed-storage-bucket",
-  "messagingSenderId": "remixed-messaging-sender-id",
-  "measurementId": "remixed-measurement-id"
+  "projectId": "deft-verbena-smln4",
+  "appId": "1:364958105969:web:5e9bd689c8d9483eca76d0",
+  "apiKey": "AIzaSyAcRzAckfBYO0vRZnW4yEDqoJzgwclK1iQ",
+  "authDomain": "deft-verbena-smln4.firebaseapp.com",
+  "storageBucket": "deft-verbena-smln4.firebasestorage.app",
+  "messagingSenderId": "364958105969",
+  "measurementId": ""
 }

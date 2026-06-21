@@ -1,15 +1,30 @@
-import React, { useEffect, useRef } from 'react';
-import { Check, Copy } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { Check, Copy, AlertCircle } from 'lucide-react';
 import { useAppContext } from '../AppContext';
 
 export function OutputView({ onCopy }: { onCopy: (msg: string) => void }) {
   const { generatedMessages, state, reset, pushView, appLanguage } = useAppContext();
+  const [confirmAction, setConfirmAction] = useState<{ title?: string; message: string; onConfirm: () => void } | null>(null);
 
   useEffect(() => {
     if (generatedMessages.length > 0) {
       onCopy(generatedMessages[0]);
     }
   }, []);
+
+  const handleReset = () => {
+    setConfirmAction({
+      title: appLanguage === 'ms' ? 'Padam Data Semasa?' : 'Delete Current Data?',
+      message: appLanguage === 'ms' 
+        ? 'Adakah anda pasti mahu membuat tempahan baru? Data semasa akan dipadam jika tidak disimpan.' 
+        : 'Are you sure you want to create a new order? Current data will be deleted if not saved.',
+      onConfirm: () => {
+        reset();
+        setConfirmAction(null);
+      }
+    });
+  };
 
   return (
     <div className="flex flex-col p-4 sm:p-6 space-y-8 text-center pb-[calc(env(safe-area-inset-bottom)+4rem)]">
@@ -46,12 +61,51 @@ export function OutputView({ onCopy }: { onCopy: (msg: string) => void }) {
           {appLanguage === 'ms' ? 'Simpan Maklumat Pelanggan' : 'Save Customer Info'}
         </button>
         <button 
-          onClick={reset}
+          onClick={handleReset}
           className="w-full h-[64px] sm:h-20 bg-surface text-text font-black text-[15px] sm:text-[16px] rounded-[18px] border border-gray-100/80 active:scale-[0.98] md:hover:bg-gray-200 transition-all"
         >
           {appLanguage === 'ms' ? 'Buat Tempahan Baru' : 'Create New Order'}
         </button>
       </div>
+
+      {confirmAction && createPortal(
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+            onClick={() => setConfirmAction(null)}
+          />
+          <div className="relative bg-white rounded-[24px] p-6 w-full max-w-[320px] shadow-2xl animate-fade-in-up text-left">
+            <div className="flex flex-col items-center text-center space-y-4">
+              <div className="w-12 h-12 bg-red-50 rounded-full flex items-center justify-center text-red-500 mb-2">
+                <AlertCircle className="w-6 h-6" />
+              </div>
+              <h3 className="text-[18px] font-bold text-text">
+                {confirmAction.title || (appLanguage === 'ms' ? 'Pasti?' : 'Are you sure?')}
+              </h3>
+              <p className="text-[14px] text-subtext pb-4">
+                {confirmAction.message}
+              </p>
+              <div className="flex w-full space-x-3">
+                <button
+                  type="button"
+                  onClick={() => setConfirmAction(null)}
+                  className="flex-1 py-3 px-4 rounded-full font-bold text-[14px] text-text bg-gray-100 hover:bg-gray-200 active:scale-95 transition-all"
+                >
+                  {appLanguage === 'ms' ? 'Batal' : 'Cancel'}
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmAction.onConfirm}
+                  className="flex-1 py-3 px-4 rounded-full font-bold text-[14px] text-white bg-red-500 hover:bg-red-600 active:scale-95 transition-all"
+                >
+                  {appLanguage === 'ms' ? 'Teruskan' : 'Continue'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
     </div>
   );
 }
