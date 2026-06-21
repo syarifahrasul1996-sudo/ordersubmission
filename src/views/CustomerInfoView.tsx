@@ -317,12 +317,49 @@ export function CustomerInfoView() {
         resolvedSpreadsheetId = '1kUAJYUVhr9bPYErtpnohpvuGGyhBSvJyEOIyzEFivJo';
       }
     }
+// format phone first
+
+let formattedPhone = phone.trim();
+const digits = formattedPhone.replace(/\D/g, '');
+
+// Malaysian numbers already starting with 60
+if (digits.startsWith('60') && digits.length >= 11) {
+  formattedPhone =
+    digits.substring(0, 4) +
+    '-' +
+    digits.substring(4, 7) +
+    ' ' +
+    digits.substring(7);
+}
+// Malaysian numbers starting with 0
+else if (digits.startsWith('0') && digits.length >= 10) {
+  const normalized = '60' + digits.substring(1);
+
+  formattedPhone =
+    normalized.substring(0, 4) +
+    '-' +
+    normalized.substring(4, 7) +
+    ' ' +
+    normalized.substring(7);
+}
+// Foreign numbers copied from WhatsApp
+else if (formattedPhone.startsWith('+')) {
+  formattedPhone = formattedPhone.substring(1);
+}
+
+const updatedInfo = info.replace(
+  /(No\.?\s*Telefon|Phone Number)\s*:\s*.*/i,
+  `$1: ${formattedPhone}`
+);
+
+setInfo(updatedInfo);
+
 
     // Save the new values to global state + history
     updateOrderHistoryState({
       customerName: name,
-      customerPhone: phone,
-      customerInfo: info,
+      customerPhone: formattedPhone,
+      customerInfo: updatedInfo,
       orderLink: link,
       customerOrder: order,
       customerTemplate: template,
@@ -343,16 +380,7 @@ export function CustomerInfoView() {
     setSaved(false);
 
     try {
-      let formattedPhone = phone.trim();
-      if (formattedPhone.startsWith('+')) {
-        formattedPhone = formattedPhone.substring(1);
-      }
-      formattedPhone = formattedPhone.replace(/\D/g, '');
-      if (formattedPhone.startsWith('0')) {
-        formattedPhone = '60' + formattedPhone.substring(1);
-      }
-
-      let formattedName = name.replace(/\w\S*/g, (txt) => txt.charAt(0).toUpperCase() + txt.substring(1).toLowerCase());
+           let formattedName = name.replace(/\w\S*/g, (txt) => txt.charAt(0).toUpperCase() + txt.substring(1).toLowerCase());
 
       // Columns: Checkbox, Nama, Phone Number, Order, Template, Bahasa, Add On, Jenis, Due, Link, Order ID
       const orderRow = [

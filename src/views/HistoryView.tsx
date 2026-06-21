@@ -12,6 +12,21 @@ const formatCustomerName = (name?: string) => {
     .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
     .join(' ');
 };
+const formatDisplayPhone = (phone?: string) => {
+  if (!phone) return '';
+
+  const digits = phone.replace(/\D/g, '');
+
+  const normalized = digits.startsWith('0')
+    ? `6${digits}`
+    : digits;
+
+  if (!normalized.startsWith('60')) {
+    return phone;
+  }
+
+  return `60 ${normalized.substring(2, 4)}-${normalized.substring(4, 7)} ${normalized.substring(7)}`;
+};
 
 const getRelativeDayDetails = (orderTime: number, appLanguage: string) => {
   const now = new Date();
@@ -1230,7 +1245,9 @@ const parseDueTimestamp = (value: unknown): number => {
                               title={appLanguage === 'ms' ? 'Hubungi di WhatsApp' : 'Contact on WhatsApp'}
                             >
                               <Phone className="w-2.5 h-2.5 text-blue-500 shrink-0" />
-                              <span className="select-all font-mono">{String(item.state.customerPhone)}</span>
+                              <span className="select-all font-mono">
+                              {formatDisplayPhone(String(item.state.customerPhone))}
+                            </span>
                             </a>
                           </div>
                         )}
@@ -1630,7 +1647,9 @@ const parseDueTimestamp = (value: unknown): number => {
                               title={appLanguage === 'ms' ? 'Hubungi di WhatsApp' : 'Contact on WhatsApp'}
                             >
                               <Phone className="w-3 h-3 text-blue-500 shrink-0" />
-                              <span className="select-all font-mono">{item.phone}</span>
+                              <span className="select-all font-mono">
+                              {formatDisplayPhone(item.phone)}
+                            </span>
                             </a>
                           </div>
                         )}
