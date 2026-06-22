@@ -21,7 +21,7 @@ import {
 } from 'lucide-react';
 import { getAuth, onAuthStateChanged, User } from 'firebase/auth';
 import { useAppContext } from '../AppContext';
-import { googleSignIn, logout, getAccessToken } from '../auth';
+import { googleSignIn, logout, getAccessToken, handleRedirectResult } from '../auth';
 import { cn } from '../cn';
 import { motion } from 'motion/react';
 
@@ -120,6 +120,25 @@ export function ContactsSyncView() {
     });
     return () => unsubscribe();
   }, []);
+
+  // 1.5 Handle redirect result
+  useEffect(() => {
+    const init = async () => {
+      try {
+        const res = await handleRedirectResult();
+        if (res) {
+          setCurrentUser(res.user);
+          setAccessToken(res.accessToken);
+          setSyncLogs(prev => [...prev, appLanguage === 'ms' ? 'Berjaya bersambung dengan Google API' : 'Successfully connected with Google API']);
+        }
+      } catch (err: any) {
+        console.error(err);
+      } finally {
+        setLoadingAuth(false);
+      }
+    };
+    init();
+  }, [appLanguage]);
 
   // 2. Fetch past 3 years database function
   const fetchThreeYearCloudDatabase = async () => {
