@@ -36,6 +36,9 @@ export interface AppState {
   syncLastAttempt?: number;
   syncLastSuccess?: number;
   syncFailCount?: number;
+  isDueInvalid?: boolean;
+  dashboardFilterMonth?: string;
+  dashboardFilterYear?: string;
 }
 
 export type ViewType = 'home' | 'resume-type' | 'resume-form-fields' | 'general-form' | 'confirmation' | 'output' | 'history' | 'customer-info' | 'dashboard' | 'contacts-sync';
@@ -53,7 +56,7 @@ export const INITIAL_STATE: AppState = {
   urgency: null,
   baseHours: 0,
   addons: [],
-  template: 'L1',
+  template: '',
   language: 'ms',
   softcopyLang: 'Melayu',
   clLangs: ['Melayu'],
@@ -79,4 +82,7 @@ export const INITIAL_STATE: AppState = {
   orderId: '',
   hasThreeHourChecked: false,
   threeHourAlerted: false,
+  isDueInvalid: false,
+  dashboardFilterMonth: 'all',
+  dashboardFilterYear: new Date().getFullYear().toString(),
 };

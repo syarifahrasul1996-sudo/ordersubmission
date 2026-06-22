@@ -59,24 +59,31 @@ export function generateMessages(state: any, dl: { formatted: string, total: num
   
   const out = [m1];
   if (state.mainType === 'Resume') {
+      const templateVal = (state.template || '').trim();
+      let m2Body = '';
+      
       if (!isE) {
-          let m2 = `${t.template}: ${((state.template || '').trim() || '-').toUpperCase()}\n${t.language}: ${(state.resumeLangs || []).join(' & ')}\n${t.addon}: ${addsForDisplay.length ? addsForDisplay.join(', ') : '-'}\n\n${t.disc}`;
-          out.push(m2);
+          if (templateVal) m2Body += `${t.template}: ${templateVal.toUpperCase()}\n`;
+          m2Body += `${t.language}: ${(state.resumeLangs || []).join(' & ')}\n`;
+          m2Body += `${t.addon}: ${addsForDisplay.length ? addsForDisplay.join(', ') : '-'}`;
       } else {
-          let m2 = `${t.template}: ${((state.template || '').trim() || '-').toUpperCase()}\n\n${t.disc}`;
-          out.push(m2);
+          if (templateVal) m2Body += `${t.template}: ${templateVal.toUpperCase()}`;
       }
+      
+      const m2 = m2Body ? `${m2Body}\n\n${t.disc}` : t.disc;
+      out.push(m2);
   }
 
   return out;
 }
 
-export function formatPhoneUniversal(phone?: string): string {
+export function formatPhoneUniversal(phone?: any): string {
   if (!phone) return '';
 
+  const phoneStr = String(phone);
   // Clean all non-digit characters
-  const digits = phone.replace(/\D/g, '');
-  if (!digits) return phone.trim(); // fallback to trimmed input if no digits
+  const digits = phoneStr.replace(/\D/g, '');
+  if (!digits) return phoneStr.trim(); // fallback to trimmed input if no digits
 
   // 1. Malaysia (Country Code: 60)
   // If starts with domestic '0', replace with '60'. E.g. '0189864891' -> '60189864891'
@@ -185,7 +192,7 @@ export function formatPhoneUniversal(phone?: string): string {
     return `+${digits.substring(0, 3)} ${digits.substring(3, 6)} ${digits.substring(6)}`;
   }
 
-  return phone.trim();
+  return phoneStr.trim();
 }
 
 /**

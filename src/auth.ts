@@ -48,10 +48,26 @@ export const initAuth = (
 export const googleSignIn = async (): Promise<{ user: User; accessToken: string } | null> => {
   try {
     isSigningIn = true;
-    await signInWithRedirect(auth, provider);
-    return null; // Redirects the page
+    // Try popup first as it is more reliable in iframes if successful
+    const result = await signInWithPopup(auth, provider);
+    const credential = GoogleAuthProvider.credentialFromResult(result);
+    if (!credential?.accessToken) {
+      throw new Error('Failed to get access token from Firebase Auth');
+    }
+
+    cachedAccessToken = credential.accessToken;
+    localStorage.setItem('google_access_token', cachedAccessToken);
+    localStorage.setItem('google_access_token_expiry', (Date.now() + 3500 * 1000).toString());
+
+    return { user: result.user, accessToken: cachedAccessToken };
   } catch (error: any) {
     console.error('Sign in error:', error);
+    if (error.code === 'auth/popup-blocked' || error.code === 'auth/cancelled-query' || error.code === 'auth/popup-closed-by-user') {
+      // Fallback to redirect if popup is blocked or closed prematurely
+      console.log('Popup issue detected, trying redirect...');
+      await signInWithRedirect(auth, provider);
+      return null;
+    }
     throw error;
   } finally {
     isSigningIn = false;

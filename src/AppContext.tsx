@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
 import { AppState, INITIAL_STATE, ViewType, OrderHistoryItem } from './types';
+import { getSubscription, syncPushNotifications, clearPushNotifications } from './lib/push';
 
 interface AppContextType {
   state: AppState;
@@ -194,7 +195,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
           resolve(data);
         };
 
-        script.onerror = () => {
+        script.onerror = (event: any) => {
+          if (event && typeof event !== 'string') {
+            if (typeof (event as any).preventDefault === 'function') (event as any).preventDefault();
+            if (typeof (event as any).stopPropagation === 'function') (event as any).stopPropagation();
+          }
           cleanup();
           reject(new Error('Script load error'));
         };
@@ -325,14 +330,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
       });
     };
 
-    // Ask for permission if not asked yet
+    // Ask for permission and trigger PWA/Web Push subscription registration if supported
     try {
-      if ('Notification' in window && Notification.permission === 'default') {
-        Notification.requestPermission().catch(console.warn);
-      }
+      getSubscription().catch(console.warn);
     } catch (e) {
-      console.warn("Could not request notification permission on mount", e);
+      console.warn("Could not register push notifications on mount", e);
     }
+
 
     const interval = setInterval(checkAlerts, 60000); // Check every minute
     checkAlerts(); // Check right away
@@ -528,20 +532,30 @@ export function AppProvider({ children }: { children: ReactNode }) {
     });
     
     setState(finalState);
+    syncPushNotifications(newItem, appLanguage).catch(console.warn);
   };
   
   const updateOrderHistoryState = (updates: Partial<AppState>) => {
     const finalState = { ...state, ...updates };
     setState(finalState);
     if (finalState.historyId) {
-       setHistory(prev => prev.map(item => item.id === finalState.historyId ? { ...item, state: finalState } : item));
+       setHistory(prev => prev.map(item => {
+         if (item.id === finalState.historyId) {
+           const updatedItem = { ...item, state: finalState };
+           syncPushNotifications(updatedItem, appLanguage).catch(console.warn);
+           return updatedItem;
+         }
+         return item;
+       }));
     }
   };
 
   const updateSpecificHistoryItem = (id: string, updates: Partial<AppState>) => {
     setHistory(prev => prev.map(item => {
       if (item.id === id) {
-        return { ...item, state: { ...item.state, ...updates } };
+        const updatedItem = { ...item, state: { ...item.state, ...updates } };
+        syncPushNotifications(updatedItem, appLanguage).catch(console.warn);
+        return updatedItem;
       }
       return item;
     }));
@@ -549,7 +563,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const deleteOrderFromHistory = (id: string) => {
     setHistory(prev => prev.filter(item => item.id !== id));
+    clearPushNotifications(id).catch(console.warn);
   };
+
 
   const clearHistory = () => {
     setHistory([]);
