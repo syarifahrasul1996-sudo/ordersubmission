@@ -21,6 +21,10 @@ interface AppContextType {
   deleteOrderFromHistory: (id: string) => void;
   clearHistory: () => void;
   loadOrder: (item: OrderHistoryItem) => void;
+  drafts: OrderHistoryItem[];
+  saveAsDraft: () => void;
+  deleteDraft: (id: string) => void;
+  loadDraft: (item: OrderHistoryItem) => void;
   theme: 'light' | 'dark';
   toggleTheme: () => void;
   appLanguage: 'ms' | 'en';
@@ -106,6 +110,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   });
 
+  const [drafts, setDrafts] = useState<OrderHistoryItem[]>(() => {
+    try {
+      const saved = localStorage.getItem('orderDrafts');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return Array.isArray(parsed) ? parsed : [];
+      }
+      return [];
+    } catch {
+      return [];
+    }
+  });
+
   useEffect(() => {
     localStorage.setItem('appState', JSON.stringify(state));
   }, [state]);
@@ -121,6 +138,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     localStorage.setItem('orderHistory', JSON.stringify(history));
   }, [history]);
+
+  useEffect(() => {
+    localStorage.setItem('orderDrafts', JSON.stringify(drafts));
+  }, [drafts]);
 
   useEffect(() => {
     localStorage.setItem('appTheme', theme);
@@ -566,6 +587,50 @@ export function AppProvider({ children }: { children: ReactNode }) {
     clearPushNotifications(id).catch(console.warn);
   };
 
+  const saveAsDraft = () => {
+    const draftId = state.historyId || `draft_${Date.now()}`;
+    const timestamp = state.timestamp || Date.now();
+    
+    const draftItem: OrderHistoryItem = {
+      id: draftId,
+      timestamp,
+      state: { ...state, historyId: draftId, timestamp },
+      messages: []
+    };
+    
+    setDrafts(prev => {
+      const exists = prev.find(d => d.id === draftId);
+      if (exists) {
+        return prev.map(d => d.id === draftId ? draftItem : d);
+      }
+      return [draftItem, ...prev];
+    });
+    
+    setState(prev => ({ ...prev, historyId: draftId, timestamp }));
+  };
+
+  const deleteDraft = (id: string) => {
+    setDrafts(prev => prev.filter(d => d.id !== id));
+  };
+
+  const loadDraft = (item: OrderHistoryItem) => {
+    setState({
+      ...INITIAL_STATE,
+      ...item.state,
+      addons: Array.isArray(item.state?.addons) ? item.state.addons : INITIAL_STATE.addons,
+      clLangs: Array.isArray(item.state?.clLangs) ? item.state.clLangs : INITIAL_STATE.clLangs,
+      resumeLangs: Array.isArray(item.state?.resumeLangs) ? item.state.resumeLangs : INITIAL_STATE.resumeLangs,
+      timestamp: item.timestamp,
+      historyId: item.id
+    });
+    // Go to the appropriate form view based on state
+    if (item.state.mainType === 'Resume' || item.state.mainType === 'Curriculum Vitae') {
+      setViewStack(['home', 'resume-type', 'resume-form-fields', 'customer-info']);
+    } else {
+      setViewStack(['home', 'general-form', 'customer-info']);
+    }
+  };
+
 
   const clearHistory = () => {
     setHistory([]);
@@ -618,7 +683,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AppContext.Provider value={{ state, setState, viewStack, pushView, startNewOrder, popView, goHome, reset, generatedMessages, setGeneratedMessages, history, setHistory, saveOrderToHistory, updateOrderHistoryState, updateSpecificHistoryItem, deleteOrderFromHistory, clearHistory, loadOrder, theme, toggleTheme, appLanguage, toggleLanguage, isOnline, isSyncing, queueSize, lastSyncTime, syncOfflineQueue, addToOfflineQueue }}>
+    <AppContext.Provider value={{ state, setState, viewStack, pushView, startNewOrder, popView, goHome, reset, generatedMessages, setGeneratedMessages, history, setHistory, saveOrderToHistory, updateOrderHistoryState, updateSpecificHistoryItem, deleteOrderFromHistory, clearHistory, loadOrder, drafts, saveAsDraft, deleteDraft, loadDraft, theme, toggleTheme, appLanguage, toggleLanguage, isOnline, isSyncing, queueSize, lastSyncTime, syncOfflineQueue, addToOfflineQueue }}>
       {children}
     </AppContext.Provider>
   );
