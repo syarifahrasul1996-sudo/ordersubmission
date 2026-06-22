@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { RefreshCcw, Save, Check, FileText, ExternalLink, LogOut, Loader2 } from 'lucide-react';
+import { RefreshCcw, Save, Check, FileText, ExternalLink, LogOut, Loader2, AlertCircle } from 'lucide-react';
 import { useAppContext } from '../AppContext';
 import { calculateDeadline, formatPhoneUniversal, parseDateStringToTimestamp } from '../utils';
 import { Toast } from '../components/Toast';
@@ -55,7 +55,7 @@ export function CustomerInfoView() {
     }
 
     let initJenis = '';
-    if (state.urgency === 'noturgent' || state.urgency === 'standard') initJenis = 'Tidak Urgent';
+    if (state.urgency === 'noturgent' || state.urgency === 'standard') initJenis = 'Tak Urgent';
     else if (state.urgency === 'urgent') initJenis = 'Urgent';
     else if (state.urgency === 'super') initJenis = 'Super Urgent';
     else if (state.urgency === 'semi') initJenis = 'Semi Urgent';
@@ -134,13 +134,36 @@ export function CustomerInfoView() {
       initOrderId = generateOrderId();
     }
 
+    let initDue = '';
+    if (state.isDueInvalid) {
+      const originalDue = (state.customerDue || '').toString().trim();
+      if (originalDue) {
+        initDue = originalDue; // Keep the "wrong" text as requested
+      } else {
+        // Build suggested date based on filters
+        const d = new Date();
+        const y = state.dashboardFilterYear || d.getFullYear().toString();
+        const m = state.dashboardFilterMonth && state.dashboardFilterMonth !== 'all' 
+          ? (parseInt(state.dashboardFilterMonth) + 1).toString().padStart(2, '0') 
+          : (d.getMonth() + 1).toString().padStart(2, '0');
+        
+        // Time keep empty as requested
+        initDue = ` /${m}/${y}`;
+      }
+    } else {
+      initDue = state.customerDue ? String(state.customerDue) : `${formattedDate} at ${formattedTime}`;
+    }
+
     return { 
       initName: state.customerName ? String(state.customerName) : '',
       initPhone: state.customerPhone ? String(state.customerPhone) : '',
       initOrder: state.customerOrder ? String(state.customerOrder) : initOrder, 
       initBahasa: state.customerBahasa ? String(state.customerBahasa) : initBahasa, 
+      initType: state.mainType || 'Resume',
+      initSubType: state.subType || '',
+      initUrgency: state.urgency || 'normal',
       initJenis: state.customerJenis ? String(state.customerJenis) : initJenis, 
-      initDue: state.customerDue ? String(state.customerDue) : `${formattedDate} at ${formattedTime}`, 
+      initDue, 
       initDueTimestamp: state.dueTimestamp || dl.getTime(),
       initTemplate: state.customerTemplate || initTemplate, 
       initAddOn: state.customerAddOn || initAddOn,
@@ -776,7 +799,7 @@ setInfo(updatedInfo);
                 selectColorClass = "border-semi focus:border-semi focus:ring-semi/20 text-semi font-black bg-semi/5 dark:bg-semi/10 ml-0";
               } else if (v.includes('urgent')) {
                 selectColorClass = "border-urgent focus:border-urgent focus:ring-urgent/20 text-urgent font-black bg-urgent/5 dark:bg-urgent/10 ml-0";
-              } else if (v.includes('tidak') || v.includes('normal') || v.includes('not')) {
+              } else if (v.includes('tak') || v.includes('normal') || v.includes('not')) {
                 selectColorClass = "border-noturgent focus:border-noturgent focus:ring-noturgent/20 text-noturgent font-black bg-noturgent/5 dark:bg-noturgent/10 ml-0";
               }
               return (
@@ -788,7 +811,7 @@ setInfo(updatedInfo);
                     selectColorClass
                   )} 
                 >
-                  <option className="text-text font-normal bg-surface" value="Tidak Urgent">Tidak Urgent</option>
+                  <option className="text-text font-normal bg-surface" value="Tak Urgent">Tak Urgent</option>
                   <option className="text-text font-normal bg-surface" value="Semi Urgent">Semi Urgent</option>
                   <option className="text-text font-normal bg-surface" value="Urgent">Urgent</option>
                   <option className="text-text font-normal bg-surface" value="Super Urgent">Super Urgent</option>
@@ -804,12 +827,24 @@ setInfo(updatedInfo);
 
         <div className="space-y-1">
           <label className="text-[11px] font-black text-gray-400 ml-1 uppercase tracking-widest">Due</label>
-          <input 
-            type="text" 
-            value={due}
-            onChange={(e) => setDue(e.target.value)}
-            className="w-full h-[46px] bg-surface rounded-[12px] px-4 font-bold text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all text-sm" 
-          />
+          <div className="relative">
+            <input 
+              type="text" 
+              value={due}
+              onChange={(e) => setDue(e.target.value)}
+              placeholder={appLanguage === 'ms' ? 'HH/BB/TTTT (Contoh: 25/12/2024)' : 'DD/MM/YYYY (Example: 25/12/2024)'}
+              className={cn(
+                "w-full h-[46px] bg-surface rounded-[12px] px-4 font-bold text-text border outline-none focus:ring-2 transition-all text-sm",
+                state.isDueInvalid ? "border-amber-400 bg-amber-50/10 ring-amber-400/10 focus:border-amber-500 placeholder:text-amber-300" : "border-gray-100/50 focus:border-primary/50 focus:ring-primary/10"
+              )} 
+            />
+            {state.isDueInvalid && (
+              <div className="flex items-center mt-1.5 ml-1 text-[9px] font-black text-amber-600 uppercase tracking-tight">
+                <AlertCircle className="w-3.5 h-3.5 mr-1" />
+                {appLanguage === 'ms' ? 'Format Tarikh Tidak Sah / Kosong dari Sheets' : 'Invalid Date Format / Empty from Sheets'}
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="space-y-1">
@@ -833,14 +868,16 @@ setInfo(updatedInfo);
                 <ExternalLink className="w-4 h-4" />
               </a>
             )}
-            <button
-              onClick={handleGenerateDoc}
-              disabled={isGeneratingDoc}
-              className="h-[46px] px-3 bg-purple-50 text-purple-600 rounded-[12px] border border-purple-100/50 flex items-center justify-center font-bold text-[12px] hover:bg-purple-100 transition-colors disabled:opacity-50"
-              title={appLanguage === 'ms' ? "Jana Surat dengan Gemini" : "Generate Letter with Gemini"}
-            >
-              {isGeneratingDoc ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
-            </button>
+            {!(order === 'Resume' || order === 'Edit Resume') && (
+              <button
+                onClick={handleGenerateDoc}
+                disabled={isGeneratingDoc}
+                className="h-[46px] px-3 bg-purple-50 text-purple-600 rounded-[12px] border border-purple-100/50 flex items-center justify-center font-bold text-[12px] hover:bg-purple-100 transition-colors disabled:opacity-50"
+                title={appLanguage === 'ms' ? "Jana Surat dengan Gemini" : "Generate Letter with Gemini"}
+              >
+                {isGeneratingDoc ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
+              </button>
+            )}
           </div>
         </div>
 

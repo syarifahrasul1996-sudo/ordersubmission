@@ -2,26 +2,20 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { parseDateStringToTimestamp } from '../utils';
 import { 
   Users, 
-  LogIn, 
-  LogOut, 
   RefreshCw, 
   Search, 
-  Check, 
   AlertTriangle, 
   CheckSquare, 
   Square, 
   Loader2, 
-  CheckCircle2, 
   Phone, 
-  UserPlus, 
   Clock, 
-  ExternalLink,
-  Smartphone,
-  Database
+  Database,
+  Download,
+  FileText,
+  FileDown
 } from 'lucide-react';
-import { getAuth, onAuthStateChanged, User } from 'firebase/auth';
 import { useAppContext } from '../AppContext';
-import { googleSignIn, logout, getAccessToken, handleRedirectResult } from '../auth';
 import { cn } from '../cn';
 import { motion } from 'motion/react';
 
@@ -51,17 +45,18 @@ const isPhoneMatch = (phoneA: string, phoneB: string): boolean => {
   return cleanA.slice(-7) === cleanB.slice(-7);
 };
 
+const toProperCase = (str: string): string => {
+  return str.toLowerCase().replace(/\b\w/g, (l) => l.toUpperCase());
+};
+
 export function ContactsSyncView() {
   const { state, history, appLanguage } = useAppContext();
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [accessToken, setAccessToken] = useState<string | null>(null);
-  const [loadingAuth, setLoadingAuth] = useState(true);
   const [localSearchQuery, setLocalSearchQuery] = useState('');
   
   const [contacts, setContacts] = useState<ContactItem[]>([]);
   const [selectedPhones, setSelectedPhones] = useState<Set<string>>(new Set());
   const [syncLogs, setSyncLogs] = useState<string[]>([]);
-  const [isSyncingAll, setIsSyncingAll] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
 
   // Database / past 3 years spreadsheet cloud loading state
   const [cloudOrders, setCloudOrders] = useState<any[]>([]);
@@ -104,41 +99,6 @@ export function ContactsSyncView() {
       }
     ];
   });
-
-  // 1. Observe firebase authentication & store local Google access token
-  useEffect(() => {
-    const authInstance = getAuth();
-    const unsubscribe = onAuthStateChanged(authInstance, async (user) => {
-      setCurrentUser(user);
-      if (user) {
-        const token = await getAccessToken();
-        setAccessToken(token);
-      } else {
-        setAccessToken(null);
-      }
-      setLoadingAuth(false);
-    });
-    return () => unsubscribe();
-  }, []);
-
-  // 1.5 Handle redirect result
-  useEffect(() => {
-    const init = async () => {
-      try {
-        const res = await handleRedirectResult();
-        if (res) {
-          setCurrentUser(res.user);
-          setAccessToken(res.accessToken);
-          setSyncLogs(prev => [...prev, appLanguage === 'ms' ? 'Berjaya bersambung dengan Google API' : 'Successfully connected with Google API']);
-        }
-      } catch (err: any) {
-        console.error(err);
-      } finally {
-        setLoadingAuth(false);
-      }
-    };
-    init();
-  }, [appLanguage]);
 
   // 2. Fetch past 3 years database function
   const fetchThreeYearCloudDatabase = async () => {
@@ -196,7 +156,11 @@ export function ContactsSyncView() {
           resolve(data);
         };
 
-        script.onerror = () => {
+        script.onerror = (event: any) => {
+          if (event && typeof event !== 'string') {
+            if (typeof (event as any).preventDefault === 'function') (event as any).preventDefault();
+            if (typeof (event as any).stopPropagation === 'function') (event as any).stopPropagation();
+          }
           cleanup();
           reject(new Error('Failed to load script callback'));
         };
@@ -210,7 +174,8 @@ export function ContactsSyncView() {
         activeConfigs.map(async (sheet) => {
           const sId = extractIdLocal(sheet.spreadsheetId);
           const sUrl = sheet.scriptUrl.trim() || globalScriptUrl;
-          const callbackName = 'jsonp_contacts_' + Math.round(100000 * Math.random()) + '_' + sheet.year;
+          const safeYear = String(sheet.year).replace(/[^\w]/g, '_');
+          const callbackName = 'jsonp_contacts_' + Math.round(100000 * Math.random()) + '_' + safeYear;
           const url = new URL(sUrl);
 
           url.searchParams.append('action', 'get_dashboard_orders');
@@ -322,13 +287,14 @@ export function ContactsSyncView() {
         existing.timesOrdered += 1;
       } else {
         const rawName = (order.name || '').trim();
-        const words = rawName.split(/\s+/).filter(Boolean);
+        // Split by all types of whitespace including unicode non-breaking spaces
+        const words = rawName.split(/[\s\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF]+/).filter(Boolean);
         const twoWords = words.slice(0, 2).join(' ');
-        const finalName = twoWords || 'Pelanggan';
+        const finalName = twoWords ? toProperCase(twoWords) : (appLanguage === 'ms' ? 'Pelanggan' : 'Customer');
         const formattedName = `Cust ${finalName}`;
 
         contactsMap.set(cleanPhone, {
-          phone: rawPhone,
+          phone: cleanPhone,
           originalName: rawName || (appLanguage === 'ms' ? 'Pelanggan Tanpa Nama' : 'Anonymous Customer'),
           formattedName,
           timesOrdered: 1,
@@ -359,35 +325,60 @@ export function ContactsSyncView() {
     });
   }, [combinedContacts]);
 
-  // Handle Google Login / Scope Request
-  const handleConnect = async () => {
-    try {
-      setLoadingAuth(true);
-      const res = await googleSignIn();
-      if (res) {
-        setCurrentUser(res.user);
-        setAccessToken(res.accessToken);
-        setSyncLogs(prev => [...prev, appLanguage === 'ms' ? 'Berjaya bersambung dengan Google API' : 'Successfully connected with Google API']);
-      }
-    } catch (err: any) {
-      console.error(err);
-      setSyncLogs(prev => [...prev, `${appLanguage === 'ms' ? 'Gagal menyambung' : 'Connection failed'}: ${err.message}`]);
-    } finally {
-      setLoadingAuth(false);
-    }
-  };
+  // Handle CSV Export
+  const handleExportCSV = () => {
+    const targets = contacts.filter(c => selectedPhones.has(c.phone));
+    if (targets.length === 0) return;
 
-  const handleDisconnect = async () => {
+    setIsExporting(true);
+    setSyncLogs(prev => [...prev, appLanguage === 'ms' ? `Membina fail CSV untuk ${targets.length} kenalan...` : `Building CSV file for ${targets.length} contacts...`]);
+
     try {
-      setLoadingAuth(true);
-      await logout();
-      setCurrentUser(null);
-      setAccessToken(null);
-      setSyncLogs(prev => [...prev, appLanguage === 'ms' ? 'Telah memutuskan sambungan Google' : 'Google Account disconnected']);
+      // Headers for Google Contacts compatible CSV import
+      const headers = ['Name', 'Phone 1 - Value'];
+      const csvRows = [headers.join(',')];
+      
+      const sanitize = (val: string) => val.replace(/[\u200B-\u200D\uFEFF\u200E\u200F\u202A-\u202E\u2066-\u2069\u00A0\u202F\r\n\t]/g, '').trim();
+      const sanitizePhone = (val: string) => {
+        let p = val.replace(/[^\d+]/g, '');
+        // If it starts with 60 (Malaysia) and no +, prepend +
+        if (p.startsWith('60')) p = '+' + p;
+        // If it starts with 0 (Local Malaysia), convert to +60
+        else if (p.startsWith('0')) p = '+60' + p.substring(1);
+        return p;
+      };
+
+      targets.forEach(c => {
+        const row = [
+          `"${sanitize(c.formattedName)}"`,
+          `"${sanitizePhone(c.phone)}"`
+        ];
+        csvRows.push(row.join(','));
+      });
+
+      const csvContent = csvRows.join('\n');
+      // No BOM to avoid ï»¿ issue, simple blob for browsers
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      const dateStr = new Date().toISOString().split('T')[0];
+      
+      link.setAttribute('href', url);
+      link.setAttribute('download', `pelanggan_contacts_${dateStr}.csv`);
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+      setSyncLogs(prev => [...prev, appLanguage === 'ms' ? '✅ Fail CSV berjaya dimuat turun.' : '✅ CSV file downloaded successfully.']);
+      
+      // Update status to success
+      setContacts(prev => prev.map(c => selectedPhones.has(c.phone) ? { ...c, status: 'success' } : c));
     } catch (err: any) {
       console.error(err);
+      setSyncLogs(prev => [...prev, `❌ ${appLanguage === 'ms' ? 'Gagal membina CSV' : 'Failed to build CSV'}: ${err.message}`]);
     } finally {
-      setLoadingAuth(false);
+      setIsExporting(false);
     }
   };
 
@@ -423,226 +414,27 @@ export function ContactsSyncView() {
     }
   };
 
-  // Google Contacts synchronization helper (checks for duplicates, overwrites different names, or creates new)
-  const syncSingleContact = async (
-    contact: ContactItem, 
-    tokenToUse: string
-  ): Promise<{ action: 'created' | 'updated' | 'unchanged'; resourceName: string; prevName?: string }> => {
-    let existingContact: { resourceName: string; etag: string; currentName: string } | null = null;
+  // Action: Export individual contact as CSV simple helper
+  const handleExportIndividual = (contact: ContactItem) => {
+    const sanitize = (val: string) => val.replace(/[\u200B-\u200D\uFEFF\u200E\u200F\u202A-\u202E\u2066-\u2069\u00A0\u202F\r\n\t]/g, '').trim();
+    const sanitizePhone = (val: string) => {
+      let p = val.replace(/[^\d+]/g, '');
+      if (p.startsWith('60')) p = '+' + p;
+      else if (p.startsWith('0')) p = '+60' + p.substring(1);
+      return p;
+    };
     
-    // 1. Check for existing contact via searchContacts
-    try {
-      const searchUrl = `https://people.googleapis.com/v1/people:searchContacts?query=${encodeURIComponent(contact.phone)}&readMask=names,phoneNumbers`;
-      const sResponse = await fetch(searchUrl, {
-        headers: {
-          'Authorization': `Bearer ${tokenToUse}`
-        }
-      });
-      
-      if (sResponse.ok) {
-        const sData = await sResponse.json();
-        const results = sData.results || [];
-        for (const res of results) {
-          const person = res.person;
-          if (!person) continue;
-          
-          const match = (person.phoneNumbers || []).some((pn: any) => isPhoneMatch(pn.value, contact.phone));
-          if (match) {
-            const names = person.names || [];
-            const displayName = names[0]?.displayName || names[0]?.givenName || '';
-            existingContact = {
-              resourceName: person.resourceName,
-              etag: person.etag,
-              currentName: displayName
-            };
-            break;
-          }
-        }
-      }
-    } catch (e) {
-      console.warn('Google People searchContacts failed, attempting listConnections fallback:', e);
-    }
-
-    // 2. Fallback to listConnections if no exact match from search yet
-    if (!existingContact) {
-      try {
-        const listUrl = `https://people.googleapis.com/v1/people/me/connections?pageSize=150&personFields=names,phoneNumbers`;
-        const lResponse = await fetch(listUrl, {
-          headers: {
-            'Authorization': `Bearer ${tokenToUse}`
-          }
-        });
-        if (lResponse.ok) {
-          const lData = await lResponse.json();
-          const connections = lData.connections || [];
-          for (const person of connections) {
-            const match = (person.phoneNumbers || []).some((pn: any) => isPhoneMatch(pn.value, contact.phone));
-            if (match) {
-              const names = person.names || [];
-              const displayName = names[0]?.displayName || names[0]?.givenName || '';
-              existingContact = {
-                resourceName: person.resourceName,
-                etag: person.etag,
-                currentName: displayName
-              };
-              break;
-            }
-          }
-        }
-      } catch (e) {
-        console.warn('Google People listConnections fallback failed:', e);
-      }
-    }
-
-    // 3. Process search results: Overwrite name if matching number exists with different name, else create
-    if (existingContact) {
-      const { resourceName, etag, currentName } = existingContact;
-      
-      if (currentName.trim() !== contact.formattedName.trim()) {
-        const updateUrl = `https://people.googleapis.com/v1/${resourceName}:updateContact?updatePersonFields=names`;
-        const payload = {
-          etag,
-          names: [{
-            givenName: contact.formattedName
-          }]
-        };
-
-        const uResponse = await fetch(updateUrl, {
-          method: 'PATCH',
-          headers: {
-            'Authorization': `Bearer ${tokenToUse}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(payload)
-        });
-
-        if (!uResponse.ok) {
-          const errData = await uResponse.json().catch(() => ({}));
-          const msg = errData?.error?.message || `Status Code ${uResponse.status}`;
-          throw new Error(`Failed to overwrite pre-existing contact from "${currentName}" to "${contact.formattedName}": ${msg}`);
-        }
-
-        return { action: 'updated', resourceName, prevName: currentName };
-      } else {
-        // Already matching oldest name record
-        return { action: 'unchanged', resourceName };
-      }
-    } else {
-      // Create new contact
-      const createUrl = 'https://people.googleapis.com/v1/people:createContact';
-      const payload = {
-        names: [{
-          givenName: contact.formattedName
-        }],
-        phoneNumbers: [{
-          value: contact.phone,
-          type: 'mobile'
-        }]
-      };
-
-      const cResponse = await fetch(createUrl, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${tokenToUse}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(payload)
-      });
-
-      if (!cResponse.ok) {
-        const errData = await cResponse.json().catch(() => ({}));
-        const msg = errData?.error?.message || `Status Code ${cResponse.status}`;
-        throw new Error(msg);
-      }
-
-      const cData = await cResponse.json();
-      return { action: 'created', resourceName: cData.resourceName || 'success' };
-    }
-  };
-
-  // Action: Synchronize selected contacts
-  const handleSyncSelected = async () => {
-    const token = await getAccessToken() || accessToken;
-    if (!token) {
-      setSyncLogs(prev => [...prev, appLanguage === 'ms' ? 'Ralat: Sila hubungkan Google Account terlebih dahulu.' : 'Error: Please connect your Google Account first.']);
-      return;
-    }
-
-    const targets = contacts.filter(c => selectedPhones.has(c.phone));
-    if (targets.length === 0) return;
-
-    setIsSyncingAll(true);
-    setSyncLogs(prev => [...prev, appLanguage === 'ms' ? `Memproses ${targets.length} kenalan...` : `Syncing ${targets.length} contacts...`]);
-
-    for (const target of targets) {
-      // Set single contact to syncing status
-      setContacts(prev => prev.map(c => c.phone === target.phone ? { ...c, status: 'syncing' } : c));
-
-      try {
-        const result = await syncSingleContact(target, token);
-        setContacts(prev => prev.map(c => c.phone === target.phone ? { ...c, status: 'success' } : c));
-        
-        if (result.action === 'updated') {
-          const logMsg = appLanguage === 'ms'
-            ? `✏️ Dikemas kini: Nama terlama "${target.formattedName}" telah menggantikan "${result.prevName}" bagi no ${target.phone}`
-            : `✏️ Overwritten: "${target.formattedName}" has replaced "${result.prevName}" for phone ${target.phone}`;
-          setSyncLogs(prev => [...prev, logMsg]);
-        } else if (result.action === 'unchanged') {
-          const logMsg = appLanguage === 'ms'
-            ? `ℹ️ Tiada perubahan: Nama "${target.formattedName}" (${target.phone}) sudah sepadan`
-            : `ℹ️ Unchanged: Name "${target.formattedName}" (${target.phone}) is already matching oldest configuration`;
-          setSyncLogs(prev => [...prev, logMsg]);
-        } else {
-          const logMsg = appLanguage === 'ms'
-            ? `✅ Baharu: Kenalan "${target.formattedName}" (${target.phone}) berjaya disimpan`
-            : `✅ Newly created: Contact "${target.formattedName}" (${target.phone}) saved successfully`;
-          setSyncLogs(prev => [...prev, logMsg]);
-        }
-      } catch (err: any) {
-        console.error(`Sync error for ${target.phone}:`, err);
-        setContacts(prev => prev.map(c => c.phone === target.phone ? { ...c, status: 'failed', error: err.message } : c));
-        setSyncLogs(prev => [...prev, `❌ ${target.formattedName} (${target.phone}) ${appLanguage === 'ms' ? 'gagal' : 'failed'}: ${err.message}`]);
-      }
-    }
-
-    setIsSyncingAll(false);
-  };
-
-  // Action: Synchronize an individual contact immediately
-  const handleSyncIndividual = async (target: ContactItem) => {
-    const token = await getAccessToken() || accessToken;
-    if (!token) {
-      setSyncLogs(prev => [...prev, appLanguage === 'ms' ? 'Ralat: Sila hubungkan Google Account' : 'Error: Connect Google Account first']);
-      return;
-    }
-
-    setContacts(prev => prev.map(c => c.phone === target.phone ? { ...c, status: 'syncing', error: undefined } : c));
-
-    try {
-      const result = await syncSingleContact(target, token);
-      setContacts(prev => prev.map(c => c.phone === target.phone ? { ...c, status: 'success' } : c));
-      
-      if (result.action === 'updated') {
-        const logMsg = appLanguage === 'ms'
-          ? `✏️ Dikemas kini: Nama terlama "${target.formattedName}" telah menggantikan "${result.prevName}" bagi no ${target.phone}`
-          : `✏️ Overwritten: "${target.formattedName}" has replaced "${result.prevName}" for phone ${target.phone}`;
-        setSyncLogs(prev => [...prev, logMsg]);
-      } else if (result.action === 'unchanged') {
-        const logMsg = appLanguage === 'ms'
-          ? `ℹ️ Tiada perubahan: Nama "${target.formattedName}" (${target.phone}) sudah sepadan`
-          : `ℹ️ Unchanged: Name "${target.formattedName}" (${target.phone}) is already matching oldest configuration`;
-        setSyncLogs(prev => [...prev, logMsg]);
-      } else {
-        const logMsg = appLanguage === 'ms'
-          ? `✅ Baharu: Kenalan "${target.formattedName}" (${target.phone}) berjaya disimpan`
-          : `✅ Newly created: Contact "${target.formattedName}" (${target.phone}) saved successfully`;
-        setSyncLogs(prev => [...prev, logMsg]);
-      }
-    } catch (err: any) {
-      console.error(err);
-      setContacts(prev => prev.map(c => c.phone === target.phone ? { ...c, status: 'failed', error: err.message } : c));
-      setSyncLogs(prev => [...prev, `❌ ${target.formattedName} (${target.phone}) ${appLanguage === 'ms' ? 'gagal' : 'failed'}: ${err.message}`]);
-    }
+    setContacts(prev => prev.map(c => c.phone === contact.phone ? { ...c, status: 'success' } : c));
+    const headers = ['Name', 'Phone 1 - Value'];
+    const row = [`"${sanitize(contact.formattedName)}"`, `"${sanitizePhone(contact.phone)}"`];
+    const csvContent = [headers.join(','), row.join(',')].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `contact_${sanitizePhone(contact.phone)}.csv`);
+    link.click();
+    setSyncLogs(prev => [...prev, `✅ ${appLanguage === 'ms' ? 'Eksport CSV untuk' : 'CSV Exported for'} ${contact.formattedName}`]);
   };
 
   return (
@@ -656,16 +448,16 @@ export function ContactsSyncView() {
       {/* Intro Context banner */}
       <div className="bg-surface rounded-2xl p-4 flex gap-4 items-start border border-gray-100/60 dark:border-gray-800">
         <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary shrink-0">
-          <Users className="w-5 h-5" />
+          <FileText className="w-5 h-5" />
         </div>
         <div className="space-y-1">
           <h2 className="text-sm font-bold text-text">
-            {appLanguage === 'ms' ? 'Simpan Kenalan ke Google Contacts' : 'Google Contacts Sync'}
+            {appLanguage === 'ms' ? 'Eksport Kenalan Pelanggan (CSV)' : 'Export Customer Contacts (CSV)'}
           </h2>
           <p className="text-xs text-subtext leading-relaxed">
             {appLanguage === 'ms' 
-               ? 'Semua nombor pelanggan akan disimpan dan dikemas kini secara automatik dalam Google Contacts.'
-              : 'All customer phone numbers will be automatically saved and updated in Google Contacts.'}
+               ? 'Muat turun senarai pelanggan anda dalam format CSV untuk dimasukkan ke dalam Google Contacts atau buku telefon iPhone anda.'
+              : 'Download your consolidated customer list as a CSV file to easily import into Google Contacts or your iPhone address book.'}
           </p>
         </div>
       </div>
@@ -749,69 +541,6 @@ export function ContactsSyncView() {
         )}
       </div>
 
-      {/* Connection & Auth Controller Card */}
-      <div className="bg-white dark:bg-[#1C1C1E] rounded-3xl p-5 border border-gray-100 dark:border-gray-800 shadow-sm space-y-4">
-        <h3 className="text-xs font-black uppercase tracking-wider text-subtext flex items-center gap-2">
-          <Smartphone className="w-3.5 h-3.5 text-primary" />
-          {appLanguage === 'ms' ? 'Sambungan Google' : 'Google Connection Status'}
-        </h3>
-
-        {loadingAuth ? (
-          <div className="flex items-center space-x-2.5 py-2">
-            <Loader2 className="w-4 h-4 text-primary animate-spin" />
-            <span className="text-xs text-subtext">{appLanguage === 'ms' ? 'Menyemak sambungan Google...' : 'Checking Google Authorization...'}</span>
-          </div>
-        ) : currentUser && accessToken ? (
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-surface p-3.5 rounded-2xl border border-gray-100/50 dark:border-gray-800">
-            <div className="flex items-center space-x-3">
-              {currentUser.photoURL ? (
-                <img src={currentUser.photoURL || ''} alt="Google Pic" className="w-9 h-9 rounded-full object-cover border border-primary/20 shadow-sm" />
-              ) : (
-                <div className="w-9 h-9 bg-primary/10 rounded-full flex items-center justify-center font-bold text-primary text-sm">
-                  {currentUser.displayName ? currentUser.displayName[0] : 'U'}
-                </div>
-              )}
-              <div className="flex flex-col">
-                <span className="text-xs font-bold text-text truncate max-w-[200px]">{currentUser.displayName || 'Authorized User'}</span>
-                <span className="text-[10px] text-subtext truncate max-w-[200px]">{currentUser.email || 'No email'}</span>
-              </div>
-            </div>
-            
-            <div className="flex items-center gap-2">
-              <span className="px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">
-                {appLanguage === 'ms' ? 'Bersambung' : 'Connected'}
-              </span>
-              <button
-                onClick={handleDisconnect}
-                className="flex items-center space-x-1 hover:bg-red-50 text-red-500 hover:text-red-600 px-3 py-1.5 rounded-xl font-bold text-[11px] transition-colors cursor-pointer"
-              >
-                <LogOut className="w-3.5 h-3.5" />
-                <span>{appLanguage === 'ms' ? 'Keluar' : 'Disconnect'}</span>
-              </button>
-            </div>
-          </div>
-        ) : (
-          <div className="flex flex-col items-center justify-center p-6 text-center border-2 border-dashed border-gray-100 dark:border-gray-800 rounded-3xl space-y-3 bg-surface/50">
-            <UserPlus className="w-9 h-9 text-subtext opacity-60" />
-            <div className="space-y-1">
-              <p className="text-xs font-bold text-text">{appLanguage === 'ms' ? 'Akaun Google Tidak Terhubung' : 'Google Account Disconnected'}</p>
-              <p className="text-[10px] text-subtext max-w-sm leading-relaxed">
-                {appLanguage === 'ms' 
-                  ? 'Sila hubungkan akaun Google anda terlebih dahulu untuk memberikan akses menyimpan senarai kenalan ke telefon atau Google Contacts.' 
-                  : 'Establish a secure credentials connection with Google to automate adding customized client names directly into your phone database.'}
-              </p>
-            </div>
-            <button
-              onClick={handleConnect}
-              className="flex items-center space-x-2 bg-primary hover:bg-primary-hover text-white px-5 py-2.5 rounded-2xl font-bold text-xs shadow-md transition-all active:scale-95 cursor-pointer"
-            >
-              <LogIn className="w-4 h-4" />
-              <span>{appLanguage === 'ms' ? 'Hubungkan Google Contacts' : 'Login with Google'}</span>
-            </button>
-          </div>
-        )}
-      </div>
-
       {/* Main Customers List Layout */}
       <div className="bg-white dark:bg-[#1C1C1E] rounded-3xl p-4 sm:p-5 border border-gray-100 dark:border-gray-800 shadow-sm space-y-4">
         {/* Filter and Search actions bar */}
@@ -849,31 +578,38 @@ export function ContactsSyncView() {
             </button>
 
             <button
-              onClick={handleSyncSelected}
-              disabled={selectedPhones.size === 0 || !currentUser || isSyncingAll}
+              onClick={handleExportCSV}
+              disabled={selectedPhones.size === 0 || isExporting}
               className="flex items-center justify-center gap-1.5 bg-primary hover:bg-primary-hover disabled:bg-gray-100 dark:disabled:bg-gray-800 disabled:text-subtext text-white px-4 py-2.5 rounded-2xl font-bold text-xs shadow-md disabled:shadow-none active:scale-95 transition-all cursor-pointer"
             >
-              {isSyncingAll ? (
+              {isExporting ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
               ) : (
-                <UserPlus className="w-4 h-4" />
+                <Download className="w-4 h-4" />
               )}
               <span>
                 {appLanguage === 'ms' 
-                  ? `Simpan Ke Google (${selectedPhones.size})` 
-                  : `Sync Contacts (${selectedPhones.size})`}
+                  ? `Download CSV (${selectedPhones.size})` 
+                  : `Download CSV (${selectedPhones.size})`}
               </span>
             </button>
           </div>
         </div>
 
-        {/* Selected contacts warning banner */}
-        {!currentUser && selectedPhones.size > 0 && (
-          <div className="p-3 rounded-xl bg-amber-500/10 text-amber-600 text-[10px] md:text-xs flex items-center gap-2 font-medium border border-amber-500/20">
-            <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-            <span>{appLanguage === 'ms' ? 'Sila sambung Google Contacts untuk membolehkan butang Sinkronisasi berfungsi.' : 'Connect to Google Contacts first to enable direct account synchronization.'}</span>
-          </div>
-        )}
+        {/* Sync logs summary banner */}
+        <div className="max-h-[120px] overflow-y-auto bg-surface/50 border border-gray-100 dark:border-gray-800 rounded-2xl p-3 space-y-1.5 custom-scrollbar">
+          {syncLogs.length === 0 ? (
+            <p className="text-[10px] text-subtext italic">
+              {appLanguage === 'ms' ? 'Tiada aktiviti dikesan.' : 'No recent activity.'}
+            </p>
+          ) : (
+            syncLogs.map((log, idx) => (
+              <p key={idx} className="text-[10px] text-text border-l-2 border-primary/20 pl-2 leading-relaxed">
+                {log}
+              </p>
+            )).reverse()
+          )}
+        </div>
 
         {/* Contacts Grid/Table List */}
         <div className="border border-gray-100 dark:border-gray-800 rounded-2xl overflow-hidden">
@@ -948,45 +684,13 @@ export function ContactsSyncView() {
 
                     {/* Right Interactive Sync State Block */}
                     <div className="flex items-center space-x-2 shrink-0">
-                      {/* Individual Sync Badge/Action */}
-                      {contact.status === 'syncing' ? (
-                        <span className="flex items-center space-x-1.5 text-[10px] text-primary bg-primary/10 px-2.5 py-1 rounded-full font-bold">
-                          <Loader2 className="w-3 h-3 animate-spin" />
-                          <span>{appLanguage === 'ms' ? 'Menyimpan...' : 'Saving...'}</span>
-                        </span>
-                      ) : contact.status === 'success' ? (
-                        <span className="flex items-center space-x-1 text-[10px] text-emerald-800 bg-emerald-100 dark:bg-emerald-950/40 dark:text-emerald-300 px-2.5 py-1 rounded-full font-bold">
-                          <Check className="w-3.5 h-3.5" />
-                          <span>{appLanguage === 'ms' ? 'Berjaya' : 'Synced'}</span>
-                        </span>
-                      ) : contact.status === 'failed' ? (
-                        <div className="flex items-center space-x-1">
-                          <span 
-                            title={contact.error}
-                            className="flex items-center space-x-1 text-[10px] text-red-800 bg-red-100 dark:bg-red-950/40 dark:text-red-300 px-2.5 py-1 rounded-full font-bold cursor-help"
-                          >
-                            <AlertTriangle className="w-3.5 h-3.5" />
-                            <span>{appLanguage === 'ms' ? 'Gagal' : 'Failed'}</span>
-                          </span>
-                          <button
-                            onClick={() => handleSyncIndividual(contact)}
-                            disabled={!currentUser}
-                            className="p-1 rounded bg-surface hover:bg-gray-200 text-text active:scale-95 disabled:opacity-40 transition-all border border-gray-100"
-                            title={appLanguage === 'ms' ? 'Cuba semula' : 'Retry'}
-                          >
-                            <RefreshCw className="w-3 h-3" />
-                          </button>
-                        </div>
-                      ) : (
-                        <button
-                          onClick={() => handleSyncIndividual(contact)}
-                          disabled={!currentUser}
-                          className="flex items-center justify-center space-x-1 text-[11px] font-black tracking-tight text-primary hover:bg-primary/5 px-3 py-1.5 rounded-xl border border-primary/20 active:scale-95 disabled:opacity-40 transition-all cursor-pointer bg-white"
-                        >
-                          <UserPlus className="w-3 h-3 text-primary" />
-                          <span>{appLanguage === 'ms' ? 'Simpan' : 'Sync'}</span>
-                        </button>
-                      )}
+                      <button
+                        onClick={() => handleExportIndividual(contact)}
+                        className="flex items-center justify-center space-x-1 text-[11px] font-black tracking-tight text-primary hover:bg-primary/5 px-3 py-1.5 rounded-xl border border-primary/20 active:scale-95 transition-all cursor-pointer bg-white"
+                      >
+                        <FileDown className="w-3.5 h-3.5" />
+                        <span className="hidden sm:inline">CSV</span>
+                      </button>
                     </div>
                   </div>
                 );
@@ -1002,7 +706,7 @@ export function ContactsSyncView() {
           <div className="flex items-center justify-between">
             <span className="text-[10px] font-black uppercase tracking-wider text-gray-500 flex items-center gap-1.5">
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              {appLanguage === 'ms' ? 'Log Proses Sinkronisasi' : 'Process Sync Logs'}
+              {appLanguage === 'ms' ? 'Log Proses Eksport' : 'Export Process Logs'}
             </span>
             <button
               onClick={() => setSyncLogs([])}

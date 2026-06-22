@@ -40,7 +40,7 @@ export function HomeView() {
         { id: 'super', label: 'Super Urgent', hours: superHours },
         { id: 'urgent', label: 'Urgent', hours: 24 },
         { id: 'semi', label: 'Semi Urgent', hours: 48 },
-        { id: 'normal', label: appLanguage === 'ms' ? 'Tidak Urgent' : 'Not Urgent', hours: 72 },
+        { id: 'normal', label: appLanguage === 'ms' ? 'Tak Urgent' : 'Not Urgent', hours: 72 },
       ];
 
       if (calcUrgency === 'all') {
@@ -76,7 +76,7 @@ export function HomeView() {
   };
 
   const urgencyOptions = [
-    { id: 'normal', label: appLanguage === 'ms' ? 'Tidak Urgent' : 'Not Urgent' },
+    { id: 'normal', label: appLanguage === 'ms' ? 'Tak Urgent' : 'Not Urgent' },
     { id: 'semi', label: 'Semi Urgent' },
     { id: 'urgent', label: 'Urgent' },
     { id: 'super', label: 'Super Urgent' },
@@ -127,11 +127,11 @@ export function HomeView() {
         </button>
       </div>
 
-      <div className="bg-surface rounded-[20px] p-4 shadow-inner border border-gray-100/50">
-        <div className="flex items-center justify-between mb-3">
+      <div className="bg-surface rounded-[16px] p-3 shadow-inner border border-gray-100/50">
+        <div className="flex items-center justify-between mb-2">
           <div className="flex items-center text-text">
-            <Calculator className="w-4.5 h-4.5 mr-2 text-primary" />
-            <h2 className="font-bold tracking-tight text-xs sm:text-sm">{appLanguage === 'ms' ? 'Kira Anggaran Masa Siap' : 'Calculate Estimated Time'}</h2>
+            <Calculator className="w-4 h-4 mr-1.5 text-primary animate-pulse" />
+            <h2 className="font-bold tracking-tight text-[11px] sm:text-xs text-text">{appLanguage === 'ms' ? 'Kira Anggaran Masa Siap' : 'Calculate Estimated Time'}</h2>
           </div>
           {(calcUrgency !== 'all' || superHours !== 2) && (
             <button
@@ -139,31 +139,31 @@ export function HomeView() {
                 setCalcUrgency('all');
                 setSuperHours(2);
               }}
-              className="flex items-center justify-center p-1.5 -mr-1.5 text-primary hover:bg-primary/10 rounded-full active:scale-95 transition-all"
+              className="flex items-center justify-center p-1 -mr-1 text-primary hover:bg-primary/10 rounded-full active:scale-95 transition-all"
               aria-label="Reset"
               title="Reset"
             >
-              <RefreshCcw className="w-3.5 h-3.5" />
+              <RefreshCcw className="w-3 h-3" />
             </button>
           )}
         </div>
 
-        <div className="grid grid-cols-2 p-1 bg-gray-200/50 dark:bg-gray-800/50 rounded-[14px] gap-1 mb-3 shadow-inner">
+        <div className="grid grid-cols-2 p-0.5 bg-gray-200/50 dark:bg-gray-800/50 rounded-[10px] gap-0.5 mb-2 shadow-inner">
           {urgencyOptions.map(opt => {
             const isSelected = calcUrgency === opt.id;
             let activeBg = "bg-white text-text";
             if (isSelected) {
-              if (opt.id === 'super') activeBg = "bg-super text-white shadow-[0_4px_12px_-2px_rgba(225,29,72,0.3)]";
-              else if (opt.id === 'urgent') activeBg = "bg-urgent text-white shadow-[0_4px_12px_-2px_rgba(234,88,12,0.3)]";
-              else if (opt.id === 'semi') activeBg = "bg-semi text-white shadow-[0_4px_12px_-2px_rgba(217,119,6,0.3)]";
-              else activeBg = "bg-noturgent text-white shadow-[0_4px_12px_-2px_rgba(5,150,105,0.3)]";
+              if (opt.id === 'super') activeBg = "bg-super text-white shadow-[0_2px_8px_-1px_rgba(225,29,72,0.25)]";
+              else if (opt.id === 'urgent') activeBg = "bg-urgent text-white shadow-[0_2px_8px_-1px_rgba(234,88,12,0.25)]";
+              else if (opt.id === 'semi') activeBg = "bg-semi text-white shadow-[0_2px_8px_-1px_rgba(217,119,6,0.25)]";
+              else activeBg = "bg-noturgent text-white shadow-[0_2px_8px_-1px_rgba(5,150,105,0.25)]";
             }
             return (
               <button
                 key={opt.id}
                 onClick={() => setCalcUrgency(prev => prev === opt.id ? 'all' : opt.id)}
                 className={cn(
-                  "py-2 rounded-[10px] font-black text-[11px] sm:text-[12px] transition-all",
+                  "py-1.5 rounded-[8px] font-black text-[10px] sm:text-[11px] transition-all",
                   isSelected 
                     ? activeBg 
                     : "text-subtext md:hover:bg-white/50 dark:md:hover:bg-gray-700/50"
@@ -177,44 +177,44 @@ export function HomeView() {
 
         <div className={cn(
           "overflow-hidden transition-all duration-300 ease-out",
-          calcUrgency === 'super' ? "max-h-20 opacity-100 mb-3" : "max-h-0 opacity-0"
+          calcUrgency === 'super' ? "max-h-16 opacity-100 mb-2" : "max-h-0 opacity-0"
         )}>
-          <div className="flex justify-center items-center gap-4 pt-0.5">
+          <div className="flex justify-center items-center gap-3 pt-0.5">
             <button 
               onClick={() => setSuperHours(h => Math.max(1, h - 1))}
-              className="w-9 h-9 bg-white rounded-full flex items-center justify-center shadow-sm text-text border border-gray-100/50 active:scale-95 transition-transform md:hover:bg-surface"
+              className="w-7 h-7 bg-white rounded-full flex items-center justify-center shadow-sm text-text border border-gray-100/50 active:scale-95 transition-transform md:hover:bg-surface"
             >
-              <Minus className="w-4 h-4"/>
+              <Minus className="w-3.5 h-3.5"/>
             </button>
-            <div className="flex flex-col items-center min-w-[50px]">
-               <span className="font-black text-2xl leading-none text-primary">{superHours}</span>
-               <span className="text-[9px] font-black tracking-widest uppercase text-subtext mt-0.5">{appLanguage === 'ms' ? 'Jam' : 'Hours'}</span>
+            <div className="flex flex-col items-center min-w-[40px]">
+               <span className="font-black text-lg leading-none text-primary">{superHours}</span>
+               <span className="text-[8px] font-black tracking-widest uppercase text-subtext mt-0.5">{appLanguage === 'ms' ? 'Jam' : 'Hours'}</span>
             </div>
             <button 
               onClick={() => setSuperHours(h => h + 1)}
-              className="w-9 h-9 bg-white rounded-full flex items-center justify-center shadow-sm text-text border border-gray-100/50 active:scale-95 transition-transform md:hover:bg-surface"
+              className="w-7 h-7 bg-white rounded-full flex items-center justify-center shadow-sm text-text border border-gray-100/50 active:scale-95 transition-transform md:hover:bg-surface"
             >
-              <Plus className="w-4 h-4"/>
+              <Plus className="w-3.5 h-3.5"/>
             </button>
           </div>
         </div>
 
         <div className="relative">
-          <span className="absolute top-2.5 left-3 text-[10px] font-black uppercase tracking-widest text-subtext flex items-center">
-            <Clock className="w-3 h-3 mr-1.5 text-primary/70" />
+          <span className="absolute top-1.5 left-2.5 text-[8px] font-black uppercase tracking-widest text-subtext flex items-center">
+            <Clock className="w-2.5 h-2.5 mr-1 text-primary/70" />
             {appLanguage === 'ms' ? 'Anggaran' : 'Estimate'}
           </span>
           <div 
-            className="w-full pt-[30px] pb-3 px-3 pr-11 rounded-[12px] bg-white border border-gray-100 shadow-sm text-[13px] text-text font-normal leading-relaxed select-text whitespace-pre-wrap"
-            style={{ minHeight: '65px' }}
+            className="w-full pt-[22px] pb-2 px-2.5 pr-9 rounded-[10px] bg-white border border-gray-100 shadow-sm text-[11px] sm:text-[12px] text-text font-normal leading-normal select-text whitespace-pre-wrap"
+            style={{ minHeight: '46px' }}
           >
             {eta}
           </div>
           <button 
             onClick={handleCopy}
-            className="absolute top-2 right-2 w-8 h-8 bg-surface border border-gray-100 rounded-full flex items-center justify-center text-primary shadow-sm active:scale-90 transition-all md:hover:bg-gray-200"
+            className="absolute top-1 right-1 w-6.5 h-6.5 bg-surface border border-gray-100 rounded-full flex items-center justify-center text-primary shadow-sm active:scale-90 transition-all md:hover:bg-gray-200"
           >
-            {copied ? <Check className="w-3.5 h-3.5 text-secondary" /> : <Copy className="w-3.5 h-3.5" />}
+            {copied ? <Check className="w-3 h-3 text-secondary" /> : <Copy className="w-3 h-3" />}
           </button>
         </div>
       </div>

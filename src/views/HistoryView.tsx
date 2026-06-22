@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
+import { cn } from '../cn';
 import { Clock, Trash2, Calendar, AlertCircle, RefreshCcw, Save, Bell, Check, Search, Database, Phone, Settings, ChevronDown, ChevronUp, Link, X } from 'lucide-react';
 import { useAppContext } from '../AppContext';
 import { formatPhoneUniversal, parseDateStringToTimestamp } from '../utils';
@@ -97,6 +98,7 @@ export function HistoryView() {
   const [isPulling, setIsPulling] = useState(false);
   const [syncingId, setSyncingId] = useState<string | null>(null);
   const [deliveryFilter, setDeliveryFilter] = useState<'all' | 'delivered' | 'pending'>('all');
+  const [pendingTimeFilter, setPendingTimeFilter] = useState<'all' | 'today' | 'tomorrow' | '2days' | '3days'>('all');
   const [activeTab, setActiveTab] = useState<'local' | 'remote'>('local');
   const [searchQuery, setSearchQuery] = useState('');
   const [localSearchQuery, setLocalSearchQuery] = useState('');
@@ -183,6 +185,35 @@ export function HistoryView() {
       if (deliveryFilter === 'delivered' && !item.state?.isDelivered) return false;
       if (deliveryFilter === 'pending' && item.state?.isDelivered) return false;
       
+      // If pending filter is active, apply sub-time filters
+      if (deliveryFilter === 'pending' && pendingTimeFilter !== 'all') {
+        const orderTime = parseDueTimestamp(item.state?.dueTimestamp || item.timestamp);
+        const d = new Date(orderTime);
+        d.setHours(0, 0, 0, 0);
+        const orderDateTs = d.getTime();
+
+        const n = new Date(currentTime);
+        n.setHours(0, 0, 0, 0);
+        const todayTs = n.getTime();
+
+        const t = new Date(n);
+        t.setDate(n.getDate() + 1);
+        const tomorrowTs = t.getTime();
+
+        const d2 = new Date(n);
+        d2.setDate(n.getDate() + 2);
+        const day2Ts = d2.getTime();
+
+        const d3 = new Date(n);
+        d3.setDate(n.getDate() + 3);
+        const day3Ts = d3.getTime();
+
+        if (pendingTimeFilter === 'today' && orderDateTs !== todayTs) return false;
+        if (pendingTimeFilter === 'tomorrow' && orderDateTs !== tomorrowTs) return false;
+        if (pendingTimeFilter === '2days' && orderDateTs !== day2Ts) return false;
+        if (pendingTimeFilter === '3days' && orderDateTs !== day3Ts) return false;
+      }
+      
       if (localSearchQuery.trim()) {
         const query = localSearchQuery.toLowerCase().trim();
         const nameMatch = String(item.state?.customerName || '').toLowerCase().includes(query);
@@ -192,7 +223,7 @@ export function HistoryView() {
       }
 
       // Date filter: only show today's order, 2 days before and 3 days onward relative to today
-      const orderTime = item.state?.dueTimestamp || item.timestamp || Date.now();
+      const orderTimeVal = parseDueTimestamp(item.state?.dueTimestamp || item.timestamp);
       const now = new Date(currentTime);
       
       const minDate = new Date(now);
@@ -203,8 +234,11 @@ export function HistoryView() {
       maxDate.setDate(now.getDate() + 3);
       maxDate.setHours(23, 59, 59, 999);
 
-      if (orderTime < minDate.getTime() || orderTime > maxDate.getTime()) {
-        return false;
+      if (orderTimeVal < minDate.getTime() || orderTimeVal > maxDate.getTime()) {
+        // Only return false if we AREN'T explicitly filtering for a specific pending day
+        if (deliveryFilter !== 'pending' || pendingTimeFilter === 'all') {
+          return false;
+        }
       }
 
       return true;
@@ -259,6 +293,48 @@ export function HistoryView() {
     });
   }, [history, deliveryFilter, localSearchQuery, currentTime]);
 
+  const pendingStats = useMemo(() => {
+    const now = new Date(currentTime);
+    now.setHours(0, 0, 0, 0);
+    const todayTs = now.getTime();
+    
+    const tomorrow = new Date(now);
+    tomorrow.setDate(now.getDate() + 1);
+    const tomorrowTs = tomorrow.getTime();
+
+    const day2 = new Date(now);
+    day2.setDate(now.getDate() + 2);
+    const day2Ts = day2.getTime();
+
+    const day3 = new Date(now);
+    day3.setDate(now.getDate() + 3);
+    const day3Ts = day3.getTime();
+
+    let todayCount = 0;
+    let tomorrowCount = 0;
+    let day2Count = 0;
+    let day3Count = 0;
+
+    // Use full history for stats, not just filtered results
+    history.forEach(item => {
+      if (item.state?.isDelivered) return;
+      
+      const due = parseDueTimestamp(item.state?.dueTimestamp || item.timestamp);
+      if (!due) return;
+      
+      const dueDate = new Date(due);
+      dueDate.setHours(0, 0, 0, 0);
+      const dueDateTs = dueDate.getTime();
+      
+      if (dueDateTs === todayTs) todayCount++;
+      else if (dueDateTs === tomorrowTs) tomorrowCount++;
+      else if (dueDateTs === day2Ts) day2Count++;
+      else if (dueDateTs === day3Ts) day3Count++;
+    });
+
+    return { today: todayCount, tomorrow: tomorrowCount, day2: day2Count, day3: day3Count };
+  }, [history, currentTime]);
+
   const extractId = (input: string) => {
     const trimmed = input.trim();
     if (trimmed.includes('docs.google.com/spreadsheets/d/')) {
@@ -294,7 +370,11 @@ export function HistoryView() {
         resolve(data);
       };
 
-      script.onerror = () => {
+      script.onerror = (event: any) => {
+        if (event && typeof event !== 'string') {
+          if (typeof (event as any).preventDefault === 'function') (event as any).preventDefault();
+          if (typeof (event as any).stopPropagation === 'function') (event as any).stopPropagation();
+        }
         console.warn('JSONP failed URL:', url.toString());
         cleanup();
         reject(new Error('Connection failure or script load error'));
@@ -464,7 +544,8 @@ export function HistoryView() {
         const sId = extractId(rawId);
         const sUrl = sheet.scriptUrl.trim() || GOOGLE_SCRIPT_URL;
 
-        const callbackName = 'jsonp_callback_sync_' + Math.round(100000 * Math.random()) + '_' + sheet.year;
+        const safeYear = String(sheet.year).replace(/[^\w]/g, '_');
+        const callbackName = 'jsonp_callback_sync_' + Math.round(100000 * Math.random()) + '_' + safeYear;
         const url = new URL(sUrl);
 
         url.searchParams.append('action', 'sync_recent');
@@ -989,6 +1070,87 @@ export function HistoryView() {
                 );
               })}
             </div>
+
+            {deliveryFilter !== 'delivered' && (
+              <div className="grid grid-cols-4 gap-1.5 mb-1.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDeliveryFilter('pending');
+                    setCurrentTime(Date.now());
+                    setPendingTimeFilter(pendingTimeFilter === 'today' ? 'all' : 'today');
+                  }}
+                  className={cn(
+                    "flex-1 border rounded-xl p-1.5 flex flex-col items-center justify-center transition-all active:scale-95 duration-150 min-w-0 outline-none",
+                    pendingTimeFilter === 'today' && deliveryFilter === 'pending'
+                      ? "bg-rose-500 text-white border-rose-600 shadow-sm"
+                      : "bg-rose-50/50 border-rose-100 hover:bg-rose-50/80 dark:border-gray-800"
+                  )}
+                >
+                  <span className={cn("text-[9px] font-black uppercase tracking-tighter truncate w-full text-center leading-none", pendingTimeFilter === 'today' && deliveryFilter === 'pending' ? "text-white/80" : "text-rose-600")}>
+                    {appLanguage === 'ms' ? 'Hari Ini' : 'Today'}
+                  </span>
+                  <span className={cn("text-base font-black leading-none mt-1 sm:mt-1.5", pendingTimeFilter === 'today' && deliveryFilter === 'pending' ? "text-white" : "text-rose-700")}>{pendingStats.today}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDeliveryFilter('pending');
+                    setCurrentTime(Date.now());
+                    setPendingTimeFilter(pendingTimeFilter === 'tomorrow' ? 'all' : 'tomorrow');
+                  }}
+                  className={cn(
+                    "flex-1 border rounded-xl p-1.5 flex flex-col items-center justify-center transition-all active:scale-95 duration-150 min-w-0 outline-none",
+                    pendingTimeFilter === 'tomorrow' && deliveryFilter === 'pending'
+                      ? "bg-amber-500 text-white border-amber-600 shadow-sm"
+                      : "bg-amber-50/50 border-amber-100 hover:bg-amber-50/80 dark:border-gray-800"
+                  )}
+                >
+                  <span className={cn("text-[9px] font-black uppercase tracking-tighter truncate w-full text-center leading-none", pendingTimeFilter === 'tomorrow' && deliveryFilter === 'pending' ? "text-white/80" : "text-amber-600")}>
+                    {appLanguage === 'ms' ? 'Esok' : 'Tomorrow'}
+                  </span>
+                  <span className={cn("text-base font-black leading-none mt-1 sm:mt-1.5", pendingTimeFilter === 'tomorrow' && deliveryFilter === 'pending' ? "text-white" : "text-amber-700")}>{pendingStats.tomorrow}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDeliveryFilter('pending');
+                    setCurrentTime(Date.now());
+                    setPendingTimeFilter(pendingTimeFilter === '2days' ? 'all' : '2days');
+                  }}
+                  className={cn(
+                    "flex-1 border rounded-xl p-1.5 flex flex-col items-center justify-center transition-all active:scale-95 duration-150 min-w-0 outline-none",
+                    pendingTimeFilter === '2days' && deliveryFilter === 'pending'
+                      ? "bg-indigo-500 text-white border-indigo-600 shadow-sm"
+                      : "bg-indigo-50/50 border-indigo-100 hover:bg-indigo-50/80 dark:border-gray-800"
+                  )}
+                >
+                  <span className={cn("text-[9px] font-black uppercase tracking-tighter truncate w-full text-center leading-none", pendingTimeFilter === '2days' && deliveryFilter === 'pending' ? "text-white/80" : "text-indigo-600")}>
+                    {appLanguage === 'ms' ? '2 Hari' : '2 Days'}
+                  </span>
+                  <span className={cn("text-base font-black leading-none mt-1 sm:mt-1.5", pendingTimeFilter === '2days' && deliveryFilter === 'pending' ? "text-white" : "text-indigo-700")}>{pendingStats.day2}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDeliveryFilter('pending');
+                    setCurrentTime(Date.now());
+                    setPendingTimeFilter(pendingTimeFilter === '3days' ? 'all' : '3days');
+                  }}
+                  className={cn(
+                    "flex-1 border rounded-xl p-1.5 flex flex-col items-center justify-center transition-all active:scale-95 duration-150 min-w-0 outline-none",
+                    pendingTimeFilter === '3days' && deliveryFilter === 'pending'
+                      ? "bg-blue-500 text-white border-blue-600 shadow-sm"
+                      : "bg-blue-50/50 border-blue-100 hover:bg-blue-50/80 dark:border-gray-800"
+                  )}
+                >
+                  <span className={cn("text-[9px] font-black uppercase tracking-tighter truncate w-full text-center leading-none", pendingTimeFilter === '3days' && deliveryFilter === 'pending' ? "text-white/80" : "text-blue-600")}>
+                    {appLanguage === 'ms' ? '3 Hari' : '3 Days'}
+                  </span>
+                  <span className={cn("text-base font-black leading-none mt-1 sm:mt-1.5", pendingTimeFilter === '3days' && deliveryFilter === 'pending' ? "text-white" : "text-blue-700")}>{pendingStats.day3}</span>
+                </button>
+              </div>
+            )}
 
             {(() => {
               const matchedItems = localizedHistoryItems;

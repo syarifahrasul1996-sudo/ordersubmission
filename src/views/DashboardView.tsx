@@ -1,7 +1,9 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { useAppContext } from '../AppContext';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LabelList, CartesianGrid } from 'recharts';
-import { RefreshCcw, AlertCircle, Clock } from 'lucide-react';
+import { RefreshCcw, AlertCircle, Clock, X, ChevronDown } from 'lucide-react';
+import { calculateDeadline, generateMessages, parseDateStringToTimestamp } from '../utils';
+import { AppState } from '../types';
 
 const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbw5KpBvJyFpIXmsHueg4XPSRkZ0mg6kxHqjMGp3WEs8Hx_JodvKSoKEg6RMsdH54iCa/exec';
 
@@ -35,7 +37,11 @@ const jsonpRequest = (url: URL, callbackName: string) => {
       resolve(data);
     };
 
-    script.onerror = () => {
+    script.onerror = (event: any) => {
+      if (event && typeof event !== 'string') {
+        if (typeof (event as any).preventDefault === 'function') (event as any).preventDefault();
+        if (typeof (event as any).stopPropagation === 'function') (event as any).stopPropagation();
+      }
       cleanup();
       reject(new Error('JSONP request failed'));
     };
@@ -98,7 +104,7 @@ function SafeResponsiveContainer({ children }: SafeResponsiveContainerProps) {
 }
 
 export function DashboardView() {
-  const { appLanguage } = useAppContext();
+  const { appLanguage, pushView } = useAppContext();
   
   const [filterYear, setFilterYear] = useState<string>(new Date().getFullYear().toString());
   const [filterMonth, setFilterMonth] = useState<string>('all');
@@ -165,7 +171,8 @@ export function DashboardView() {
           try {
             const sId = extractId(sheetConfig.spreadsheetId);
             const sUrl = sheetConfig.scriptUrl?.trim() || globalScriptUrl;
-            const callbackName = 'jsonp_callback_dashboard_' + Math.round(1000000 * Math.random()) + '_' + sheetConfig.year;
+            const safeYear = String(sheetConfig.year).replace(/[^\w]/g, '_');
+            const callbackName = 'jsonp_callback_dashboard_' + Math.round(1000000 * Math.random()) + '_' + safeYear;
             const url = new URL(sUrl);
 
             url.searchParams.append('action', 'get_dashboard_orders');
@@ -175,7 +182,7 @@ export function DashboardView() {
 
             const data = await jsonpRequest(url, callbackName);
             if (data && data.status === 'success' && Array.isArray(data.orders)) {
-              return data.orders;
+              return data.orders.map((o: any) => ({ ...o, spreadsheetId: sId }));
             }
           } catch (e) {
             console.warn(`Failed to fetch dashboard orders for ${sheetConfig.year}:`, e);
@@ -210,7 +217,8 @@ export function DashboardView() {
     const sUrl = sheetConfig.scriptUrl?.trim() || globalScriptUrl;
     
     try {
-      const callbackName = 'jsonp_callback_dashboard_' + Math.round(100000 * Math.random()) + '_' + year;
+      const safeYear = String(year).replace(/[^\w]/g, '_');
+      const callbackName = 'jsonp_callback_dashboard_' + Math.round(100000 * Math.random()) + '_' + safeYear;
       const url = new URL(sUrl);
 
       url.searchParams.append('action', 'get_dashboard_orders');
@@ -221,7 +229,7 @@ export function DashboardView() {
       const data = await jsonpRequest(url, callbackName);
       
       if (data && data.status === 'success' && Array.isArray(data.orders)) {
-        setRemoteOrders(data.orders);
+        setRemoteOrders(data.orders.map((o: any) => ({ ...o, spreadsheetId: sId })));
         setLastUpdated(Date.now());
       } else {
         throw new Error(data?.message || 'Invalid response format');
@@ -273,6 +281,7 @@ export function DashboardView() {
     const urgencyCounts = new Map<string, number>();
     
     let invalidDatesCount = 0;
+    const invalidOrdersList: any[] = [];
 
     filteredOrders.forEach(order => {
       // Order ID deduplication
@@ -324,6 +333,7 @@ export function DashboardView() {
         yearCounts.set(yStr, (yearCounts.get(yStr) || 0) + 1);
       } else {
         invalidDatesCount++;
+        invalidOrdersList.push(order);
       }
     });
 
@@ -381,14 +391,116 @@ export function DashboardView() {
       urgencyChart,
       years,
       months,
-      invalidDatesCount
+      invalidDatesCount,
+      invalidOrdersList
     };
   }, [remoteOrders, appLanguage, filterYear, filterMonth, annualSheets]);
+
+  const [showInvalidModal, setShowInvalidModal] = useState(false);
+
+  const handleOrderClick = (order: any) => {
+    // Basic urgency mapping
+    const urgencyVal = (order.urgency || order.pakej || '').toLowerCase();
+    let urgency: AppState['urgency'] = 'normal';
+    if (urgencyVal.includes('super')) urgency = 'super';
+    else if (urgencyVal.includes('semi')) urgency = 'semi';
+    else if (urgencyVal.includes('urgent')) urgency = 'urgent';
+
+    const orderType = (order.order || order.jenisTempahan || 'Resume').trim();
+    
+    // Parse due date for state
+    const { timestamp: dueTs } = parseDateStringToTimestamp(order.due || '', -1);
+    const isDueInvalid = dueTs === -1 || !(order.due || '').trim();
+
+    const updates: Partial<AppState> = {
+      customerName: order.name || '',
+      customerPhone: order.phone || '',
+      customerOrder: order.order || order.jenisTempahan || '',
+      customerJenis: order.jenis || order.urgency || '',
+      customerDue: order.due || '',
+      mainType: orderType,
+      subType: order.pakej || '',
+      urgency: urgency,
+      dueTimestamp: dueTs === -1 ? Date.now() : dueTs,
+      spreadsheetId: order.spreadsheetId || '',
+      orderId: order.orderId || '',
+      googleSheetLink: order.googleSheetLink || order.link || '',
+      isEditMode: true,
+      isDueInvalid: isDueInvalid,
+      dashboardFilterMonth: filterMonth,
+      dashboardFilterYear: filterYear
+    };
+
+    pushView('customer-info', updates);
+    setShowInvalidModal(false);
+  };
 
   const COLORS = ['#0A84FF', '#34C759', '#FF9F0A', '#FF453A', '#BF5AF2', '#64D2FF'];
 
   return (
-    <div className="flex flex-col p-4 sm:p-6 space-y-6 pb-[calc(env(safe-area-inset-bottom)+2rem)] max-w-7xl mx-auto w-full">
+    <>
+      {/* Invalid Dates Modal - Placed at the top level to ensure correct fixed positioning */}
+      {showInvalidModal && (
+        <div className="fixed inset-0 z-[999] flex items-start justify-center p-4 pt-10 sm:pt-20">
+          <div 
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm" 
+            onClick={() => setShowInvalidModal(false)}
+          />
+          <div className="bg-surface w-full max-w-lg rounded-2xl shadow-2xl relative flex flex-col max-h-[85vh] overflow-hidden border border-gray-200 animate-in fade-in zoom-in duration-200">
+            <div className="p-4 border-b border-gray-100 flex items-center justify-between bg-white shrink-0">
+              <h3 className="font-black text-text uppercase tracking-wider text-sm">
+                {appLanguage === 'ms' ? 'Order Dengan Tarikh Tidak Sah' : 'Orders with Invalid Dates'}
+              </h3>
+              <button 
+                onClick={() => setShowInvalidModal(false)}
+                className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-400 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-4 overflow-y-auto space-y-3 bg-gray-50/30">
+              <p className="text-[11px] text-gray-500 leading-relaxed mb-4">
+                {appLanguage === 'ms' 
+                  ? 'Berikut adalah order dengan format tarikh yang tidak dapat diproses. Klik pada order untuk melihat Format Maklumat Pelanggan.'
+                  : 'Below are orders with date formats that cannot be processed. Click on an order to view its Customer Info Format.'}
+              </p>
+              <div className="divide-y divide-gray-100 border border-gray-200 rounded-xl overflow-hidden bg-white shadow-sm">
+                {stats.invalidOrdersList.map((order, idx) => (
+                  <button 
+                    key={idx} 
+                    onClick={() => handleOrderClick(order)}
+                    className="w-full text-left p-4 hover:bg-primary/5 transition-all group border-none outline-none"
+                  >
+                    <div className="flex justify-between items-start mb-1.5">
+                      <span className="font-bold text-sm text-text group-hover:text-primary transition-colors">{order.name || 'Anonymous'}</span>
+                      <span className="text-[9px] font-black text-primary bg-primary/10 px-2 py-0.5 rounded-full uppercase tracking-tighter">
+                        {order.order || order.jenisTempahan || '-'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center text-[11px] text-subtext">
+                      <span className="font-medium">{order.phone || '-'}</span>
+                      <div className="flex items-center text-amber-600 font-bold uppercase tracking-tighter text-[9px]">
+                        <AlertCircle className="w-3 h-3 mr-1" />
+                        {appLanguage === 'ms' ? 'Format Tarikh Salah' : 'Wrong Date Format'}
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="p-4 border-t border-gray-100 bg-white shrink-0">
+              <button 
+                onClick={() => setShowInvalidModal(false)}
+                className="w-full h-11 bg-surface border border-gray-200 text-text font-bold rounded-xl active:scale-95 transition-all text-sm shadow-sm"
+              >
+                {appLanguage === 'ms' ? 'Tutup' : 'Close'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="flex flex-col p-4 sm:p-6 space-y-6 pb-[calc(env(safe-area-inset-bottom)+2rem)] max-w-7xl mx-auto w-full">
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-2">
         <div>
           <h2 className="text-2xl font-black text-text tracking-tighter">
@@ -406,37 +518,47 @@ export function DashboardView() {
           <button
             onClick={() => fetchDashboardOrders(filterYear)}
             disabled={isLoading}
-            className={`h-10 px-4 rounded-xl font-bold border border-gray-200 flex items-center justify-center transition-all ${
+            className={`h-10 w-10 shrink-0 rounded-xl font-bold border border-gray-200 flex items-center justify-center transition-all ${
               isLoading ? 'opacity-50 cursor-not-allowed bg-gray-50' : 'bg-surface hover:bg-gray-50 active:scale-95 text-text'
             }`}
+            title={appLanguage === 'ms' ? 'Muat Semula' : 'Refresh'}
           >
-            <RefreshCcw className={`w-4 h-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
-            {appLanguage === 'ms' ? 'Muat Semula' : 'Refresh'}
+            <RefreshCcw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
           </button>
           
-          <select 
-            value={filterYear}
-            onChange={(e) => setFilterYear(e.target.value)}
-            className="flex-1 sm:flex-none h-10 bg-surface border border-gray-200 text-text text-sm font-semibold rounded-xl px-3 outline-none focus:border-primary/50 focus:ring-2 ring-primary/20 cursor-pointer shadow-sm"
-          >
-            <option value="all">{appLanguage === 'ms' ? 'Semua Masa' : 'All Time'}</option>
-            {stats.years.map(year => (
-              <option key={year} value={year}>{year}</option>
-            ))}
-          </select>
+          <div className="relative flex-1 sm:flex-none">
+            <select 
+              value={filterYear}
+              onChange={(e) => setFilterYear(e.target.value)}
+              className="w-full h-10 bg-surface border border-gray-100/50 text-text text-sm font-bold rounded-xl pl-3 pr-8 outline-none focus:border-primary/50 focus:ring-2 ring-primary/20 cursor-pointer shadow-sm appearance-none transition-all"
+            >
+              <option value="all">{appLanguage === 'ms' ? 'Semua Masa' : 'All Time'}</option>
+              {stats.years.map(year => (
+                <option key={year} value={year}>{year}</option>
+              ))}
+            </select>
+            <div className="absolute top-0 right-2.5 h-full flex items-center pointer-events-none">
+              <ChevronDown className="w-4 h-4 text-subtext" />
+            </div>
+          </div>
           
           {filterYear !== 'all' && (
-            <select 
-              value={filterMonth}
-              onChange={(e) => setFilterMonth(e.target.value)}
-              className="flex-1 sm:flex-none h-10 bg-surface border border-gray-200 text-text text-sm font-semibold rounded-xl px-3 outline-none focus:border-primary/50 focus:ring-2 ring-primary/20 cursor-pointer shadow-sm"
-            >
-              <option value="all">{appLanguage === 'ms' ? 'Sepanjang Tahun' : 'Whole Year'}</option>
-              {stats.months.map((month, idx) => {
-                const mVal = String(idx + 1).padStart(2, '0');
-                return <option key={mVal} value={mVal}>{month}</option>;
-              })}
-            </select>
+            <div className="relative flex-1 sm:flex-none">
+              <select 
+                value={filterMonth}
+                onChange={(e) => setFilterMonth(e.target.value)}
+                className="w-full h-10 bg-surface border border-gray-100/50 text-text text-sm font-bold rounded-xl pl-3 pr-8 outline-none focus:border-primary/50 focus:ring-2 ring-primary/20 cursor-pointer shadow-sm appearance-none transition-all"
+              >
+                <option value="all">{appLanguage === 'ms' ? 'Sepanjang Tahun' : 'Whole Year'}</option>
+                {stats.months.map((month, idx) => {
+                  const mVal = String(idx + 1).padStart(2, '0');
+                  return <option key={mVal} value={mVal}>{month}</option>;
+                })}
+              </select>
+              <div className="absolute top-0 right-2.5 h-full flex items-center pointer-events-none">
+                <ChevronDown className="w-4 h-4 text-subtext" />
+              </div>
+            </div>
           )}
         </div>
       </div>
@@ -478,18 +600,21 @@ export function DashboardView() {
           </div>
 
           {stats.invalidDatesCount > 0 && (
-            <div className="bg-amber-50 text-amber-700 p-3 rounded-xl flex items-center border border-amber-100 shadow-sm text-xs font-medium">
+            <button 
+              onClick={() => setShowInvalidModal(true)}
+              className="w-full text-left bg-amber-50 text-amber-700 p-3 rounded-xl flex items-center border border-amber-100 shadow-sm text-xs font-medium cursor-pointer hover:bg-amber-100/50 transition-colors"
+            >
               <AlertCircle className="w-4 h-4 mr-2 shrink-0" />
-              <p>
+              <p className="flex-1">
                 {appLanguage === 'ms' 
-                  ? `${stats.invalidDatesCount} order mempunyai tarikh yang tidak sah (tidak ditunjukkan dalam carta bulanan).`
-                  : `${stats.invalidDatesCount} orders have invalid dates (excluded from monthly chart).`}
+                  ? `${stats.invalidDatesCount} order mempunyai tarikh yang tidak sah (tidak ditunjukkan dalam carta bulanan). Klik untuk lihat.`
+                  : `${stats.invalidDatesCount} orders have invalid dates (excluded from monthly chart). Click to view.`}
               </p>
-            </div>
+            </button>
           )}
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
-            <div className="bg-surface border border-gray-100 rounded-[24px] p-5 shadow-sm space-y-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 pb-8">
+            <div className="bg-surface border border-gray-100 rounded-[20px] p-4 shadow-sm space-y-6">
               <div>
                 <h3 className="text-sm font-bold text-text mb-4">
                   {filterYear === 'all'
@@ -552,7 +677,7 @@ export function DashboardView() {
               </div>
             </div>
 
-            <div className="bg-surface border border-gray-100 rounded-[24px] p-5 shadow-sm space-y-6">
+            <div className="bg-surface border border-gray-100 rounded-[20px] p-4 shadow-sm space-y-6">
               <div>
                 <h3 className="text-sm font-bold text-text mb-4">{appLanguage === 'ms' ? 'Kategori Tempahan' : 'Order Categories'}</h3>
                 <div className="h-[200px] w-full">
@@ -606,6 +731,8 @@ export function DashboardView() {
           </div>
         </>
       )}
+
     </div>
+    </>
   );
 }
