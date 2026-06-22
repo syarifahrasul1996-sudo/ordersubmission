@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Wifi, WifiOff, Cloud, RefreshCw, Settings, Sun, Moon, Languages, Check, History } from 'lucide-react';
+import { Wifi, WifiOff, Cloud, RefreshCw, Settings, Sun, Moon, Languages, Check, History, FileDown } from 'lucide-react';
 import { useAppContext } from '../AppContext';
 import { cn } from '../cn';
 
@@ -191,7 +191,7 @@ export function SettingsDropdown() {
 
             {/* Cloud synchronization state */}
             <div className="flex justify-between items-center py-0.5">
-              <span className="text-subtext">{appLanguage === 'ms' ? 'Status Data' : 'Sync Log'}</span>
+              <span className="text-subtext">{appLanguage === 'ms' ? 'Status Data' : 'Update Log'}</span>
               <span className="font-semibold text-text flex items-center gap-1">
                 {lastSyncTime ? <Check className="w-3 h-3 text-emerald-500" /> : <Cloud className="w-3 h-3 text-subtext" />}
                 {getRelativeTime(lastSyncTime)}
@@ -206,7 +206,7 @@ export function SettingsDropdown() {
               }
             </div>
 
-            {/* Sync Contacts Button */}
+            {/* Export Contacts Button */}
             <div className="pt-2 border-t border-gray-100 dark:border-gray-800">
               <button
                 onClick={(e) => {
@@ -216,8 +216,8 @@ export function SettingsDropdown() {
                 }}
                 className="w-full flex items-center justify-center gap-1.5 bg-primary text-white py-2 rounded-xl font-bold text-[11px] hover:bg-primary-hover active:scale-[0.98] transition-all cursor-pointer"
               >
-                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
-                {appLanguage === 'ms' ? 'Sync Google Contacts' : 'Sync Google Contacts'}
+                <FileDown className="w-3.5 h-3.5" />
+                {appLanguage === 'ms' ? 'Export Contacts (CSV)' : 'Export Contacts (CSV)'}
               </button>
             </div>
           </div>

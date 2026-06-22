@@ -17,7 +17,7 @@ export function Header() {
     'history': { ms: 'Sejarah Tempahan', en: 'Order History' },
     'dashboard': { ms: 'Tinjauan Perniagaan', en: 'Business Overview' },
     'customer-info': { ms: 'Maklumat Pelanggan', en: 'Customer Info' },
-    'contacts-sync': { ms: 'Sinkronisasi Kenalan', en: 'Sync Contacts' }
+    'contacts-sync': { ms: 'Eksport Kenalan (CSV)', en: 'Export Contacts (CSV)' }
   };
 
   const title = titles[currentView]?.[appLanguage] || (appLanguage === 'ms' ? 'Butiran' : 'Details');
