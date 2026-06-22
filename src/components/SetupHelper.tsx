@@ -304,14 +304,50 @@ function doGet(e) {
       
       var result = { status: "success", link: foundLink };
       if (callback) {
-        return ContentService.createTextOutput(callback + '(' + JSON.stringify(result) + ')')
+        return ContentService.createTextOutput(callback + "(" + JSON.stringify(result) + ")")
           .setMimeType(ContentService.MimeType.JAVASCRIPT);
       }
       return jsonResponse(result);
     } catch(err) {
       var errResult = { status: "error", message: err.toString() };
       if (callback) {
-        return ContentService.createTextOutput(callback + '(' + JSON.stringify(errResult) + ')')
+        return ContentService.createTextOutput(callback + "(" + JSON.stringify(errResult) + ")")
+          .setMimeType(ContentService.MimeType.JAVASCRIPT);
+      }
+      return jsonResponse(errResult);
+    }
+  }
+
+  if (action === "delete_order") {
+    var orderId = e.parameter.orderId;
+    var spreadsheetId = e.parameter.spreadsheetId;
+    var callback = e.parameter.callback;
+
+    try {
+      var ss = SpreadsheetApp.openById(spreadsheetId);
+      var sheets = ss.getSheets();
+      var deleted = false;
+
+      for (var s = 0; s < sheets.length; s++) {
+        var sheet = sheets[s];
+        var row = findRowByOrderId(sheet, orderId);
+        if (row) {
+          sheet.deleteRow(row);
+          deleted = true;
+          break;
+        }
+      }
+
+      var result = { status: "success", deleted: deleted };
+      if (callback) {
+        return ContentService.createTextOutput(callback + "(" + JSON.stringify(result) + ")")
+          .setMimeType(ContentService.MimeType.JAVASCRIPT);
+      }
+      return jsonResponse(result);
+    } catch(err) {
+      var errResult = { status: "error", message: err.toString() };
+      if (callback) {
+        return ContentService.createTextOutput(callback + "(" + JSON.stringify(errResult) + ")")
           .setMimeType(ContentService.MimeType.JAVASCRIPT);
       }
       return jsonResponse(errResult);
