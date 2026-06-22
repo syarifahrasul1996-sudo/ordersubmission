@@ -471,7 +471,7 @@ export function ContactsSyncView() {
             </div>
             <div className="space-y-1">
               <h3 className="text-sm font-bold text-text flex items-center gap-2">
-                {appLanguage === 'ms' ? 'Gabung Data Tempahan (2024–2026)' : 'Database Sync (2024 - 2026)'}
+                {appLanguage === 'ms' ? 'Gabung Data Tempahan (2024–2026)' : 'Load Orders (2024 - 2026)'}
               </h3>
               <p className="text-[11px] text-subtext leading-relaxed">
                 {appLanguage === 'ms'
@@ -498,12 +498,12 @@ export function ContactsSyncView() {
             ) : hasLoadedCloud ? (
               <>
                 <RefreshCw className="w-3.5 h-3.5" />
-                <span>{appLanguage === 'ms' ? 'Segarkan Semula' : 'Refetch Database'}</span>
+                <span>{appLanguage === 'ms' ? 'Segarkan Semula' : 'Refresh Records'}</span>
               </>
             ) : (
               <>
                 <RefreshCw className="w-3.5 h-3.5" />
-                <span>{appLanguage === 'ms' ? 'Muat Semula Database' : 'Sync Database'}</span>
+                <span>{appLanguage === 'ms' ? 'Muat Semula Rekod' : 'Load Records'}</span>
               </>
             )}
           </button>
@@ -525,7 +525,7 @@ export function ContactsSyncView() {
               <span className="block text-xl font-black text-text mt-1">{history.length}</span>
             </div>
             <div className="bg-surface p-3 rounded-2xl border border-gray-100/50 dark:border-gray-800 text-center">
-              <span className="block text-[10px] uppercase font-black tracking-wider text-subtext">Cloud Registers</span>
+              <span className="block text-[10px] uppercase font-black tracking-wider text-subtext">Cloud Records</span>
               <span className="block text-xl font-black text-indigo-600 dark:text-indigo-400 mt-1">{cloudOrders.length}</span>
             </div>
             <div className="bg-surface p-3 rounded-2xl border border-gray-100/50 dark:border-gray-800 text-center">
@@ -534,7 +534,7 @@ export function ContactsSyncView() {
             </div>
             <div className="bg-surface p-3 rounded-2xl border border-gray-100/50 dark:border-gray-800 text-center flex items-center justify-center">
               <span className="px-3 py-1.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">
-                {appLanguage === 'ms' ? 'Database Dimuat' : 'Database Loaded'}
+                {appLanguage === 'ms' ? 'Rekod Dimuat' : 'Records Loaded'}
               </span>
             </div>
           </div>

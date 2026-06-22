@@ -26,7 +26,7 @@ function generateOrderId() {
 }
 
 export function CustomerInfoView() {
-  const { appLanguage, state, setState, goHome, viewStack, updateOrderHistoryState, addToOfflineQueue } = useAppContext();
+  const { appLanguage, state, setState, goHome, viewStack, updateOrderHistoryState, addToOfflineQueue, saveAsDraft: contextSaveAsDraft } = useAppContext();
   const isActive = viewStack[viewStack.length - 1] === 'customer-info';
 
   const computeInitialValues = useCallback(() => {
@@ -606,6 +606,28 @@ setInfo(updatedInfo);
     }
   };
 
+  const handleSaveDraft = () => {
+    // Sync state one last time before saving draft
+    setState(prev => ({
+      ...prev,
+      customerName: name,
+      customerPhone: phone,
+      customerOrder: order,
+      customerTemplate: template,
+      customerBahasa: bahasa,
+      customerAddOn: addOn,
+      customerJenis: jenis,
+      customerDue: due,
+      dueTimestamp: dueTimestamp,
+      customerInfo: info,
+      orderLink: link,
+      orderId: orderId,
+    }));
+    
+    contextSaveAsDraft();
+    showToastMessage(appLanguage === 'ms' ? 'Draf disimpan secara lokal!' : 'Draft saved locally!');
+  };
+
   const handleAutoFill = () => {
     let newName = name;
     let newOrder = order;
@@ -908,7 +930,15 @@ setInfo(updatedInfo);
           </div>
         )}
 
-        <div className="pt-2">
+        <div className="pt-2 space-y-2">
+          <button
+            onClick={handleSaveDraft}
+            className="w-full h-[48px] bg-white dark:bg-gray-800 text-blue-600 border-2 border-blue-600/20 font-bold text-[14px] rounded-[16px] flex items-center justify-center space-x-2 active:scale-[0.98] transition-all hover:bg-blue-50 dark:hover:bg-blue-900/10"
+          >
+            <RefreshCcw className="w-4 h-4" />
+            <span>{appLanguage === 'ms' ? 'Simpan Sebagai Draf' : 'Save as Draft'}</span>
+          </button>
+
           <button
             onClick={handleSaveInfo}
             disabled={isSaving}

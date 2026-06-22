@@ -84,6 +84,9 @@ export function HistoryView() {
     clearHistory,
     deleteOrderFromHistory,
     loadOrder,
+    drafts,
+    deleteDraft,
+    loadDraft,
     pushView,
     appLanguage,
     updateSpecificHistoryItem,
@@ -99,7 +102,7 @@ export function HistoryView() {
   const [syncingId, setSyncingId] = useState<string | null>(null);
   const [deliveryFilter, setDeliveryFilter] = useState<'all' | 'delivered' | 'pending'>('all');
   const [pendingTimeFilter, setPendingTimeFilter] = useState<'all' | 'today' | 'tomorrow' | '2days' | '3days'>('all');
-  const [activeTab, setActiveTab] = useState<'local' | 'remote'>('local');
+  const [activeTab, setActiveTab] = useState<'local' | 'remote' | 'drafts'>('local');
   const [searchQuery, setSearchQuery] = useState('');
   const [localSearchQuery, setLocalSearchQuery] = useState('');
   const [remoteResults, setRemoteResults] = useState<any[]>([]);
@@ -966,14 +969,26 @@ export function HistoryView() {
           <button
             type="button"
             onClick={() => setActiveTab('local')}
-            className={`flex-1 text-center text-xs font-bold py-2.5 px-3 rounded-lg transition-all duration-200 flex items-center justify-center space-x-1.5 ${
+            className={`flex-1 text-center text-[10px] sm:text-xs font-bold py-2 px-1 rounded-lg transition-all duration-200 flex items-center justify-center space-x-1 ${
               activeTab === 'local'
                 ? 'bg-white text-primary shadow-sm'
                 : 'text-subtext/70 hover:text-text hover:bg-white/40'
             }`}
           >
             <Clock className="w-3.5 h-3.5" />
-            <span>{appLanguage === 'ms' ? 'Sejarah Tempatan' : 'Local History'}</span>
+            <span className="truncate">{appLanguage === 'ms' ? 'Sejarah' : 'History'}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('drafts')}
+            className={`flex-1 text-center text-[10px] sm:text-xs font-bold py-2 px-1 rounded-lg transition-all duration-200 flex items-center justify-center space-x-1 ${
+              activeTab === 'drafts'
+                ? 'bg-white text-primary shadow-sm'
+                : 'text-subtext/70 hover:text-text hover:bg-white/40'
+            }`}
+          >
+            <Save className="w-3.5 h-3.5" />
+            <span className="truncate">{appLanguage === 'ms' ? 'Draf' : 'Drafts'}</span>
           </button>
           <button
             type="button"
@@ -981,36 +996,37 @@ export function HistoryView() {
               setActiveTab('remote');
               setSearchError('');
             }}
-            className={`flex-1 text-center text-xs font-bold py-2.5 px-3 rounded-lg transition-all duration-200 flex items-center justify-center space-x-1.5 ${
+            className={`flex-1 text-center text-[10px] sm:text-xs font-bold py-2 px-1 rounded-lg transition-all duration-200 flex items-center justify-center space-x-1 ${
               activeTab === 'remote'
                 ? 'bg-white text-primary shadow-sm'
                 : 'text-subtext/70 hover:text-text hover:bg-white/40'
             }`}
           >
             <Database className="w-3.5 h-3.5" />
-            <span>{appLanguage === 'ms' ? 'Cari Database' : 'Search Database'}</span>
+            <span className="truncate">{appLanguage === 'ms' ? 'Cari Cloud' : 'Cloud Search'}</span>
           </button>
         </div>
-        {activeTab === 'local' ? (
-          history.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-20 text-subtext space-y-4">
-              <Clock className="w-16 h-16 opacity-50" />
-              <p className="font-bold">
-                {appLanguage === 'ms' ? 'Tiada sejarah tempahan' : 'No order history'}
-              </p>
-              <button
-                type="button"
-                onClick={() => handleGlobalSync(false)}
-                disabled={refreshing}
-                className="inline-flex items-center text-xs font-semibold px-4 py-2 rounded-xl bg-gray-100 text-subtext border border-transparent hover:bg-gray-200 active:scale-95 transition-all duration-200"
-              >
-                <RefreshCcw className={`w-3.5 h-3.5 mr-1.5 ${refreshing ? 'animate-spin' : ''}`} />
-                {appLanguage === 'ms' ? 'Sync dari Google Sheet' : 'Sync from Google Sheet'}
-              </button>
-            </div>
-          ) : (
+        {activeTab === 'local' && (
           <div className="space-y-4">
-            {/* Carian Tempatan / Local Search Input */}
+            {history.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-20 text-subtext space-y-4">
+                <Clock className="w-16 h-16 opacity-50" />
+                <p className="font-bold">
+                  {appLanguage === 'ms' ? 'Tiada sejarah tempahan' : 'No order history'}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => handleGlobalSync(false)}
+                  disabled={refreshing}
+                  className="inline-flex items-center text-xs font-semibold px-4 py-2 rounded-xl bg-gray-100 text-subtext border border-transparent hover:bg-gray-200 active:scale-95 transition-all duration-200"
+                >
+                  <RefreshCcw className={`w-3.5 h-3.5 mr-1.5 ${refreshing ? 'animate-spin' : ''}`} />
+                  {appLanguage === 'ms' ? 'Sync dari Google Sheet' : 'Sync from Google Sheet'}
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {/* Carian Tempatan / Local Search Input */}
             <div className="flex gap-2 mt-2.5">
               <div className="relative flex-1">
                 <input
@@ -1492,527 +1508,614 @@ export function HistoryView() {
                     </div>
                   </div>
                 );
-                })}
-              </div>
-            );
+              })}
+            </div>
+          );
         })()}
       </div>
-      )
+    )}
+  </div>
+)}
+
+{activeTab === 'drafts' && (
+      <div className="space-y-4">
+        <div className="mb-1">
+          <div className="bg-blue-50/50 p-3 rounded-2xl border border-blue-100/50">
+            <p className="text-[11px] text-blue-700 leading-relaxed font-medium">
+              {appLanguage === 'ms' 
+                ? 'Draf disimpan secara tempatan sahaja dan tidak dihantar ke Google Sheets. Tekan draf untuk memuatkan semula borang.' 
+                : 'Drafts are saved locally only and are not sent to Google Sheets. Tap a draft to reload the form.'}
+            </p>
+          </div>
+        </div>
+
+        {drafts.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-20 text-subtext space-y-4">
+            <Save className="w-16 h-16 opacity-30" />
+            <p className="font-bold">
+              {appLanguage === 'ms' ? 'Tiada draf dijumpai' : 'No drafts found'}
+            </p>
+          </div>
         ) : (
-          /* Database Search Tab */
-          <div className="space-y-4 mt-2.5">
-            <div className="bg-surface border border-gray-100 p-4 rounded-xl shadow-sm space-y-3">
-              <div className="relative">
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') handleRemoteSearch();
-                  }}
-                  placeholder={appLanguage === 'ms' ? 'Cari nama, Order ID, atau no. telefon...' : 'Search name, Order ID, or phone number...'}
-                  className="w-full h-11 bg-gray-50 rounded-xl pl-10 pr-4 font-semibold text-text border border-gray-200 outline-none focus:bg-white focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all text-xs placeholder:text-gray-400"
-                />
-                <Search className="w-4 h-4 text-subtext/70 absolute left-3.5 top-3.5" />
-              </div>
-              <button
-                type="button"
-                onClick={handleRemoteSearch}
-                disabled={isSearching || !searchQuery.trim()}
-                className="w-full h-11 bg-primary text-white font-bold rounded-xl flex items-center justify-center space-x-2 active:scale-[0.98] transition-all disabled:opacity-50 text-xs shadow-sm"
-              >
-                {isSearching ? (
-                  <RefreshCcw className="w-3.5 h-3.5 animate-spin text-white" />
-                ) : (
-                  <Search className="w-3.5 h-3.5" />
-                )}
-                <span>{appLanguage === 'ms' ? 'Cari Database' : 'Search Database'}</span>
-              </button>
-            </div>
+          <div className="space-y-2.5">
+            {drafts.map((draft) => {
+              const date = new Date(draft.timestamp);
+              const formattedDate = date.toLocaleString(appLanguage === 'ms' ? 'ms-MY' : 'en-US', {
+                day: 'numeric',
+                month: 'short',
+                hour: '2-digit',
+                minute: '2-digit'
+              });
 
-            {/* Pautan & Tetapan Database (3 Tahun) */}
-            <div className="bg-surface border border-gray-100 rounded-xl shadow-sm overflow-hidden transition-all duration-200">
-              <button
-                type="button"
-                onClick={() => setShowDbSettings(!showDbSettings)}
-                className="w-full px-4 py-3 flex items-center justify-between text-xs font-bold text-text hover:bg-gray-50/50 transition-colors"
-                id="btn-db-settings-toggle"
-              >
-                <div className="flex items-center space-x-2">
-                  <Settings className="w-4 h-4 text-primary" />
-                  <span>{appLanguage === 'ms' ? 'Pautan & Tetapan Database Tahunan' : 'Annual Database Connection & Settings'}</span>
-                </div>
-                {showDbSettings ? (
-                  <ChevronUp className="w-4 h-4 text-subtext/70" />
-                ) : (
-                  <ChevronDown className="w-4 h-4 text-subtext/70" />
-                )}
-              </button>
-
-              {showDbSettings && (
-                <div className="p-4 border-t border-gray-100 bg-gray-50/30 space-y-4 animate-in slide-in-from-top-1 duration-150">
-                  <div className="bg-blue-50/50 p-2.5 rounded-lg border border-blue-100 text-[11px] text-blue-800 leading-relaxed">
-                    {appLanguage === 'ms' 
-                      ? 'Konfigurasikan Spreadsheet ID bagi setiap tahun. Anda boleh memasukkan pautan Google Sheet penuh (URL) atau ID terus.'
-                      : 'Configure the Spreadsheet ID for each year. You can paste the full Google Sheet Link (URL) or directly the Spreadsheet ID.'}
-                  </div>
-
-                  {/* Web App Script URL block shared for all */}
-                  <div className="p-3 bg-white rounded-lg border border-gray-100 shadow-sm space-y-1.5">
-                    <span className="text-[10px] font-black uppercase tracking-wider text-primary block">
-                      {appLanguage === 'ms' ? 'Pautan Web App Apps Script (Kongsi Untuk Semua):' : 'Global Web App Apps Script URL (Shared for All):'}
-                    </span>
-                    <input
-                      type="text"
-                      className="w-full text-[11px] bg-gray-50 font-mono rounded px-2.5 py-1.5 border border-gray-200 outline-none text-text focus:bg-white"
-                      value={globalScriptUrl}
-                      onChange={(e) => setGlobalScriptUrl(e.target.value)}
-                      placeholder="https://script.google.com/macros/s/.../exec"
-                    />
-                  </div>
-
-                  <div className="space-y-4">
-                    {annualSheets.map((sheet, index) => (
-                      <div key={index} className="p-3 bg-white rounded-lg border border-gray-100 shadow-sm space-y-2.5 relative">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center space-x-2">
-                            <label className="text-[10px] font-black uppercase tracking-wider text-primary shrink-0">
-                              {appLanguage === 'ms' ? 'Tahun:' : 'Year:'}
-                            </label>
-                            <input
-                              type="text"
-                              value={sheet.year}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                setAnnualSheets(prev => prev.map((s, idx) => idx === index ? { ...s, year: val } : s));
-                              }}
-                              className="bg-gray-50 px-2 py-0.5 rounded text-[10px] font-bold text-text border border-gray-200 max-w-[80px] outline-none text-left"
-                              placeholder="e.g. 2024"
-                            />
-                          </div>
-                          {annualSheets.length > 1 && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setConfirmAction({
-                                  title: appLanguage === 'ms' ? 'Padam Konfigurasi?' : 'Delete Configuration?',
-                                  message: appLanguage === 'ms' 
-                                    ? `Anda pasti mahu memadam konfigurasi tahun ${sheet.year}?` 
-                                    : `Are you sure you want to delete year ${sheet.year} configuration?`,
-                                  onConfirm: () => {
-                                    setAnnualSheets(prev => prev.filter((_, idx) => idx !== index));
-                                    setConfirmAction(null);
-                                  }
-                                });
-                              }}
-                              className="p-1 hover:bg-red-50 text-red-500 rounded transition-colors"
-                              title={appLanguage === 'ms' ? 'Hapus' : 'Delete'}
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-                        </div>
-
-                        <div className="space-y-1">
-                          <span className="text-[10px] text-subtext font-medium block">
-                            {appLanguage === 'ms' ? 'Pautan / ID Google Sheet:' : 'Google Sheet URL / Spreadsheet ID:'}
-                          </span>
-                          <div className="relative">
-                            <input
-                              type="text"
-                              value={sheet.spreadsheetId}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                setAnnualSheets(prev => prev.map((s, idx) => idx === index ? { ...s, spreadsheetId: val } : s));
-                              }}
-                              placeholder={appLanguage === 'ms' ? 'Salin pautan Google Sheet di sini...' : 'Paste Google Sheet Link here...'}
-                              className="w-full text-[11px] bg-gray-50 font-mono rounded px-2.5 py-1.5 border border-gray-200 outline-none text-text focus:bg-white"
-                            />
-                            {sheet.spreadsheetId && (
-                              <span className="text-[9px] text-green-600 block mt-1 font-semibold">
-                                ✓ ID: {sheet.spreadsheetId.includes('docs.google.com/spreadsheets/d/') 
-                                  ? (sheet.spreadsheetId.match(/\/d\/([a-zA-Z0-9-_]+)/)?.[1] || 'URL valid') 
-                                  : 'Raw ID'}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setAnnualSheets(prev => [...prev, { year: '', spreadsheetId: '', scriptUrl: '' }]);
-                    }}
-                    className="w-full py-2.5 border border-dashed border-gray-300 hover:border-blue-400 hover:text-blue-600 text-subtext font-bold rounded-xl flex items-center justify-center space-x-1.5 text-xs active:scale-[0.98] transition-all bg-white"
-                  >
-                    <span className="text-base font-normal">+</span>
-                    <span>{appLanguage === 'ms' ? 'Tambah Tahun Baru' : 'Add New Year'}</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      localStorage.setItem('db_annual_sheets', JSON.stringify(annualSheets));
-                      localStorage.setItem('db_global_script_url', globalScriptUrl);
-                      // Save and sync with context state
-                      const firstActive = annualSheets.find(s => s.spreadsheetId !== '');
-                      if (firstActive) {
-                        const extractId = (input: string) => {
-                          if (input.includes('docs.google.com/spreadsheets/d/')) {
-                            const match = input.match(/\/d\/([a-zA-Z0-9-_]+)/);
-                            return match ? match[1] : input;
-                          }
-                          return input;
-                        };
-                        updateOrderHistoryState({ spreadsheetId: extractId(firstActive.spreadsheetId) });
-                      }
-                      setAlertMsg({
-                        type: 'success',
-                        message: appLanguage === 'ms' 
-                          ? 'Konfigurasi pautan database tahunan berjaya disimpan!' 
-                          : 'Annual database configurations successfully saved!'
-                      });
-                      setShowDbSettings(false);
-                    }}
-                    className="w-full h-10 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl flex items-center justify-center space-x-1 text-xs active:scale-95 transition-all shadow-sm"
-                  >
-                    <Save className="w-3.5 h-3.5" />
-                    <span>{appLanguage === 'ms' ? 'Simpan Tetapan' : 'Save Connection Settings'}</span>
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {searchError && (
-              <div className="p-3 bg-red-50 text-red-700 rounded-xl text-xs font-semibold border border-red-100 flex items-center space-x-2 animate-fade-in">
-                <AlertCircle className="w-3.5 h-3.5 shrink-0 text-red-500" />
-                <span>{searchError}</span>
-              </div>
-            )}
-
-            {isSearching && (
-              <div className="flex flex-col items-center justify-center py-16 text-subtext">
-                <RefreshCcw className="w-7 h-7 mb-3 animate-spin text-primary opacity-80" />
-                <p className="font-bold text-xs select-none">
-                  {appLanguage === 'ms' ? 'Sedang mencari di lembaran tahunan...' : 'Searching across annual sheets...'}
-                </p>
-              </div>
-            )}
-
-            {!isSearching && remoteResults.length > 0 && (
-              <div className="space-y-2.5 animate-fade-in-up">
-                <div className="flex items-center justify-between pl-1">
-                  <p className="text-[10px] font-bold text-subtext uppercase tracking-widest">
-                    {appLanguage === 'ms' 
-                      ? `Hasil Carian (${remoteResults.length} Rekod)` 
-                      : `Search Results (${remoteResults.length} Records)`}
-                  </p>
-                  <button 
-                    type="button"
-                    onClick={() => {
-                      setRemoteResults([]);
-                      setSearchQuery('');
-                    }}
-                    className="text-[10px] font-bold text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 uppercase tracking-widest px-2 py-1 rounded transition-colors flex flex-shrink-0 items-center justify-center"
-                    id="btn-clear-search"
-                  >
-                    {appLanguage === 'ms' ? 'Padam Carian' : 'Clear Results'}
-                  </button>
-                </div>
-
-                {remoteResults.map((item, idx) => {
-                  const isDelivered = !!item.isDelivered;
-                  const orderId = item.orderId || `REMOTE-${idx}`;
-
-                  return (
-                    <div
-                      key={orderId + '-' + idx}
-                      onClick={() => handleLoadRemoteOrder(item)}
-                      className={`bg-surface border relative overflow-hidden ${
-                        isDelivered
-                          ? 'border-blue-100 bg-blue-50/5 hover:border-blue-200'
-                          : 'border-gray-200/60 hover:border-gray-300 shadow-sm'
-                      } rounded-xl p-2.5 flex flex-col space-y-1 hover:bg-gray-50/65 cursor-pointer active:scale-[0.995] transition-all duration-200`}
-                    >
-                      {/* Left Accent Bar */}
-                      <div className={`absolute left-0 top-0 bottom-0 w-1 rounded-r ${isDelivered ? 'bg-blue-400' : 'bg-gray-300'}`} />
-
-                      <div className="pl-1.5">
-                        <div className="flex justify-between items-start border-b border-gray-100/60 pb-1">
-                          <div className="flex-1">
-                            <div className="flex flex-wrap items-center gap-1 mb-0.5">
-                              <div
-                                className={`flex items-center ${
-                                  isDelivered
-                                    ? 'text-blue-500 font-bold'
-                                    : 'text-primary/75 font-semibold'
-                                } text-[10px] sm:text-[10.5px] uppercase tracking-wider`}
-                              >
-                                {isDelivered ? (
-                                  <Check className="w-3 h-3 mr-1 text-blue-500" />
-                                ) : (
-                                  <Calendar className="w-3 h-3 mr-1" />
-                                )}
-                                {item.due || (appLanguage === 'ms' ? 'Tiada Tarikh' : 'No Date')}
-
-                                {isDelivered && (
-                                  <span className="ml-1 text-blue-500 lowercase">
-                                    ({appLanguage === 'ms' ? 'Dihantar' : 'Delivered'})
-                                  </span>
-                                )}
-                              </div>
-                              <span className="px-2 py-0.5 rounded-full text-[9px] font-black tracking-wider bg-purple-100 text-purple-700">
-                                <Database className="w-2.5 h-2.5 inline mr-0.5" />
-                                {item.sheetName || 'Google Sheet'}
-                              </span>
-                            </div>
-
-                            <p className="font-bold text-[13px] sm:text-[13.5px] leading-tight text-[#111827]">
-                              {item.order === 'Lain-lain' || item.order === 'Lain2'
-                                ? item.order
-                                : item.order}
-                              {item.name ? ` - ${formatCustomerName(item.name)}` : ''}
-                            </p>
-                          </div>
-                        </div>
-
-                        <div className="flex flex-wrap gap-x-2.5 gap-y-0.5 text-[11px] mt-1 leading-normal">
-                          {item.template && (
-                            <div>
-                              <span className="text-subtext">T: </span>
-                              <span className="font-medium text-[#374151]">{item.template}</span>
-                            </div>
-                          )}
-
-                          {item.bahasa && (
-                            <div>
-                              <span className="text-subtext">B: </span>
-                              <span className="font-medium text-[#374151]">{item.bahasa}</span>
-                            </div>
-                          )}
-
-                          {item.jenis && (() => {
-                            const val = String(item.jenis).toLowerCase();
-                            let bColor = "text-gray-500";
-                            if (val.includes('super')) bColor = "text-super font-bold";
-                            else if (val.includes('semi')) bColor = "text-semi font-bold";
-                            else if (val.includes('urgent')) bColor = "text-urgent font-bold";
-                            
-                            return (
-                              <div className={bColor}>
-                                {item.jenis}
-                              </div>
-                            );
-                          })()}
-                        </div>
-
-                        <div className="flex flex-col gap-0.5 mt-1 text-[11.5px] text-subtext leading-snug">
-                          {item.addon && (
-                            <div className="truncate">
-                              <span className="font-semibold text-gray-500">{(appLanguage === 'ms' ? 'Tambahan: ' : 'Add On: ')}</span>
-                              <span className="text-gray-700 font-medium">{item.addon}</span>
-                            </div>
-                          )}
-                          
-                          {item.phone && (
-                            <div className="flex items-center space-x-1.5 mt-0.5">
-                              <span className="font-semibold text-gray-500">{appLanguage === 'ms' ? 'Tel:' : 'Phone:'}</span>
-                              <a
-                                href={`https://wa.me/${String(item.phone).replace(/\D/g, '').startsWith('0') ? '6' + String(item.phone).replace(/\D/g, '') : String(item.phone).replace(/\D/g, '')}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                onClick={(e) => e.stopPropagation()}
-                                className="font-semibold text-blue-600 hover:underline hover:text-blue-700 bg-blue-50/50 px-1.5 py-0 rounded flex items-center space-x-1 inline-flex text-[10px]"
-                                title={appLanguage === 'ms' ? 'Hubungi di WhatsApp' : 'Contact on WhatsApp'}
-                              >
-                                <Phone className="w-2.5 h-2.5 text-blue-500 shrink-0" />
-                                <span className="select-all font-mono">
-                                  {formatDisplayPhone(item.phone)}
-                                </span>
-                              </a>
-                            </div>
-                          )}
-
-                          {item.orderId && (
-                            <div className="mt-0.5"><span className="font-semibold text-gray-500">ID:</span> <span className="font-mono text-[10.5px] font-semibold text-text/80 bg-gray-55 px-1 rounded">{item.orderId}</span></div>
-                          )}
-
-                          {item.link && (
-                            <div className="w-full pt-1">
-                              <span className="font-semibold text-gray-500">Link:</span>{' '}
-                              <div className="flex flex-col gap-0.5">
-                                {item.link
-                                  .split(/[\n,]+/)
-                                  .filter(Boolean)
-                                  .map((lnk: string, lIdx: number) => (
-                                    <a
-                                      key={lIdx}
-                                      href={lnk.trim()}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="text-blue-500 hover:underline font-medium truncate inline-block max-w-[200px] sm:max-w-[300px] text-[10.5px]"
-                                      onClick={(e) => e.stopPropagation()}
-                                      title={lnk.trim()}
-                                    >
-                                      {lnk.trim()}
-                                    </a>
-                                  ))}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-
-                        <div className="w-full pt-1.5 mt-1 border-t border-gray-100/65 flex items-center justify-between">
-                          <button
-                            type="button"
-                            onClick={(e) => handleRemoteDeliveredToggle(e, idx, item)}
-                            className={`px-2 py-1 text-[10px] font-bold rounded-md flex items-center hover:scale-[1.02] active:scale-95 transition-all duration-200 shadow-xs ${
-                              isDelivered
-                                ? 'bg-blue-50 text-blue-600 border border-blue-200/60 hover:bg-blue-100'
-                                : 'bg-white text-gray-400 border border-gray-150 hover:bg-gray-50 hover:text-gray-600'
-                            }`}
-                          >
-                            <Check
-                              className={`w-3 h-3 mr-1 ${
-                                isDelivered ? 'text-blue-500' : 'text-gray-400'
-                              }`}
-                            />
-                            {appLanguage === 'ms'
-                              ? isDelivered
-                                ? 'Dihantar'
-                                : 'Belum Dihantar'
-                              : isDelivered
-                              ? 'Delivered'
-                              : 'Not Delivered'}
-                          </button>
-                        </div>
-
-                        {item.syncStatus && (
-                          <div className="w-full pt-2 mt-1.5 border-t border-dashed border-gray-100/80 flex items-start justify-between bg-gray-50/50 -mx-3 -mb-3 px-3 py-2 rounded-b-xl">
-                            <div className="text-[9.5px] flex items-center">
-                              {item.syncStatus === 'syncing' && <span className="text-blue-500 font-semibold animate-pulse flex items-center"><RefreshCcw className="w-2.5 h-2.5 mr-1 animate-spin" /> Syncing…</span>}
-                              {item.syncStatus === 'synced' && <span className="text-emerald-600 font-bold flex items-center"><Check className="w-2.5 h-2.5 mr-1"/> Synced</span>}
-                              {item.syncStatus === 'failed' && (
-                                <button 
-                                  type="button"
-                                  className="text-red-600 font-bold hover:underline flex items-center active:scale-95 transition-transform"
-                                  onClick={(e) => handleRemoteDeliveredToggle(e, idx, item)}
-                                >
-                                  <AlertCircle className="w-2.5 h-2.5 mr-1" /> Sync failed — tap to retry
-                                </button>
-                              )}
-                            </div>
-                            {(item.syncLastSuccess || item.syncFailCount) && (
-                              <div className="text-[8.5px] text-gray-400 text-right leading-tight">
-                                {item.syncLastSuccess && <div>Last sync: <span className="font-medium text-gray-500">{new Date(item.syncLastSuccess).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></div>}
-                                {!!item.syncFailCount && item.syncFailCount > 0 && <div className="text-red-400 font-medium mt-0.5">Failed attempts: {item.syncFailCount}</div>}
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
+              return (
+                <div
+                  key={draft.id}
+                  onClick={() => loadDraft(draft)}
+                  className="bg-surface border border-gray-200/60 rounded-xl p-3 flex flex-col space-y-2 hover:border-blue-300 hover:bg-blue-50/5 cursor-pointer active:scale-[0.995] transition-all shadow-sm"
+                >
+                  <div className="flex justify-between items-start">
+                    <div className="flex-1">
+                      <h4 className="font-bold text-sm text-text truncate">
+                        {draft.state.customerName || (appLanguage === 'ms' ? 'Tanpa Nama' : 'Untitled')}
+                      </h4>
+                      <p className="text-[11px] text-subtext font-medium">
+                        {draft.state.mainType} • {formattedDate}
+                      </p>
                     </div>
-                  );
-                })}
-              </div>
-            )}
-
-            {!isSearching && remoteResults.length === 0 && !searchError && (
-              <div className="flex flex-col items-center justify-center py-20 text-subtext animate-fade-in-up">
-                <Search className="w-16 h-16 mb-4 opacity-30 animate-pulse" />
-                <p className="font-bold text-center text-xs text-text/60 md:max-w-[260px] leading-relaxed">
-                  {appLanguage === 'ms' 
-                    ? 'Masukkan nama, Order ID, atau No. telefon untuk mencari di lembaran tahunan.' 
-                    : 'Enter customer name, Order ID, or Phone No to search across annual sheets.'}
-                </p>
-              </div>
-            )}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setConfirmAction({
+                          title: appLanguage === 'ms' ? 'Padam Draf?' : 'Delete Draft?',
+                          message: appLanguage === 'ms' 
+                            ? 'Adakah anda pasti mahu memadam draf ini?' 
+                            : 'Are you sure you want to delete this draft?',
+                          onConfirm: () => {
+                            deleteDraft(draft.id);
+                            setConfirmAction(null);
+                          }
+                        });
+                      }}
+                      className="p-2 text-red-500 hover:bg-red-50 rounded-full transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                  
+                  <div className="flex flex-wrap gap-1.5 pt-1 border-t border-gray-100">
+                    {draft.state.customerOrder && (
+                      <span className="text-[10px] bg-gray-100 text-subtext px-1.5 py-0.5 rounded font-bold">
+                        {draft.state.customerOrder}
+                      </span>
+                    )}
+                    {draft.state.customerJenis && (
+                      <span className="text-[10px] bg-gray-100 text-subtext px-1.5 py-0.5 rounded font-bold">
+                        {draft.state.customerJenis}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
+    )}
 
-      {confirmAction && createPortal(
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-          <div
-            className="absolute inset-0 bg-black/40 backdrop-blur-sm"
-            onClick={() => setConfirmAction(null)}
-          />
-
-          <div className="relative bg-white rounded-[24px] p-6 w-full max-w-[320px] shadow-2xl animate-fade-in-up">
-            <div className="flex flex-col items-center text-center space-y-4">
-              <div className="w-12 h-12 bg-red-50 rounded-full flex items-center justify-center text-red-500 mb-2">
-                <AlertCircle className="w-6 h-6" />
-              </div>
-
-              <h3 className="text-[18px] font-bold text-text">
-                {confirmAction.title || (appLanguage === 'ms' ? 'Pasti?' : 'Are you sure?')}
-              </h3>
-
-              <p className="text-[14px] text-subtext pb-4">
-                {confirmAction.message}
-              </p>
-
-              <div className="flex w-full space-x-3">
-                <button
-                  type="button"
-                  onClick={() => setConfirmAction(null)}
-                  className="flex-1 py-3 px-4 rounded-full font-bold text-[14px] text-text bg-gray-100 hover:bg-gray-200 active:scale-95 transition-all"
-                >
-                  {appLanguage === 'ms' ? 'Batal' : 'Cancel'}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={confirmAction.onConfirm}
-                  className="flex-1 py-3 px-4 rounded-full font-bold text-[14px] text-white bg-red-500 hover:bg-red-600 active:scale-95 transition-all"
-                >
-                  {appLanguage === 'ms' ? 'Padam' : 'Delete'}
-                </button>
-              </div>
-            </div>
+    {activeTab === 'remote' && (
+      <div className="space-y-4 mt-2.5">
+        <div className="bg-surface border border-gray-100 p-4 rounded-xl shadow-sm space-y-3">
+          <div className="relative">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleRemoteSearch();
+              }}
+              placeholder={appLanguage === 'ms' ? 'Cari nama, Order ID, atau no. telefon...' : 'Search name, Order ID, or phone number...'}
+              className="w-full h-11 bg-gray-50 rounded-xl pl-10 pr-4 font-semibold text-text border border-gray-200 outline-none focus:bg-white focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all text-xs placeholder:text-gray-400"
+            />
+            <Search className="w-4 h-4 text-subtext/70 absolute left-3.5 top-3.5" />
           </div>
-        </div>,
-        document.body
-      )}
+          <button
+            type="button"
+            onClick={handleRemoteSearch}
+            disabled={isSearching || !searchQuery.trim()}
+            className="w-full h-11 bg-primary text-white font-bold rounded-xl flex items-center justify-center space-x-2 active:scale-[0.98] transition-all disabled:opacity-50 text-xs shadow-sm"
+          >
+            {isSearching ? (
+              <RefreshCcw className="w-3.5 h-3.5 animate-spin text-white" />
+            ) : (
+              <Search className="w-3.5 h-3.5" />
+            )}
+            <span>{appLanguage === 'ms' ? 'Cari Database' : 'Search Database'}</span>
+          </button>
+        </div>
 
-      {alertMsg && createPortal(
-        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
-          <div
-            className="absolute inset-0 bg-black/40 backdrop-blur-sm"
-            onClick={() => setAlertMsg(null)}
-          />
-          <div className="relative bg-white rounded-[24px] p-6 w-full max-w-[320px] shadow-2xl animate-fade-in-up">
-            <div className="flex flex-col items-center text-center space-y-4">
-              <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-2 ${
-                alertMsg.type === 'error' ? 'bg-red-100 text-red-500' :
-                alertMsg.type === 'success' ? 'bg-green-100 text-green-500' :
-                'bg-blue-100 text-blue-500'
-              }`}>
-                {alertMsg.type === 'success' ? <Check className="w-6 h-6" /> : <AlertCircle className="w-6 h-6" />}
+        {/* Pautan & Tetapan Database (3 Tahun) */}
+        <div className="bg-surface border border-gray-100 rounded-xl shadow-sm overflow-hidden transition-all duration-200">
+          <button
+            type="button"
+            onClick={() => setShowDbSettings(!showDbSettings)}
+            className="w-full px-4 py-3 flex items-center justify-between text-xs font-bold text-text hover:bg-gray-50/50 transition-colors"
+            id="btn-db-settings-toggle"
+          >
+            <div className="flex items-center space-x-2">
+              <Settings className="w-4 h-4 text-primary" />
+              <span>{appLanguage === 'ms' ? 'Pautan & Tetapan Database Tahunan' : 'Annual Database Connection & Settings'}</span>
+            </div>
+            {showDbSettings ? (
+              <ChevronUp className="w-4 h-4 text-subtext/70" />
+            ) : (
+              <ChevronDown className="w-4 h-4 text-subtext/70" />
+            )}
+          </button>
+
+          {showDbSettings && (
+            <div className="p-4 border-t border-gray-100 bg-gray-50/30 space-y-4 animate-in slide-in-from-top-1 duration-150">
+              <div className="bg-blue-50/50 p-2.5 rounded-lg border border-blue-100 text-[11px] text-blue-800 leading-relaxed">
+                {appLanguage === 'ms' 
+                  ? 'Konfigurasikan Spreadsheet ID bagi setiap tahun. Anda boleh memasukkan pautan Google Sheet penuh (URL) atau ID terus.'
+                  : 'Configure the Spreadsheet ID for each year. You can paste the full Google Sheet Link (URL) or directly the Spreadsheet ID.'}
               </div>
-              {alertMsg.title && (
-                <h3 className="text-[18px] font-bold text-text">
-                  {alertMsg.title}
-                </h3>
-              )}
-              <p className="text-[14px] text-subtext pb-4">
-                {alertMsg.message}
-              </p>
+
+              {/* Web App Script URL block shared for all */}
+              <div className="p-3 bg-white rounded-lg border border-gray-100 shadow-sm space-y-1.5">
+                <span className="text-[10px] font-black uppercase tracking-wider text-primary block">
+                  {appLanguage === 'ms' ? 'Pautan Web App Apps Script (Kongsi Untuk Semua):' : 'Global Web App Apps Script URL (Shared for All):'}
+                </span>
+                <input
+                  type="text"
+                  className="w-full text-[11px] bg-gray-50 font-mono rounded px-2.5 py-1.5 border border-gray-200 outline-none text-text focus:bg-white"
+                  value={globalScriptUrl}
+                  onChange={(e) => setGlobalScriptUrl(e.target.value)}
+                  placeholder="https://script.google.com/macros/s/.../exec"
+                />
+              </div>
+
+              <div className="space-y-4">
+                {annualSheets.map((sheet, index) => (
+                  <div key={index} className="p-3 bg-white rounded-lg border border-gray-100 shadow-sm space-y-2.5 relative">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2">
+                        <label className="text-[10px] font-black uppercase tracking-wider text-primary shrink-0">
+                          {appLanguage === 'ms' ? 'Tahun:' : 'Year:'}
+                        </label>
+                        <input
+                          type="text"
+                          value={sheet.year}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setAnnualSheets(prev => prev.map((s, idx) => idx === index ? { ...s, year: val } : s));
+                          }}
+                          className="bg-gray-50 px-2 py-0.5 rounded text-[10px] font-bold text-text border border-gray-200 max-w-[80px] outline-none text-left"
+                          placeholder="e.g. 2024"
+                        />
+                      </div>
+                      {annualSheets.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setConfirmAction({
+                              title: appLanguage === 'ms' ? 'Padam Konfigurasi?' : 'Delete Configuration?',
+                              message: appLanguage === 'ms' 
+                                ? `Anda pasti mahu memadam konfigurasi tahun ${sheet.year}?` 
+                                : `Are you sure you want to delete year ${sheet.year} configuration?`,
+                              onConfirm: () => {
+                                setAnnualSheets(prev => prev.filter((_, idx) => idx !== index));
+                                setConfirmAction(null);
+                              }
+                            });
+                          }}
+                          className="p-1 hover:bg-red-50 text-red-500 rounded transition-colors"
+                          title={appLanguage === 'ms' ? 'Hapus' : 'Delete'}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="space-y-1">
+                      <span className="text-[10px] text-subtext font-medium block">
+                        {appLanguage === 'ms' ? 'Pautan / ID Google Sheet:' : 'Google Sheet URL / Spreadsheet ID:'}
+                      </span>
+                      <div className="relative">
+                        <input
+                          type="text"
+                          value={sheet.spreadsheetId}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setAnnualSheets(prev => prev.map((s, idx) => idx === index ? { ...s, spreadsheetId: val } : s));
+                          }}
+                          placeholder={appLanguage === 'ms' ? 'Salin pautan Google Sheet di sini...' : 'Paste Google Sheet Link here...'}
+                          className="w-full text-[11px] bg-gray-50 font-mono rounded px-2.5 py-1.5 border border-gray-200 outline-none text-text focus:bg-white"
+                        />
+                        {sheet.spreadsheetId && (
+                          <span className="text-[9px] text-green-600 block mt-1 font-semibold">
+                            ✓ ID: {sheet.spreadsheetId.includes('docs.google.com/spreadsheets/d/') 
+                              ? (sheet.spreadsheetId.match(/\/d\/([a-zA-Z0-9-_]+)/)?.[1] || 'URL valid') 
+                              : 'Raw ID'}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
               <button
                 type="button"
-                onClick={() => setAlertMsg(null)}
-                className="w-full py-3 px-4 rounded-full font-bold text-[14px] text-white bg-blue-600 hover:bg-blue-700 active:scale-95 transition-all"
+                onClick={() => {
+                  setAnnualSheets(prev => [...prev, { year: '', spreadsheetId: '', scriptUrl: '' }]);
+                }}
+                className="w-full py-2.5 border border-dashed border-gray-300 hover:border-blue-400 hover:text-blue-600 text-subtext font-bold rounded-xl flex items-center justify-center space-x-1.5 text-xs active:scale-[0.98] transition-all bg-white"
               >
-                OK
+                <span className="text-base font-normal">+</span>
+                <span>{appLanguage === 'ms' ? 'Tambah Tahun Baru' : 'Add New Year'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  localStorage.setItem('db_annual_sheets', JSON.stringify(annualSheets));
+                  localStorage.setItem('db_global_script_url', globalScriptUrl);
+                  // Save and sync with context state
+                  const firstActive = annualSheets.find(s => s.spreadsheetId !== '');
+                  if (firstActive) {
+                    const extractId = (input: string) => {
+                      if (input.includes('docs.google.com/spreadsheets/d/')) {
+                        const match = input.match(/\/d\/([a-zA-Z0-9-_]+)/);
+                        return match ? match[1] : input;
+                      }
+                      return input;
+                    };
+                    updateOrderHistoryState({ spreadsheetId: extractId(firstActive.spreadsheetId) });
+                  }
+                  setAlertMsg({
+                    type: 'success',
+                    message: appLanguage === 'ms' 
+                      ? 'Konfigurasi pautan database tahunan berjaya disimpan!' 
+                      : 'Annual database configurations successfully saved!'
+                  });
+                  setShowDbSettings(false);
+                }}
+                className="w-full h-10 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl flex items-center justify-center space-x-1 text-xs active:scale-95 transition-all shadow-sm"
+              >
+                <Save className="w-3.5 h-3.5" />
+                <span>{appLanguage === 'ms' ? 'Simpan Tetapan' : 'Save Connection Settings'}</span>
               </button>
             </div>
+          )}
+        </div>
+
+        {searchError && (
+          <div className="p-3 bg-red-50 text-red-700 rounded-xl text-xs font-semibold border border-red-100 flex items-center space-x-2 animate-fade-in">
+            <AlertCircle className="w-3.5 h-3.5 shrink-0 text-red-500" />
+            <span>{searchError}</span>
           </div>
-        </div>,
-        document.body
-      )}
-    </div>
+        )}
+
+        {isSearching && (
+          <div className="flex flex-col items-center justify-center py-16 text-subtext">
+            <RefreshCcw className="w-7 h-7 mb-3 animate-spin text-primary opacity-80" />
+            <p className="font-bold text-xs select-none">
+              {appLanguage === 'ms' ? 'Sedang mencari di lembaran tahunan...' : 'Searching across annual sheets...'}
+            </p>
+          </div>
+        )}
+
+        {!isSearching && remoteResults.length > 0 && (
+          <div className="space-y-2.5 animate-fade-in-up">
+            <div className="flex items-center justify-between pl-1">
+              <p className="text-[10px] font-bold text-subtext uppercase tracking-widest">
+                {appLanguage === 'ms' 
+                  ? `Hasil Carian (${remoteResults.length} Rekod)` 
+                  : `Search Results (${remoteResults.length} Records)`}
+              </p>
+              <button 
+                type="button"
+                onClick={() => {
+                  setRemoteResults([]);
+                  setSearchQuery('');
+                }}
+                className="text-[10px] font-bold text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 uppercase tracking-widest px-2 py-1 rounded transition-colors flex flex-shrink-0 items-center justify-center"
+                id="btn-clear-search"
+              >
+                {appLanguage === 'ms' ? 'Padam Carian' : 'Clear Results'}
+              </button>
+            </div>
+
+            {remoteResults.map((item, idx) => {
+              const isDelivered = !!item.isDelivered;
+              const orderId = item.orderId || `REMOTE-${idx}`;
+
+              return (
+                <div
+                  key={orderId + '-' + idx}
+                  onClick={() => handleLoadRemoteOrder(item)}
+                  className={`bg-surface border relative overflow-hidden ${
+                    isDelivered
+                      ? 'border-blue-100 bg-blue-50/5 hover:border-blue-200'
+                      : 'border-gray-200/60 hover:border-gray-300 shadow-sm'
+                  } rounded-xl p-2.5 flex flex-col space-y-1 hover:bg-gray-50/65 cursor-pointer active:scale-[0.995] transition-all duration-200`}
+                >
+                  {/* Left Accent Bar */}
+                  <div className={`absolute left-0 top-0 bottom-0 w-1 rounded-r ${isDelivered ? 'bg-blue-400' : 'bg-gray-300'}`} />
+
+                  <div className="pl-1.5">
+                    <div className="flex justify-between items-start border-b border-gray-100/60 pb-1">
+                      <div className="flex-1">
+                        <div className="flex flex-wrap items-center gap-1 mb-0.5">
+                          <div
+                            className={`flex items-center ${
+                              isDelivered
+                                ? 'text-blue-500 font-bold'
+                                : 'text-primary/75 font-semibold'
+                            } text-[10px] sm:text-[10.5px] uppercase tracking-wider`}
+                          >
+                            {isDelivered ? (
+                              <Check className="w-3 h-3 mr-1 text-blue-500" />
+                            ) : (
+                              <Calendar className="w-3 h-3 mr-1" />
+                            )}
+                            {item.due || (appLanguage === 'ms' ? 'Tiada Tarikh' : 'No Date')}
+
+                            {isDelivered && (
+                              <span className="ml-1 text-blue-500 lowercase">
+                                ({appLanguage === 'ms' ? 'Dihantar' : 'Delivered'})
+                              </span>
+                            )}
+                          </div>
+                          <span className="px-2 py-0.5 rounded-full text-[9px] font-black tracking-wider bg-purple-100 text-purple-700">
+                            <Database className="w-2.5 h-2.5 inline mr-0.5" />
+                            {item.sheetName || 'Google Sheet'}
+                          </span>
+                        </div>
+
+                        <p className="font-bold text-[13px] sm:text-[13.5px] leading-tight text-[#111827]">
+                          {item.order === 'Lain-lain' || item.order === 'Lain2'
+                            ? item.order
+                            : item.order}
+                          {item.name ? ` - ${formatCustomerName(item.name)}` : ''}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-x-2.5 gap-y-0.5 text-[11px] mt-1 leading-normal">
+                      {item.template && (
+                        <div>
+                          <span className="text-subtext">T: </span>
+                          <span className="font-medium text-[#374151]">{item.template}</span>
+                        </div>
+                      )}
+
+                      {item.bahasa && (
+                        <div>
+                          <span className="text-subtext">B: </span>
+                          <span className="font-medium text-[#374151]">{item.bahasa}</span>
+                        </div>
+                      )}
+
+                      {item.jenis && (() => {
+                        const val = String(item.jenis).toLowerCase();
+                        let bColor = "text-gray-500";
+                        if (val.includes('super')) bColor = "text-super font-bold";
+                        else if (val.includes('semi')) bColor = "text-semi font-bold";
+                        else if (val.includes('urgent')) bColor = "text-urgent font-bold";
+                        
+                        return (
+                          <div className={bColor}>
+                            {item.jenis}
+                          </div>
+                        );
+                      })()}
+                    </div>
+
+                    <div className="flex flex-col gap-0.5 mt-1 text-[11.5px] text-subtext leading-snug">
+                      {item.addon && (
+                        <div className="truncate">
+                          <span className="font-semibold text-gray-500">{(appLanguage === 'ms' ? 'Tambahan: ' : 'Add On: ')}</span>
+                          <span className="text-gray-700 font-medium">{item.addon}</span>
+                        </div>
+                      )}
+                      
+                      {item.phone && (
+                        <div className="flex items-center space-x-1.5 mt-0.5">
+                          <span className="font-semibold text-gray-500">{appLanguage === 'ms' ? 'Tel:' : 'Phone:'}</span>
+                          <a
+                            href={`https://wa.me/${String(item.phone).replace(/\D/g, '').startsWith('0') ? '6' + String(item.phone).replace(/\D/g, '') : String(item.phone).replace(/\D/g, '')}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="font-semibold text-blue-600 hover:underline hover:text-blue-700 bg-blue-50/50 px-1.5 py-0 rounded flex items-center space-x-1 inline-flex text-[10px]"
+                            title={appLanguage === 'ms' ? 'Hubungi di WhatsApp' : 'Contact on WhatsApp'}
+                          >
+                            <Phone className="w-2.5 h-2.5 text-blue-500 shrink-0" />
+                            <span className="select-all font-mono">
+                              {formatDisplayPhone(item.phone)}
+                            </span>
+                          </a>
+                        </div>
+                      )}
+
+                      {item.orderId && (
+                        <div className="mt-0.5"><span className="font-semibold text-gray-500">ID:</span> <span className="font-mono text-[10.5px] font-semibold text-text/80 bg-gray-55 px-1 rounded">{item.orderId}</span></div>
+                      )}
+
+                      {item.link && (
+                        <div className="w-full pt-1">
+                          <span className="font-semibold text-gray-500">Link:</span>{' '}
+                          <div className="flex flex-col gap-0.5">
+                            {item.link
+                              .split(/[\n,]+/)
+                              .filter(Boolean)
+                              .map((lnk: string, lIdx: number) => (
+                                <a
+                                  key={lIdx}
+                                  href={lnk.trim()}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-blue-500 hover:underline font-medium truncate inline-block max-w-[200px] sm:max-w-[300px] text-[10.5px]"
+                                  onClick={(e) => e.stopPropagation()}
+                                  title={lnk.trim()}
+                                >
+                                  {lnk.trim()}
+                                </a>
+                              ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="w-full pt-1.5 mt-1 border-t border-gray-100/65 flex items-center justify-between">
+                      <button
+                        type="button"
+                        onClick={(e) => handleRemoteDeliveredToggle(e, idx, item)}
+                        className={`px-2 py-1 text-[10px] font-bold rounded-md flex items-center hover:scale-[1.02] active:scale-95 transition-all duration-200 shadow-xs ${
+                          isDelivered
+                            ? 'bg-blue-50 text-blue-600 border border-blue-200/60 hover:bg-blue-100'
+                            : 'bg-white text-gray-400 border border-gray-150 hover:bg-gray-50 hover:text-gray-600'
+                        }`}
+                      >
+                        <Check
+                          className={`w-3 h-3 mr-1 ${
+                            isDelivered ? 'text-blue-500' : 'text-gray-400'
+                          }`}
+                        />
+                        {appLanguage === 'ms'
+                          ? isDelivered
+                            ? 'Dihantar'
+                            : 'Belum Dihantar'
+                          : isDelivered
+                          ? 'Delivered'
+                          : 'Not Delivered'}
+                      </button>
+                    </div>
+
+                    {item.syncStatus && (
+                      <div className="w-full pt-2 mt-1.5 border-t border-dashed border-gray-100/80 flex items-start justify-between bg-gray-50/50 -mx-3 -mb-3 px-3 py-2 rounded-b-xl">
+                        <div className="text-[9.5px] flex items-center">
+                          {item.syncStatus === 'syncing' && <span className="text-blue-500 font-semibold animate-pulse flex items-center"><RefreshCcw className="w-2.5 h-2.5 mr-1 animate-spin" /> Syncing…</span>}
+                          {item.syncStatus === 'synced' && <span className="text-emerald-600 font-bold flex items-center"><Check className="w-2.5 h-2.5 mr-1"/> Synced</span>}
+                          {item.syncStatus === 'failed' && (
+                            <button 
+                              type="button"
+                              className="text-red-600 font-bold hover:underline flex items-center active:scale-95 transition-transform"
+                              onClick={(e) => handleRemoteDeliveredToggle(e, idx, item)}
+                            >
+                              <AlertCircle className="w-2.5 h-2.5 mr-1" /> Sync failed — tap to retry
+                            </button>
+                          )}
+                        </div>
+                        {(item.syncLastSuccess || item.syncFailCount) && (
+                          <div className="text-[8.5px] text-gray-400 text-right leading-tight">
+                            {item.syncLastSuccess && <div>Last sync: <span className="font-medium text-gray-500">{new Date(item.syncLastSuccess).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></div>}
+                            {!!item.syncFailCount && item.syncFailCount > 0 && <div className="text-red-400 font-medium mt-0.5">Failed attempts: {item.syncFailCount}</div>}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {!isSearching && remoteResults.length === 0 && !searchError && (
+          <div className="flex flex-col items-center justify-center py-20 text-subtext animate-fade-in-up">
+            <Search className="w-16 h-16 mb-4 opacity-30 animate-pulse" />
+            <p className="font-bold text-center text-xs text-text/60 md:max-w-[260px] leading-relaxed">
+              {appLanguage === 'ms' 
+                ? 'Masukkan nama, Order ID, atau No. telefon untuk mencari di lembaran tahunan.' 
+                : 'Enter customer name, Order ID, or Phone No to search across annual sheets.'}
+            </p>
+          </div>
+        )}
+      </div>
+    )}
+  </div>
+
+  {confirmAction && createPortal(
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+      <div
+        className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+        onClick={() => setConfirmAction(null)}
+      />
+
+      <div className="relative bg-white rounded-[24px] p-6 w-full max-w-[320px] shadow-2xl animate-fade-in-up">
+        <div className="flex flex-col items-center text-center space-y-4">
+          <div className="w-12 h-12 bg-red-50 rounded-full flex items-center justify-center text-red-500 mb-2">
+            <AlertCircle className="w-6 h-6" />
+          </div>
+
+          <h3 className="text-[18px] font-bold text-text">
+            {confirmAction.title || (appLanguage === 'ms' ? 'Pasti?' : 'Are you sure?')}
+          </h3>
+
+          <p className="text-[14px] text-subtext pb-4">
+            {confirmAction.message}
+          </p>
+
+          <div className="flex w-full space-x-3">
+            <button
+              type="button"
+              onClick={() => setConfirmAction(null)}
+              className="flex-1 py-3 px-4 rounded-full font-bold text-[14px] text-text bg-gray-100 hover:bg-gray-200 active:scale-95 transition-all"
+            >
+              {appLanguage === 'ms' ? 'Batal' : 'Cancel'}
+            </button>
+
+            <button
+              type="button"
+              onClick={confirmAction.onConfirm}
+              className="flex-1 py-3 px-4 rounded-full font-bold text-[14px] text-white bg-red-500 hover:bg-red-600 active:scale-95 transition-all"
+            >
+              {appLanguage === 'ms' ? 'Padam' : 'Delete'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>,
+    document.body
+  )}
+
+  {alertMsg && createPortal(
+    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+      <div
+        className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+        onClick={() => setAlertMsg(null)}
+      />
+      <div className="relative bg-white rounded-[24px] p-6 w-full max-w-[320px] shadow-2xl animate-fade-in-up">
+        <div className="flex flex-col items-center text-center space-y-4">
+          <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-2 ${
+            alertMsg.type === 'error' ? 'bg-red-100 text-red-500' :
+            alertMsg.type === 'success' ? 'bg-green-100 text-green-500' :
+            'bg-blue-100 text-blue-500'
+          }`}>
+            {alertMsg.type === 'success' ? <Check className="w-6 h-6" /> : <AlertCircle className="w-6 h-6" />}
+          </div>
+          {alertMsg.title && (
+            <h3 className="text-[18px] font-bold text-text">
+              {alertMsg.title}
+            </h3>
+          )}
+          <p className="text-[14px] text-subtext pb-4">
+            {alertMsg.message}
+          </p>
+          <button
+            type="button"
+            onClick={() => setAlertMsg(null)}
+            className="w-full py-3 px-4 rounded-full font-bold text-[14px] text-white bg-blue-600 hover:bg-blue-700 active:scale-95 transition-all"
+          >
+            OK
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  )}
+</div>
   );
 }
