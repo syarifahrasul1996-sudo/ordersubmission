@@ -48,27 +48,34 @@ export const initAuth = (
 export const googleSignIn = async (): Promise<{ user: User; accessToken: string } | null> => {
   try {
     isSigningIn = true;
-    const result = await signInWithPopup(auth, provider);
-    const credential = GoogleAuthProvider.credentialFromResult(result);
-    if (!credential?.accessToken) {
-      throw new Error('Failed to get access token from Firebase Auth');
-    }
-
-    cachedAccessToken = credential.accessToken;
-    localStorage.setItem('google_access_token', cachedAccessToken);
-    // Token expires in about an hour (3600 seconds), safe margin at 3500 seconds
-    localStorage.setItem('google_access_token_expiry', (Date.now() + 3500 * 1000).toString());
-
-    return { user: result.user, accessToken: cachedAccessToken };
+    await signInWithRedirect(auth, provider);
+    return null; // Redirects the page
   } catch (error: any) {
-    if (error.code === 'auth/popup-closed-by-user' || error.code === 'auth/popup-blocked') {
-      console.warn('Popup blocked or closed.');
-      throw new Error('Popup blocked by browser. Please allow popups or use "Copy Info Manually".');
-    }
     console.error('Sign in error:', error);
     throw error;
   } finally {
     isSigningIn = false;
+  }
+};
+
+export const handleRedirectResult = async (): Promise<{ user: User; accessToken: string } | null> => {
+  try {
+    const result = await getRedirectResult(auth);
+    if (!result) return null;
+    
+    const credential = GoogleAuthProvider.credentialFromResult(result);
+    if (!credential?.accessToken) {
+       throw new Error('Failed to get access token from Firebase Auth');
+    }
+
+    cachedAccessToken = credential.accessToken;
+    localStorage.setItem('google_access_token', cachedAccessToken);
+    localStorage.setItem('google_access_token_expiry', (Date.now() + 3500 * 1000).toString());
+
+    return { user: result.user, accessToken: cachedAccessToken };
+  } catch (error: any) {
+    console.error('Redirect result error:', error);
+    throw error;
   }
 };
 
