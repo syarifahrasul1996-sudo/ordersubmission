@@ -414,6 +414,24 @@ export function HistoryView() {
     }
   };
 
+  const deleteOrderFromCloud = async (spreadsheetId: string, orderId: string) => {
+    if (spreadsheetId && orderId) {
+      try {
+        const callbackName = 'jsonp_callback_delete_' + Math.round(Math.random() * 100000);
+        const url = new URL(getActiveScriptUrl(spreadsheetId));
+
+        url.searchParams.append('action', 'delete_order');
+        url.searchParams.append('spreadsheetId', spreadsheetId);
+        url.searchParams.append('orderId', orderId);
+        url.searchParams.append('callback', callbackName);
+
+        await jsonpRequest(url, callbackName);
+      } catch (err) {
+        console.warn('Failed to delete order from cloud:', err);
+      }
+    }
+  };
+
   const handleGlobalSync = async (silent = false) => {
     // Collect all active annual sheets
     const activeConfigs = annualSheets.filter(
@@ -1114,9 +1132,14 @@ export function HistoryView() {
                               setConfirmAction({
                                 title: appLanguage === 'ms' ? 'Padam Rekod?' : 'Delete Record?',
                                 message: appLanguage === 'ms' 
-                                  ? 'Adakah anda pasti mahu memadam rekod ini?' 
-                                  : 'Are you sure you want to delete this record?',
+                                  ? 'Adakah anda pasti mahu memadam rekod ini? Ia juga akan dipadamkan daripada Google Sheet anda.' 
+                                  : 'Are you sure you want to delete this record? It will also be deleted from your Google Sheet.',
                                 onConfirm: () => {
+                                  const spreadsheetId = item.state?.spreadsheetId || state.spreadsheetId;
+                                  const orderId = item.state?.orderId;
+                                  if (spreadsheetId && orderId) {
+                                    deleteOrderFromCloud(spreadsheetId, orderId);
+                                  }
                                   deleteOrderFromHistory(item.id);
                                   setConfirmAction(null);
                                 }
