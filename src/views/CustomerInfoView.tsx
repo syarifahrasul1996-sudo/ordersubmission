@@ -26,7 +26,7 @@ function generateOrderId() {
 }
 
 export function CustomerInfoView() {
-  const { appLanguage, state, setState, goHome, viewStack, updateOrderHistoryState, addToOfflineQueue, saveAsDraft: contextSaveAsDraft } = useAppContext();
+  const { appLanguage, state, setState, goHome, viewStack, updateOrderHistoryState, addToOfflineQueue, saveAsDraft: contextSaveAsDraft, deleteDraft } = useAppContext();
   const isActive = viewStack[viewStack.length - 1] === 'customer-info';
 
   const computeInitialValues = useCallback(() => {
@@ -403,13 +403,56 @@ export function CustomerInfoView() {
     }
   }, [isActive, state.historyId, state.timestamp]); // fetch when mounted or when switching orders
 
+  const syncStateAndSave = (isDraftSave = false) => {
+    // Sync state one last time before saving
+    setState(prev => ({
+      ...prev,
+      customerName: name,
+      customerPhone: phone,
+      customerOrder: order,
+      customerTemplate: template,
+      customerBahasa: bahasa,
+      customerAddOn: addOn,
+      customerJenis: jenis,
+      customerDue: due,
+      dueTimestamp: dueTimestamp,
+      customerInfo: info,
+      orderLink: link,
+      googleSheetLink: link,
+      orderId: orderId,
+    }));
+    
+    if (isDraftSave) {
+        contextSaveAsDraft();
+        showToastMessage(appLanguage === 'ms' ? 'Draf disimpan secara lokal!' : 'Draft saved locally!');
+    }
+  };
+
+  const handleSaveDraft = () => {
+    syncStateAndSave(true);
+  };
+
+  // Debounced Auto-Save
+  useEffect(() => {
+    if (isActive) {
+      const timer = setTimeout(() => {
+        syncStateAndSave(true);
+      }, 5000); 
+      return () => clearTimeout(timer);
+    }
+  }, [name, phone, order, template, bahasa, addOn, jenis, due, info, link, orderId, isActive]);
+
   const handleSaveInfo = async () => {
     if (!name.trim() || !phone.trim()) {
       setErrorMsg(appLanguage === 'ms' ? 'Sila isi semua ruangan.' : 'Please fill all fields.');
       return;
     }
+    
+    // Cleanup draft if it exists
+    if (state.historyId) {
+        deleteDraft(state.historyId);
+    }
 
-    // Parse the edited "due" text field to dueTimestamp and native Date object using optimized helper helper
     const parsedObj = parseDateStringToTimestamp(due, dueTimestamp);
     const parsedTimestamp = parsedObj.timestamp;
     const targetDate = parsedObj.date;
@@ -573,29 +616,6 @@ setInfo(updatedInfo);
     } finally {
       setIsSaving(false);
     }
-  };
-
-  const handleSaveDraft = () => {
-    // Sync state one last time before saving draft
-    setState(prev => ({
-      ...prev,
-      customerName: name,
-      customerPhone: phone,
-      customerOrder: order,
-      customerTemplate: template,
-      customerBahasa: bahasa,
-      customerAddOn: addOn,
-      customerJenis: jenis,
-      customerDue: due,
-      dueTimestamp: dueTimestamp,
-      customerInfo: info,
-      orderLink: link,
-      googleSheetLink: link,
-      orderId: orderId,
-    }));
-    
-    contextSaveAsDraft();
-    showToastMessage(appLanguage === 'ms' ? 'Draf disimpan secara lokal!' : 'Draft saved locally!');
   };
 
   const handleAutoFill = () => {
