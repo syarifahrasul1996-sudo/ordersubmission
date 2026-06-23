@@ -41,7 +41,7 @@ function AppContent() {
 
   return (
     <div className="flex justify-center w-full select-none bg-black/5 dark:bg-black/40 min-h-[100dvh]">
-      <div className="w-full max-w-[500px] bg-background min-h-[100dvh] flex flex-col relative shadow-2xl overflow-hidden text-[15px]">
+      <div className="w-full max-w-[500px] bg-background min-h-[100dvh] flex flex-col relative shadow-2xl overflow-hidden text-base">
         <Header />
         
         <main className="flex-1 overflow-y-auto overflow-x-hidden relative">
