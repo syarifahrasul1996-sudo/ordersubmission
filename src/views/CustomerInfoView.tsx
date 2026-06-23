@@ -842,7 +842,7 @@ setInfo(updatedInfo);
         <div className="space-y-1">
           <div className="flex justify-between items-center ml-1 mb-0.5">
             <label className="text-xs font-black text-gray-400 uppercase tracking-widest">
-              {appLanguage === 'ms' ? 'Link (Boleh masukkan lebih dari 1 link - asingkan dengan enter/koma)' : 'Links (Can insert multiple - separate with enter/comma)'}
+              {appLanguage === 'ms' ? 'Link (Asingkan dengan enter/koma untuk lebih 1 link)' : 'Links (Separate multiple links with enter/comma)'}
             </label>
             {!(order === 'Resume' || order === 'Edit Resume') && (
               <button
