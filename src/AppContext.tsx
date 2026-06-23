@@ -667,9 +667,52 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       setHistory(prev => prev.map(item => 
         item.id === id 
-          ? { ...item, state: { ...item.state, isDeleted: false, lastModifiedLocally: Date.now() } } 
+          ? { ...item, state: { ...item.state, isDeleted: false, syncStatus: 'failed', lastModifiedLocally: Date.now() } } 
           : item
       ));
+
+      if (itemToRestore.state) {
+        const {
+          scriptUrl,
+          spreadsheetId,
+          orderId,
+          customerName,
+          customerPhone,
+          customerOrder,
+          customerTemplate,
+          template,
+          customerBahasa,
+          customerAddOn,
+          customerJenis,
+          customerDue,
+          googleSheetLink,
+          orderLink,
+          customerInfo,
+          isDelivered
+        } = itemToRestore.state;
+
+        if (scriptUrl && spreadsheetId && orderId) {
+          const orderRow = [
+            isDelivered || false,
+            customerName || '',
+            customerPhone || '',
+            customerOrder || '',
+            customerTemplate || template || '',
+            customerBahasa || '',
+            customerAddOn || '',
+            customerJenis || '',
+            customerDue || '',
+            orderLink || googleSheetLink || '',
+            orderId
+          ];
+          addToOfflineQueue({
+            action: 'update_order',
+            spreadsheetId: spreadsheetId,
+            orderId: orderId,
+            rowData: orderRow
+          }, scriptUrl, orderId);
+        }
+      }
     }
   };
 
@@ -733,6 +776,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
   };
 
   const loadOrder = (item: OrderHistoryItem) => {
+    // If it's a remote item not in history, add it to history now so it's persisted locally
+    setHistory(prev => {
+      const exists = prev.some(h => h.id === item.id || (h.state?.orderId && h.state.orderId === item.id));
+      if (exists) return prev;
+      return [item, ...prev];
+    });
+
     setState({
       ...INITIAL_STATE,
       ...item.state,
