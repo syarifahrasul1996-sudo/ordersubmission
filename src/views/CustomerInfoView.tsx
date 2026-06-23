@@ -26,7 +26,7 @@ function generateOrderId() {
 }
 
 export function CustomerInfoView() {
-  const { appLanguage, state, setState, goHome, viewStack, updateOrderHistoryState, addToOfflineQueue, saveAsDraft: contextSaveAsDraft, deleteDraft } = useAppContext();
+  const { appLanguage, state, setState, goHome, viewStack, updateOrderHistoryState, addToOfflineQueue, saveAsDraft: contextSaveAsDraft, deleteDraft, history } = useAppContext();
   const isActive = viewStack[viewStack.length - 1] === 'customer-info';
 
   const computeInitialValues = useCallback(() => {
@@ -423,8 +423,12 @@ export function CustomerInfoView() {
     }));
     
     if (isDraftSave) {
-        contextSaveAsDraft();
-        showToastMessage(appLanguage === 'ms' ? 'Draf disimpan secara lokal!' : 'Draft saved locally!');
+        // Only save draft if it's a transient draft, NOT a completed order in local history or remote search result
+        const isRealOrder = state.historyId && (!state.historyId.startsWith('draft_') || history?.some(item => item.id === state.historyId));
+        if (!isRealOrder) {
+          contextSaveAsDraft();
+          showToastMessage(appLanguage === 'ms' ? 'Draf disimpan secara lokal!' : 'Draft saved locally!');
+        }
     }
   };
 

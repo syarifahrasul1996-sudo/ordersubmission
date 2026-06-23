@@ -72,7 +72,7 @@ export async function syncPushNotifications(item: OrderHistoryItem, language: 'm
     const now = Date.now();
     const alerts = [];
 
-    const { dueTimestamp, customerName, mainType, subType, isDelivered, googleSheetLink } = item.state;
+    const { dueTimestamp, customerName, mainType, subType, isDelivered, googleSheetLink, hasNotified, hasDueAlerted } = item.state;
 
     // Only set alerts if they have set a dueTimestamp, and it hasn't been delivered/completed
     if (dueTimestamp && !isDelivered) {
@@ -89,9 +89,33 @@ export async function syncPushNotifications(item: OrderHistoryItem, language: 'm
             : `Order for ${customerName || 'Customer'} (${mainType} ${subType}) is due in less than 20 minutes!`,
           url: '/'
         });
+      } else if (dueTimestamp > now && !hasNotified) {
+        // Trigger a nearly immediate reminder if they just set a deadline within the 20-min window
+        alerts.push({
+          id: 'twenty-mins-immediate',
+          triggerAt: now + 5000,
+          title: language === 'ms' ? 'Pesanan Bakal Selesai!' : 'Order Due Soon!',
+          body: language === 'ms'
+            ? `Pesanan untuk ${customerName || 'Pelanggan'} (${mainType} ${subType}) berbaki kurang dari 20 minit!`
+            : `Order for ${customerName || 'Customer'} (${mainType} ${subType}) is due in less than 20 minutes!`,
+          url: '/'
+        });
       }
 
-      // 2. 3-hour alert (only if googleSheetLink style checking is required and not finished/entered yet)
+      // 2. Due-time alert
+      if (dueTimestamp > now && !hasDueAlerted) {
+        alerts.push({
+          id: 'due-now',
+          triggerAt: dueTimestamp,
+          title: language === 'ms' ? 'Tempahan Sudah Sampai Tempoh!' : 'Order Deadline Reached!',
+          body: language === 'ms'
+            ? `Tempahan untuk ${customerName || 'Pelanggan'} (${mainType} ${subType}) sudah sampai tempoh sekarang!`
+            : `Order for ${customerName || 'Customer'} (${mainType} ${subType}) is due now!`,
+          url: '/'
+        });
+      }
+
+      // 3. 3-hour alert (only if googleSheetLink style checking is required and not finished/entered yet)
       const THREE_HOURS = 3 * 60 * 60 * 1000;
       const threeHourTrigger = dueTimestamp - THREE_HOURS;
       if (threeHourTrigger > now && (!googleSheetLink || googleSheetLink.trim() === '')) {

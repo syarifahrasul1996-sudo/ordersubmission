@@ -135,15 +135,33 @@ export function HistoryView() {
 
   useEffect(() => {
     let syncTimer: number | null = null;
+
+    const triggerSync = () => {
+      if (handleGlobalSyncRef.current && !isSearching && !refreshing && navigator.onLine) {
+        handleGlobalSyncRef.current(true);
+      }
+    };
+
+    // Run custom background sync on frame focus or initial mount
+    triggerSync();
+
     if (autoSync) {
-      syncTimer = window.setInterval(() => {
-        if (handleGlobalSyncRef.current && !isSearching && !refreshing) {
-          handleGlobalSyncRef.current(true);
-        }
-      }, 60000); // 1 minute auto-sync
+      syncTimer = window.setInterval(triggerSync, 20000); // 20 seconds auto-sync
     }
+
+    const handleVisibilityOrFocus = () => {
+      if (document.visibilityState === 'visible') {
+        triggerSync();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+    window.addEventListener('focus', handleVisibilityOrFocus);
+
     return () => {
       if (syncTimer) window.clearInterval(syncTimer);
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+      window.removeEventListener('focus', handleVisibilityOrFocus);
     };
   }, [autoSync, isSearching, refreshing]);
 
@@ -798,6 +816,17 @@ export function HistoryView() {
         .replace(/\s+/g, '-')
         .replace(/[^a-zA-Z0-9-]/g, '');
 
+    // Check if we already have this in local history (by generatedOrderId or orderId) to avoid creating a duplicate card
+    const localMatch = history.find(item => 
+      item.id === generatedOrderId || 
+      (item.state?.orderId && item.state.orderId === generatedOrderId)
+    );
+
+    if (localMatch) {
+      loadOrder(localMatch);
+      return;
+    }
+
     const dueTs = parseDueTimestamp(orderData.due);
 
     const stateToApply = {
@@ -826,9 +855,8 @@ export function HistoryView() {
       customerInfo: ''
     };
 
-    const randomId = orderData.orderId || 'synced_' + Math.round(Math.random() * 100000);
     const mockHistoryItem = {
-      id: randomId,
+      id: generatedOrderId,
       timestamp: Date.now(),
       state: stateToApply,
       messages: []

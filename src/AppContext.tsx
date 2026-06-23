@@ -237,7 +237,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setHistory(prevHistory => {
         let updatedHistory = false;
         const newHistory = prevHistory.map(item => {
-          const { dueTimestamp, hasNotified, hasThreeHourChecked, customerName, subType, mainType, orderId, isDelivered } = item.state;
+          const { dueTimestamp, hasNotified, hasDueAlerted, hasThreeHourChecked, customerName, subType, mainType, orderId, isDelivered } = item.state;
           
           let itemUpdated = false;
           let newState = { ...item.state };
@@ -324,8 +324,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
             // 2. Check 20 mins logic
             if (!hasNotified && timeUntilDue > 0 && timeUntilDue <= TWENTY_MINS) {
-              const title = 'Order Due Soon!';
-              const body = `Order for ${customerName || 'Customer'} (${mainType} ${subType}) is due in less than 20 minutes!`;
+              const title = appLanguage === 'ms' ? 'Pesanan Bakal Selesai!' : 'Order Due Soon!';
+              const body = appLanguage === 'ms'
+                ? `Pesanan untuk ${customerName || 'Pelanggan'} (${mainType} ${subType}) berbaki kurang dari 20 minit!`
+                : `Order for ${customerName || 'Customer'} (${mainType} ${subType}) is due in less than 20 minutes!`;
               
               try {
                 if ('Notification' in window && Notification.permission === 'granted') {
@@ -333,6 +335,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
                 }
               } catch (e) { console.warn(e); }
               newState.hasNotified = true;
+              itemUpdated = true;
+            }
+
+            // 3. New Check "Due Now" logic (deadline reached)
+            if (!hasDueAlerted && timeUntilDue <= 0) {
+              const title = appLanguage === 'ms' ? 'Tempahan Sudah Sampai Tempoh!' : 'Order Deadline Reached!';
+              const body = appLanguage === 'ms'
+                ? `Tempahan untuk ${customerName || 'Pelanggan'} (${mainType} ${subType}) sudah sampai tempoh sekarang!`
+                : `Order for ${customerName || 'Customer'} (${mainType} ${subType}) is due now!`;
+              
+              try {
+                if ('Notification' in window && Notification.permission === 'granted') {
+                  new Notification(title, { body });
+                }
+              } catch (e) { console.warn(e); }
+              newState.hasDueAlerted = true;
               itemUpdated = true;
             }
           }
@@ -602,6 +620,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   };
 
   const saveAsDraft = () => {
+    // If this is a real order (not starting with 'draft_' or already present in history), do not save it as a draft
+    if (state.historyId && (!state.historyId.startsWith('draft_') || history.some(item => item.id === state.historyId))) {
+      return;
+    }
+
     const draftId = state.historyId || `draft_${Date.now()}`;
     const timestamp = state.timestamp || Date.now();
     

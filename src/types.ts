@@ -25,6 +25,7 @@ export interface AppState {
   customerDue?: string;
   dueTimestamp?: number;
   hasNotified?: boolean;
+  hasDueAlerted?: boolean;
   isDelivered?: boolean;
   customerInfo?: string;
   orderLink?: string;
@@ -76,6 +77,7 @@ export const INITIAL_STATE: AppState = {
   customerDue: '',
   dueTimestamp: 0,
   hasNotified: false,
+  hasDueAlerted: false,
   isDelivered: false,
   customerInfo: '',
   orderLink: '',
