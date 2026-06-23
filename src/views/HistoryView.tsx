@@ -83,6 +83,8 @@ export function HistoryView() {
     setHistory,
     clearHistory,
     deleteOrderFromHistory,
+    restoreOrderFromHistory,
+    permanentlyDeleteOrderFromHistory,
     loadOrder,
     drafts,
     deleteDraft,
@@ -93,9 +95,21 @@ export function HistoryView() {
     updateOrderHistoryState,
     deletedOrderIds
   } = useAppContext();
+  const historyRef = useRef(history);
+  const deletedOrderIdsRef = useRef(deletedOrderIds);
+
+  useEffect(() => {
+    historyRef.current = history;
+  }, [history]);
+
+  useEffect(() => {
+    deletedOrderIdsRef.current = deletedOrderIds;
+  }, [deletedOrderIds]);
+
   const [currentTime, setCurrentTime] = useState(() => Date.now());
   const [confirmAction, setConfirmAction] = useState<{ title?: string; message: string; onConfirm: () => void } | null>(null);
   const [alertMsg, setAlertMsg] = useState<{ title?: string; message: string; type: 'success' | 'error' | 'info' } | null>(null);
+  const [syncErrorToast, setSyncErrorToast] = useState<{ message: string; visible: boolean } | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [pullProgress, setPullProgress] = useState(0);
   const [startY, setStartY] = useState(0);
@@ -103,7 +117,7 @@ export function HistoryView() {
   const [syncingId, setSyncingId] = useState<string | null>(null);
   const [deliveryFilter, setDeliveryFilter] = useState<'all' | 'delivered' | 'pending'>('all');
   const [pendingTimeFilter, setPendingTimeFilter] = useState<'all' | 'today' | 'tomorrow' | '2days' | '3days'>('all');
-  const [activeTab, setActiveTab] = useState<'local' | 'remote' | 'drafts'>('local');
+  const [activeTab, setActiveTab] = useState<'local' | 'remote' | 'drafts' | 'trash'>('local');
   const [searchQuery, setSearchQuery] = useState('');
   const [localSearchQuery, setLocalSearchQuery] = useState('');
   const [remoteResults, setRemoteResults] = useState<any[]>([]);
@@ -113,14 +127,6 @@ export function HistoryView() {
   const [globalScriptUrl, setGlobalScriptUrl] = useState<string>(() => {
     return localStorage.getItem('db_global_script_url') || GOOGLE_SCRIPT_URL;
   });
-  const [autoSync, setAutoSync] = useState(() => {
-    const saved = localStorage.getItem('db_auto_sync');
-    return saved !== null ? saved === 'true' : true;
-  });
-
-  useEffect(() => {
-    localStorage.setItem('db_auto_sync', String(autoSync));
-  }, [autoSync]);
 
   useEffect(() => {
   const timer = window.setInterval(() => {
@@ -131,40 +137,6 @@ export function HistoryView() {
     window.clearInterval(timer);
   };
 }, []);
-
-  const handleGlobalSyncRef = useRef<((silent?: boolean) => Promise<void>) | null>(null);
-
-  useEffect(() => {
-    let syncTimer: number | null = null;
-
-    const triggerSync = () => {
-      if (handleGlobalSyncRef.current && !isSearching && !refreshing && navigator.onLine) {
-        handleGlobalSyncRef.current(true);
-      }
-    };
-
-    // Run custom background sync on frame focus or initial mount
-    triggerSync();
-
-    if (autoSync) {
-      syncTimer = window.setInterval(triggerSync, 20000); // 20 seconds auto-sync
-    }
-
-    const handleVisibilityOrFocus = () => {
-      if (document.visibilityState === 'visible') {
-        triggerSync();
-      }
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
-    window.addEventListener('focus', handleVisibilityOrFocus);
-
-    return () => {
-      if (syncTimer) window.clearInterval(syncTimer);
-      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
-      window.removeEventListener('focus', handleVisibilityOrFocus);
-    };
-  }, [autoSync, isSearching, refreshing]);
 
 
   const [annualSheets, setAnnualSheets] = useState<{ year: string; spreadsheetId: string; scriptUrl: string }[]>(() => {
@@ -503,6 +475,7 @@ export function HistoryView() {
              syncLastSuccess: Date.now(),
              syncFailCount: 0,
           });
+          handleGlobalSync(true);
         }
       } catch (err) {
         console.warn('Failed to sync delivered status update in background:', err);
@@ -554,12 +527,12 @@ export function HistoryView() {
     }
 
     setRefreshing(true);
+    setSyncErrorToast(null);
 
     try {
       const currentNow = Date.now();
       let totalNewCou = 0;
       let totalUpdCou = 0;
-      let existingHistory = [...history];
 
       // Perform JSONP sync_recent requests across all active yearly sheets
       const fetchPromises = activeConfigs.map(async (sheet) => {
@@ -578,113 +551,137 @@ export function HistoryView() {
         try {
           const data = await jsonpRequest(url, callbackName);
           if (data && data.status === 'success' && Array.isArray(data.orders)) {
-            return { year: sheet.year, orders: data.orders, spreadsheetId: sId };
+            return { year: sheet.year, orders: data.orders, spreadsheetId: sId, success: true };
           }
+          return { year: sheet.year, orders: [], spreadsheetId: sId, success: false, error: data?.message || 'Invalid format' };
         } catch (e) {
           console.warn(`Sync failed for year ${sheet.year}:`, e);
+          return { year: sheet.year, orders: [], spreadsheetId: sId, success: false, error: String(e) };
         }
-        return { year: sheet.year, orders: [], spreadsheetId: sId };
       });
 
       const results = await Promise.all(fetchPromises);
 
-      for (const res of results) {
-        for (const orderData of res.orders) {
-          const generatedOrderId =
-            orderData.orderId ||
-            `SYNC-${orderData.name || 'UNKNOWN'}-${orderData.phone || ''}-${orderData.due || ''}`
-              .replace(/\s+/g, '-')
-              .replace(/[^a-zA-Z0-9-]/g, '');
+      setHistory(prevHistory => {
+        const updatedHistory = [...prevHistory];
 
-          const existingIdx = existingHistory.findIndex(
-            h => h.state?.orderId === generatedOrderId
-          );
+        for (const res of results) {
+          if (!res.success) continue;
+          for (const orderData of res.orders) {
+            const generatedOrderId =
+              orderData.orderId ||
+              `SYNC-${orderData.name || 'UNKNOWN'}-${orderData.phone || ''}-${orderData.due || ''}`
+                .replace(/\s+/g, '-')
+                .replace(/[^a-zA-Z0-9-]/g, '');
 
-          // If this order was recently deleted locally, skip it during sync to prevent it from reappearing
-          if (deletedOrderIds.includes(generatedOrderId)) {
-            continue;
-          }
-
-          const dueTs = parseDueTimestamp(orderData.due);
-
-          const newState = {
-            isDelivered: !!orderData.isDelivered,
-            spreadsheetId: res.spreadsheetId,
-            customerName: orderData.name,
-            customerPhone: orderData.phone,
-            customerOrder: orderData.order,
-            template: orderData.template,
-            customerTemplate: orderData.template,
-            customerBahasa: orderData.bahasa,
-            customerAddOn: orderData.addon,
-            customerJenis: orderData.jenis,
-            customerDue: orderData.due,
-            orderLink: orderData.link,
-            googleSheetLink: orderData.link,
-            orderId: generatedOrderId,
-            dueTimestamp: dueTs,
-            syncStatus: 'synced' as const,
-            syncLastSuccess: currentNow,
-            mainType:
-              orderData.order === 'Resume'
-                ? 'Resume'
-                : orderData.order === 'Surat'
-                ? 'Surat'
-                : orderData.order || 'Lain-lain',
-            subType: ''
-          };
-
-          if (existingIdx !== -1) {
-            const existingItem = existingHistory[existingIdx];
-
-            // Never revive an item that was marked as deleted locally
-            if (existingItem.state?.isDeleted) {
+            // Use the up-to-date deletedOrderIds ref to skip any deleted items
+            if (deletedOrderIdsRef.current.includes(generatedOrderId)) {
               continue;
             }
 
-            // Protect local edits that haven't been confirmed as synced
-            const isUnsynced = existingItem.state?.syncStatus === 'saved_locally' || existingItem.state?.syncStatus === 'syncing';
-            
-            // If the local item was modified within the last 10 minutes, skip overwriting it to prevent stale remote data from clobbering it.
-            const isRecentlyModified =
-              existingItem.state?.lastModifiedLocally &&
-              currentNow - existingItem.state.lastModifiedLocally < 600000;
+            const existingIdx = updatedHistory.findIndex(
+              h => h.state?.orderId === generatedOrderId || h.id === generatedOrderId
+            );
 
-            if (!isUnsynced && !isRecentlyModified) {
-              existingHistory[existingIdx] = {
-                ...existingItem,
-                state: {
-                  ...existingItem.state,
-                  ...newState
-                }
-              };
-              totalUpdCou++;
+            const dueTs = parseDueTimestamp(orderData.due);
+
+            const newState = {
+              isDelivered: !!orderData.isDelivered,
+              spreadsheetId: res.spreadsheetId,
+              customerName: orderData.name,
+              customerPhone: orderData.phone,
+              customerOrder: orderData.order,
+              template: orderData.template,
+              customerTemplate: orderData.template,
+              customerBahasa: orderData.bahasa,
+              customerAddOn: orderData.addon,
+              customerJenis: orderData.jenis,
+              customerDue: orderData.due,
+              orderLink: orderData.link,
+              googleSheetLink: orderData.link,
+              orderId: generatedOrderId,
+              dueTimestamp: dueTs,
+              syncStatus: 'synced' as const,
+              syncLastSuccess: currentNow,
+              mainType:
+                orderData.order === 'Resume'
+                  ? 'Resume'
+                  : orderData.order === 'Surat'
+                  ? 'Surat'
+                  : orderData.order || 'Lain-lain',
+              subType: ''
+            };
+
+            if (existingIdx !== -1) {
+              const existingItem = updatedHistory[existingIdx];
+
+              // Never revive an item that was marked as deleted locally
+              if (existingItem.state?.isDeleted) {
+                continue;
+              }
+
+              // Protect local edits that haven't been confirmed as synced
+              const isUnsynced = existingItem.state?.syncStatus === 'saved_locally' || existingItem.state?.syncStatus === 'syncing';
+              
+              // If the local item was modified within the last 10 minutes, skip overwriting it to prevent stale remote data from clobbering it.
+              const isRecentlyModified =
+                existingItem.state?.lastModifiedLocally &&
+                currentNow - existingItem.state.lastModifiedLocally < 600000;
+
+              if (!isUnsynced && !isRecentlyModified) {
+                updatedHistory[existingIdx] = {
+                  ...existingItem,
+                  state: {
+                    ...existingItem.state,
+                    ...newState
+                  }
+                };
+                totalUpdCou++;
+              }
+            } else {
+              updatedHistory.push({
+                id: generatedOrderId,
+                timestamp: currentNow,
+                state: newState,
+                messages: []
+              });
+              totalNewCou++;
             }
-          } else {
-            existingHistory.push({
-              id: generatedOrderId,
-              timestamp: currentNow,
-              state: newState,
-              messages: []
-            });
-            totalNewCou++;
           }
         }
-      }
+        return updatedHistory;
+      });
 
-      setHistory(existingHistory);
+      const failed = results.filter(r => !r.success);
 
-      if (!silent) {
-        setAlertMsg({
-          type: 'success',
-          message: appLanguage === 'ms'
-            ? `Berjaya dikemaskini daripada ${activeConfigs.length} database tahunan!\nBaru: ${totalNewCou}\nDikemaskini: ${totalUpdCou}`
-            : `Aggregated sync complete across ${activeConfigs.length} annual sheets!\nNew: ${totalNewCou}\nUpdated: ${totalUpdCou}`
-        });
+      if (failed.length > 0) {
+        if (!silent) {
+          const failedYears = failed.map(f => f.year || 'UNKNOWN').join(', ');
+          setSyncErrorToast({
+            message: appLanguage === 'ms'
+              ? `Gagal menyelaraskan database bagi tahun: ${failedYears}`
+              : `Failed to sync database for years: ${failedYears}`,
+            visible: true
+          });
+        }
+      } else {
+        if (!silent) {
+          setAlertMsg({
+            type: 'success',
+            message: appLanguage === 'ms'
+              ? `Berjaya dikemaskini daripada ${activeConfigs.length} database tahunan!\nBaru: ${totalNewCou}\nDikemaskini: ${totalUpdCou}`
+              : `Aggregated sync complete across ${activeConfigs.length} annual sheets!\nNew: ${totalNewCou}\nUpdated: ${totalUpdCou}`
+          });
+        }
       }
     } catch (e) {
       if (!silent) {
-        setAlertMsg({ type: 'error', message: 'Sync failed: ' + e });
+        setSyncErrorToast({
+          message: appLanguage === 'ms'
+            ? 'Penyelarasan gagal: ' + String(e)
+            : 'Sync failed: ' + String(e),
+          visible: true
+        });
       }
     } finally {
       setRefreshing(false);
@@ -692,7 +689,11 @@ export function HistoryView() {
     }
   };
 
-  handleGlobalSyncRef.current = handleGlobalSync;
+  useEffect(() => {
+    if (navigator.onLine) {
+      handleGlobalSync(true);
+    }
+  }, []);
 
   const onTouchStart = (e: React.TouchEvent) => {
     if (window.scrollY <= 0) {
@@ -1067,6 +1068,28 @@ export function HistoryView() {
             <Database className="w-3.5 h-3.5" />
             <span className="truncate">{appLanguage === 'ms' ? 'Cari Cloud' : 'Cloud Search'}</span>
           </button>
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab('trash');
+            }}
+            className={`flex-1 text-center text-[10px] sm:text-xs font-bold py-2 px-1 rounded-lg transition-all duration-200 flex items-center justify-center space-x-1 ${
+              activeTab === 'trash'
+                ? 'bg-rose-50 border border-rose-200/50 dark:bg-rose-950/20 dark:border-rose-900/30 text-rose-600 dark:text-rose-400 shadow-sm'
+                : 'text-subtext/70 hover:text-text hover:bg-white/40'
+            }`}
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            <span className="truncate">{appLanguage === 'ms' ? 'Tong Sampah' : 'Trash Bin'}</span>
+            {(() => {
+              const deletedCount = history.filter(item => item?.state?.isDeleted).length;
+              return deletedCount > 0 ? (
+                <span className="px-1.5 py-0.5 text-[9px] font-black bg-rose-600 dark:bg-rose-500 text-white rounded-full scale-90 select-none animate-pulse">
+                  {deletedCount}
+                </span>
+              ) : null;
+            })()}
+          </button>
         </div>
         {activeTab === 'local' && (
           <div className="space-y-4">
@@ -1374,14 +1397,15 @@ export function HistoryView() {
                                 message: appLanguage === 'ms' 
                                   ? 'Adakah anda pasti mahu memadam rekod ini? Ia juga akan dipadamkan daripada Google Sheet anda.' 
                                   : 'Are you sure you want to delete this record? It will also be deleted from your Google Sheet.',
-                                onConfirm: () => {
+                                onConfirm: async () => {
                                   const spreadsheetId = item.state?.spreadsheetId || state.spreadsheetId;
                                   const orderId = item.state?.orderId;
                                   if (spreadsheetId && orderId) {
-                                    deleteOrderFromCloud(spreadsheetId, orderId);
+                                    await deleteOrderFromCloud(spreadsheetId, orderId);
                                   }
                                   deleteOrderFromHistory(item.id);
                                   setConfirmAction(null);
+                                  handleGlobalSync(true);
                                 }
                               });
                             }}
@@ -1825,6 +1849,7 @@ export function HistoryView() {
                       : 'Annual database configurations successfully saved!'
                   });
                   setShowDbSettings(false);
+                  handleGlobalSync(true);
                 }}
                 className="w-full h-10 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl flex items-center justify-center space-x-1 text-xs active:scale-95 transition-all shadow-sm"
               >
@@ -2079,6 +2104,152 @@ export function HistoryView() {
         )}
       </div>
     )}
+
+    {activeTab === 'trash' && (
+      <div className="space-y-4 mt-2.5">
+        {(() => {
+          const deletedItems = history.filter(item => item?.state?.isDeleted);
+          
+          if (deletedItems.length === 0) {
+            return (
+              <div className="flex flex-col items-center justify-center py-20 text-subtext space-y-4">
+                <div className="w-16 h-16 rounded-full bg-rose-50 dark:bg-rose-950/20 flex items-center justify-center text-rose-500/60">
+                  <Trash2 className="w-8 h-8 opacity-60" />
+                </div>
+                <p className="font-bold">
+                  {appLanguage === 'ms' ? 'Tong sampah kosong' : 'Trash bin is empty'}
+                </p>
+                <p className="text-[10px] text-gray-400 text-center max-w-[220px]">
+                  {appLanguage === 'ms' 
+                    ? 'Rekod yang dipadamkan dari Sejarah akan dipaparkan di sini.' 
+                    : 'Deleted records from History will appear here.'}
+                </p>
+              </div>
+            );
+          }
+
+          return (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between bg-rose-50/50 border border-rose-200/50 rounded-2xl p-4">
+                <div className="space-y-0.5">
+                  <p className="text-xs font-extrabold text-rose-900">
+                    {appLanguage === 'ms' ? 'Tong Sampah' : 'Trash Bin'}
+                  </p>
+                  <p className="text-[10px] text-rose-700/80">
+                    {appLanguage === 'ms' 
+                      ? `${deletedItems.length} rekod dipadamkan dikesan.` 
+                      : `${deletedItems.length} deleted records detected.`}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setConfirmAction({
+                      title: appLanguage === 'ms' ? 'Kosongkan Tong Sampah?' : 'Empty Trash Bin?',
+                      message: appLanguage === 'ms'
+                        ? 'Adakah anda benar-benar ingin memadamkan semua rekod ini secara kekal dari peranti ini?'
+                        : 'Are you sure you want to permanently delete all these records from this device?',
+                      onConfirm: () => {
+                        deletedItems.forEach(item => {
+                          permanentlyDeleteOrderFromHistory(item.id);
+                        });
+                        setConfirmAction(null);
+                        setAlertMsg({
+                          type: 'success',
+                          message: appLanguage === 'ms' 
+                            ? 'Tong sampah telah dibersihkan!' 
+                            : 'Trash bin emptied successfully!'
+                        });
+                      }
+                    });
+                  }}
+                  className="px-3.5 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-[10px] sm:text-xs font-black transition-all duration-150 active:scale-95 shadow-sm"
+                >
+                  {appLanguage === 'ms' ? 'Kosongkan' : 'Empty Trash'}
+                </button>
+              </div>
+
+              <div className="space-y-3">
+                {deletedItems.map((item) => {
+                  const customerName = item.state?.customerName || item.state?.name || 'Unknown';
+                  const dateStr = item.timestamp ? new Date(item.timestamp).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+                  const orderIdHex = item.state?.orderId || item.id;
+                  
+                  return (
+                    <div
+                      key={item.id}
+                      className="bg-surface border border-gray-100 dark:border-gray-800/40 rounded-2xl p-4 shadow-sm flex flex-col space-y-3.5 hover:border-gray-200 transition-all duration-150 animate-fade-in"
+                    >
+                      <div className="flex items-start justify-between">
+                        <div className="space-y-1">
+                          <div className="flex items-center space-x-2">
+                            <span className="text-xs font-black text-text">{formatCustomerName(customerName)}</span>
+                            {item.state?.customerJenis && (
+                              <span className="px-1.5 py-0.5 text-[8px] bg-gray-100 text-subtext font-bold rounded-md">
+                                {item.state.customerJenis}
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center text-[9px] text-subtext space-x-2 font-semibold">
+                            <span>ID: {orderIdHex.substring(0, 10)}</span>
+                            <span>•</span>
+                            <span>{dateStr}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex gap-2.5 pt-1.5 border-t border-dashed border-gray-100/60">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            restoreOrderFromHistory(item.id);
+                            setAlertMsg({
+                              type: 'success',
+                              message: appLanguage === 'ms' 
+                                ? 'Rekod berjaya dipulihkan!' 
+                                : 'Record restored successfully!'
+                            });
+                          }}
+                          className="flex-1 h-9 bg-primary/10 hover:bg-primary/20 text-primary rounded-xl text-[10px] sm:text-xs font-bold transition-all duration-150 active:scale-[0.97] flex items-center justify-center space-x-1"
+                        >
+                          <RefreshCcw className="w-3 h-3 rotate-180" />
+                          <span>{appLanguage === 'ms' ? 'Pulihkan' : 'Restore'}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setConfirmAction({
+                              title: appLanguage === 'ms' ? 'Padam Kekal?' : 'Delete Permanently?',
+                              message: appLanguage === 'ms'
+                                ? 'Adakah anda mahu memadam rekod ini selamanya dari peranti ini? Tindakan ini tidak boleh diundur.'
+                                : 'Do you want to permanently delete this record from this device? This action cannot be undone.',
+                              onConfirm: () => {
+                                permanentlyDeleteOrderFromHistory(item.id);
+                                setConfirmAction(null);
+                                setAlertMsg({
+                                  type: 'success',
+                                  message: appLanguage === 'ms' 
+                                    ? 'Rekod dipadam kekal!' 
+                                    : 'Record permanently deleted!'
+                                });
+                              }
+                            });
+                          }}
+                          className="flex-1 h-9 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-xl text-[10px] sm:text-xs font-bold transition-all duration-150 active:scale-[0.97] flex items-center justify-center space-x-1"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                          <span>{appLanguage === 'ms' ? 'Padam Kekal' : 'Delete Permanently'}</span>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
+      </div>
+    )}
   </div>
 
   {confirmAction && createPortal(
@@ -2156,6 +2327,50 @@ export function HistoryView() {
             OK
           </button>
         </div>
+      </div>
+    </div>,
+    document.body
+  )}
+
+  {syncErrorToast && syncErrorToast.visible && createPortal(
+    <div className="fixed left-1/2 -translate-x-1/2 bottom-[calc(env(safe-area-inset-bottom)+5.5rem)] sm:bottom-[calc(env(safe-area-inset-bottom)+8.5rem)] z-[100] w-full max-w-sm px-4">
+      <div className="bg-red-50 text-red-900 border border-red-200 rounded-2xl p-4 shadow-xl flex gap-3 items-start animate-fade-in-up">
+        <AlertCircle className="w-5 h-5 text-red-600 mt-0.5 shrink-0" />
+        <div className="flex-1 space-y-1">
+          <p className="text-xs font-bold leading-tight">
+            {appLanguage === 'ms' ? 'Penyelarasan Gagal' : 'Sync Failed'}
+          </p>
+          <p className="text-[11px] text-red-700/90 leading-normal line-clamp-2">
+            {syncErrorToast.message}
+          </p>
+          <div className="flex gap-2 pt-1.5 justify-start">
+            <button
+              type="button"
+              onClick={() => {
+                setSyncErrorToast(null);
+                handleGlobalSync(false);
+              }}
+              className="px-3.5 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white font-bold text-[10px] sm:text-xs active:scale-95 transition-all flex items-center gap-1 shadow-sm"
+            >
+              <RefreshCcw className="w-3 h-3" />
+              {appLanguage === 'ms' ? 'Cuba Lagi' : 'Retry'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setSyncErrorToast(null)}
+              className="px-3 py-1.5 rounded-lg bg-transparent hover:bg-red-100/50 text-red-700 font-bold text-[10px] sm:text-xs transition-colors"
+            >
+              {appLanguage === 'ms' ? 'Tutup' : 'Dismiss'}
+            </button>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => setSyncErrorToast(null)}
+          className="text-red-500 hover:text-red-700 transition-colors p-0.5 rounded-lg hover:bg-red-100"
+        >
+          <X className="w-4 h-4" />
+        </button>
       </div>
     </div>,
     document.body

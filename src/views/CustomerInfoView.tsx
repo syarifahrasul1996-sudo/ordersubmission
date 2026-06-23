@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { RefreshCcw, Save, Check, FileText, ExternalLink, LogOut, Loader2, AlertCircle } from 'lucide-react';
 import { useAppContext } from '../AppContext';
 import { calculateDeadline, formatPhoneUniversal, parseDateStringToTimestamp } from '../utils';
@@ -202,6 +202,10 @@ export function CustomerInfoView() {
   const [googleUser, setGoogleUser] = useState<User | null>(null);
   const [isGeneratingDoc, setIsGeneratingDoc] = useState(false);
 
+  // Form session recovery state
+  const [showResumeBanner, setShowResumeBanner] = useState(false);
+  const isInitializingRef = useRef(true);
+
   useEffect(() => {
     const unsubscribe = initAuth(
       (u) => setGoogleUser(u),
@@ -383,6 +387,7 @@ export function CustomerInfoView() {
   // Re-compute when navigating here or state changes
   useEffect(() => {
     if (isActive) {
+      isInitializingRef.current = true;
       setSaved(false);
       setIsSaving(false);
       setErrorMsg('');
@@ -400,8 +405,77 @@ export function CustomerInfoView() {
       setDueTimestamp(initVals.initDueTimestamp);
       setOrderId(initVals.initOrderId);
       setSpreadsheetId(state.spreadsheetId);
+
+      // Check if there is unsaved progress to restore
+      try {
+        const savedProgress = localStorage.getItem('customer_form_progress');
+        if (savedProgress) {
+          const data = JSON.parse(savedProgress);
+          // Has meaningful unsaved data?
+          const hasUnsavedData = (data.name && data.name.trim()) || 
+                                 (data.phone && data.phone.trim()) || 
+                                 (data.info && data.info.trim()) || 
+                                 (data.link && data.link.trim());
+          
+          if (hasUnsavedData) {
+            // Is it actually different from the computed active order details?
+            const isDifferent = data.name !== initVals.initName ||
+                                data.phone !== initVals.initPhone ||
+                                data.info !== initVals.initInfo ||
+                                data.link !== initVals.initLink ||
+                                data.order !== initVals.initOrder ||
+                                data.template !== initVals.initTemplate ||
+                                data.bahasa !== initVals.initBahasa ||
+                                data.addOn !== initVals.initAddOnDropdown ||
+                                data.jenis !== initVals.initJenis ||
+                                data.due !== initVals.initDue;
+            
+            if (isDifferent) {
+              setShowResumeBanner(true);
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('Error checking form progress recovery in localStorage:', e);
+      }
+
+      const timer = setTimeout(() => {
+        isInitializingRef.current = false;
+      }, 500);
+      return () => clearTimeout(timer);
     }
   }, [isActive, state.historyId, state.timestamp]); // fetch when mounted or when switching orders
+
+  const handleResumeProgress = () => {
+    try {
+      const savedProgress = localStorage.getItem('customer_form_progress');
+      if (savedProgress) {
+        const data = JSON.parse(savedProgress);
+        if (data.name !== undefined) setName(data.name);
+        if (data.phone !== undefined) setPhone(data.phone);
+        if (data.info !== undefined) setInfo(data.info);
+        if (data.link !== undefined) setLink(data.link);
+        if (data.order !== undefined) setOrder(data.order);
+        if (data.template !== undefined) setTemplate(data.template);
+        if (data.bahasa !== undefined) setBahasa(data.bahasa);
+        if (data.addOn !== undefined) setAddOn(data.addOn);
+        if (data.jenis !== undefined) setJenis(data.jenis);
+        if (data.due !== undefined) setDue(data.due);
+        if (data.dueTimestamp !== undefined) setDueTimestamp(data.dueTimestamp);
+        if (data.orderId !== undefined) setOrderId(data.orderId);
+        
+        showToastMessage(appLanguage === 'ms' ? 'Kemajuan borang telah dipulihkan!' : 'Form progress restored!');
+      }
+    } catch (e) {
+      console.error("Failed to resume progress:", e);
+    }
+    setShowResumeBanner(false);
+  };
+
+  const handleDismissProgress = () => {
+    localStorage.removeItem('customer_form_progress');
+    setShowResumeBanner(false);
+  };
 
   const syncStateAndSave = (isDraftSave = false) => {
     // Sync state one last time before saving
@@ -445,6 +519,31 @@ export function CustomerInfoView() {
       return () => clearTimeout(timer);
     }
   }, [name, phone, order, template, bahasa, addOn, jenis, due, info, link, orderId, isActive]);
+
+  // Save form progress to localStorage with a debounce
+  useEffect(() => {
+    if (isActive && !showResumeBanner && !isInitializingRef.current) {
+      const timer = setTimeout(() => {
+        const data = {
+          name,
+          phone,
+          info,
+          link,
+          order,
+          template,
+          bahasa,
+          addOn,
+          jenis,
+          due,
+          dueTimestamp,
+          orderId,
+          savedAt: Date.now()
+        };
+        localStorage.setItem('customer_form_progress', JSON.stringify(data));
+      }, 1000); // 1s debounce to align updates nicely
+      return () => clearTimeout(timer);
+    }
+  }, [name, phone, info, link, order, template, bahasa, addOn, jenis, due, dueTimestamp, orderId, isActive, showResumeBanner]);
 
   const handleSaveInfo = async () => {
     if (!name.trim() || !phone.trim()) {
@@ -577,6 +676,7 @@ setInfo(updatedInfo);
       if (!navigator.onLine) {
         try {
           addToOfflineQueue(payload, resolvedWebhookUrl, orderId);
+          localStorage.removeItem('customer_form_progress');
           setSaved(true);
           showToastMessage(appLanguage === 'ms' ? 'Luar Talian: Disimpan dalam Que' : 'Offline: Saved to Queue');
           setTimeout(() => goHome(), 1800);
@@ -587,6 +687,7 @@ setInfo(updatedInfo);
       }
 
       // Optimistic instant response
+      localStorage.removeItem('customer_form_progress');
       setSaved(true);
       showToastMessage(appLanguage === 'ms' ? 'Berjaya dihantar!' : 'Successfully submitted!');
       setIsSaving(false);
@@ -705,6 +806,40 @@ setInfo(updatedInfo);
       </div>
 
       <div className="space-y-3.5">
+        {showResumeBanner && (
+          <div className="bg-amber-50 dark:bg-amber-950/20 text-amber-950 dark:text-amber-200 border border-amber-200/50 dark:border-amber-800/20 rounded-2xl p-4 shadow-sm flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between animate-fade-in mb-2">
+            <div className="flex gap-2.5 items-start">
+              <AlertCircle className="w-5.5 h-5.5 text-amber-500 shrink-0 mt-0.5 sm:mt-0" />
+              <div>
+                <p className="text-xs font-black tracking-tight leading-none mb-1">
+                  {appLanguage === 'ms' ? 'Kemajuan Tidak Disimpan Dikesan' : 'Unsaved Progress Detected'}
+                </p>
+                <p className="text-[11px] text-amber-800/95 dark:text-amber-300/80 leading-snug">
+                  {appLanguage === 'ms' 
+                    ? 'Anda mempunyai data borang yang tidak disimpan dari sesi lepas.' 
+                    : 'You have unsaved form data from your previous session.'}
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-2 w-full sm:w-auto shrink-0 pt-0.5 sm:pt-0">
+              <button
+                type="button"
+                onClick={handleResumeProgress}
+                className="flex-1 sm:flex-none px-3.5 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-black text-xs active:scale-95 transition-all shadow-sm"
+              >
+                {appLanguage === 'ms' ? 'Pulihkan' : 'Resume'}
+              </button>
+              <button
+                type="button"
+                onClick={handleDismissProgress}
+                className="flex-1 sm:flex-none px-3 py-1.5 rounded-xl bg-white dark:bg-gray-800 border border-amber-200/40 dark:border-amber-800/30 hover:bg-amber-100/30 text-amber-900 dark:text-amber-200 font-bold text-xs transition-colors"
+              >
+                {appLanguage === 'ms' ? 'Padam' : 'Discard'}
+              </button>
+            </div>
+          </div>
+        )}
+
         {orderId && (
           <div className="flex items-center space-x-2 ml-1">
             <span className="text-[10px] font-bold text-subtext uppercase tracking-widest whitespace-nowrap">Order ID</span>

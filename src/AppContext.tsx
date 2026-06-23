@@ -19,6 +19,8 @@ interface AppContextType {
   updateOrderHistoryState: (updates: Partial<AppState>) => void;
   updateSpecificHistoryItem: (id: string, updates: Partial<AppState>) => void;
   deleteOrderFromHistory: (id: string) => void;
+  restoreOrderFromHistory: (id: string) => void;
+  permanentlyDeleteOrderFromHistory: (id: string) => void;
   clearHistory: () => void;
   loadOrder: (item: OrderHistoryItem) => void;
   drafts: OrderHistoryItem[];
@@ -652,6 +654,29 @@ export function AppProvider({ children }: { children: ReactNode }) {
     clearPushNotifications(id).catch(console.warn);
   };
 
+  const restoreOrderFromHistory = (id: string) => {
+    const itemToRestore = history.find(h => h.id === id);
+    if (itemToRestore) {
+      setDeletedOrderIds(prev => {
+        const blacklisted = [itemToRestore.id];
+        if (itemToRestore.state?.orderId) {
+          blacklisted.push(itemToRestore.state.orderId);
+        }
+        return prev.filter(x => !blacklisted.includes(x));
+      });
+
+      setHistory(prev => prev.map(item => 
+        item.id === id 
+          ? { ...item, state: { ...item.state, isDeleted: false, lastModifiedLocally: Date.now() } } 
+          : item
+      ));
+    }
+  };
+
+  const permanentlyDeleteOrderFromHistory = (id: string) => {
+    setHistory(prev => prev.filter(item => item.id !== id));
+  };
+
   const saveAsDraft = () => {
     // If this is a real order (not starting with 'draft_' or already present in history), do not save it as a draft
     if (state.historyId && (!state.historyId.startsWith('draft_') || history.some(item => item.id === state.historyId))) {
@@ -753,7 +778,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AppContext.Provider value={{ state, setState, viewStack, pushView, startNewOrder, popView, goHome, reset, generatedMessages, setGeneratedMessages, history, setHistory, saveOrderToHistory, updateOrderHistoryState, updateSpecificHistoryItem, deleteOrderFromHistory, clearHistory, loadOrder, drafts, saveAsDraft, deleteDraft, loadDraft, theme, toggleTheme, appLanguage, toggleLanguage, isOnline, isSyncing, queueSize, lastSyncTime, syncOfflineQueue, addToOfflineQueue, deletedOrderIds }}>
+    <AppContext.Provider value={{ state, setState, viewStack, pushView, startNewOrder, popView, goHome, reset, generatedMessages, setGeneratedMessages, history, setHistory, saveOrderToHistory, updateOrderHistoryState, updateSpecificHistoryItem, deleteOrderFromHistory, restoreOrderFromHistory, permanentlyDeleteOrderFromHistory, clearHistory, loadOrder, drafts, saveAsDraft, deleteDraft, loadDraft, theme, toggleTheme, appLanguage, toggleLanguage, isOnline, isSyncing, queueSize, lastSyncTime, syncOfflineQueue, addToOfflineQueue, deletedOrderIds }}>
       {children}
     </AppContext.Provider>
   );
