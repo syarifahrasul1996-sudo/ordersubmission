@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { cn } from '../cn';
-import { Clock, Trash2, Calendar, AlertCircle, RefreshCcw, Save, Bell, Check, Search, Database, Phone, Settings, ChevronDown, ChevronUp, Link, X } from 'lucide-react';
+import { Clock, Trash2, Calendar, AlertCircle, RefreshCcw, Save, Bell, Check, Search, Database, Phone, Settings, ChevronDown, ChevronUp, Link, X, ArrowRight, Zap } from 'lucide-react';
 import { useAppContext } from '../AppContext';
 import { formatPhoneUniversal, parseDateStringToTimestamp } from '../utils';
 
@@ -93,6 +93,8 @@ export function HistoryView() {
     appLanguage,
     updateSpecificHistoryItem,
     updateOrderHistoryState,
+    addToOfflineQueue,
+    syncOfflineQueue,
     deletedOrderIds
   } = useAppContext();
   const historyRef = useRef(history);
@@ -107,7 +109,14 @@ export function HistoryView() {
   }, [deletedOrderIds]);
 
   const [currentTime, setCurrentTime] = useState(() => Date.now());
-  const [confirmAction, setConfirmAction] = useState<{ title?: string; message: string; onConfirm: () => void } | null>(null);
+  const [confirmAction, setConfirmAction] = useState<{ 
+    title?: string; 
+    message: string; 
+    onConfirm: () => void | Promise<void>; 
+    isDestructive?: boolean;
+    confirmText?: string;
+  } | null>(null);
+  const [isConfirmLoading, setIsConfirmLoading] = useState(false);
   const [alertMsg, setAlertMsg] = useState<{ title?: string; message: string; type: 'success' | 'error' | 'info' } | null>(null);
   const [syncErrorToast, setSyncErrorToast] = useState<{ message: string; visible: boolean } | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -340,7 +349,21 @@ export function HistoryView() {
   };
 
   const getActiveScriptUrl = (sId?: string) => {
-    return globalScriptUrl.trim() || GOOGLE_SCRIPT_URL;
+    if (globalScriptUrl && globalScriptUrl.trim() !== '') {
+      return globalScriptUrl.trim();
+    }
+    if (sId) {
+      const targetId = extractId(sId);
+      const found = annualSheets.find((s: any) => extractId(s.spreadsheetId) === targetId);
+      if (found && found.scriptUrl && found.scriptUrl.trim() !== '') {
+        return found.scriptUrl.trim();
+      }
+    }
+    const firstActive = annualSheets.find((s: any) => s.scriptUrl && s.scriptUrl.trim() !== '');
+    if (firstActive) {
+      return firstActive.scriptUrl.trim();
+    }
+    return GOOGLE_SCRIPT_URL;
   };
 
   const jsonpRequest = (url: URL, callbackName: string) => {
@@ -449,26 +472,58 @@ export function HistoryView() {
 
     // 2. If spreadsheetId and orderId are configured, gently sync update with Google Sheets in background
     if (spreadsheetId && orderId) {
-      try {
-        const callbackName = 'jsonp_callback_delivered_' + Math.round(Math.random() * 100000);
-        const url = new URL(getActiveScriptUrl(spreadsheetId));
+      const activeUrl = getActiveScriptUrl(spreadsheetId);
+      const callbackName = 'jsonp_callback_delivered_' + Math.round(Math.random() * 100000);
+      const url = new URL(activeUrl);
 
-        url.searchParams.append('action', 'update_delivered');
-        url.searchParams.append('spreadsheetId', spreadsheetId);
-        url.searchParams.append('orderId', orderId);
-        url.searchParams.append('isDelivered', String(newStatus));
-        url.searchParams.append('callback', callbackName);
+      url.searchParams.append('action', 'update_delivered');
+      url.searchParams.append('spreadsheetId', spreadsheetId);
+      url.searchParams.append('orderId', orderId);
+      url.searchParams.append('isDelivered', String(newStatus));
+      url.searchParams.append('callback', callbackName);
 
-        const result = await jsonpRequest(url, callbackName);
-        if (result.status !== 'success') {
-          console.warn('Synced status check warning:', result.message || 'Update failed');
-          // Rollback on obvious application error
+      const triggerPostFallback = () => {
+        console.log("Executing no-cors POST update_delivered fallback...");
+        fetch(activeUrl, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: {
+            'Content-Type': 'text/plain;charset=utf-8'
+          },
+          body: JSON.stringify({
+            action: 'update_delivered',
+            spreadsheetId: spreadsheetId,
+            orderId: orderId,
+            isDelivered: newStatus
+          })
+        }).then(() => {
+          console.log("no-cors POST delivered fallback succeeded!");
           updateSpecificHistoryItem(item.id, {
-            isDelivered: currentStatus, // rollback
+            syncStatus: 'synced',
+            syncLastSuccess: Date.now(),
+            syncFailCount: 0,
+          });
+        }).catch(postErr => {
+          console.error("POST delivered status fallback failed, queuing for offline:", postErr);
+          addToOfflineQueue({
+            action: 'update_delivered',
+            spreadsheetId: spreadsheetId,
+            orderId: orderId,
+            isDelivered: newStatus
+          }, activeUrl, item.id);
+          updateSpecificHistoryItem(item.id, {
             syncStatus: 'failed',
             syncFailCount: (item.state?.syncFailCount || 0) + 1,
             syncLastAttempt: Date.now(),
           });
+        });
+      };
+
+      try {
+        const result = await jsonpRequest(url, callbackName);
+        if (!result || result.status !== 'success') {
+          console.warn('Synced status check warning, trying POST fallback:', result?.message || 'Update failed');
+          triggerPostFallback();
         } else {
           updateSpecificHistoryItem(item.id, {
              syncStatus: 'synced',
@@ -478,32 +533,60 @@ export function HistoryView() {
           handleGlobalSync(true);
         }
       } catch (err) {
-        console.warn('Failed to sync delivered status update in background:', err);
-        // Rollback on network/fetch error
-        updateSpecificHistoryItem(item.id, {
-          isDelivered: currentStatus, // rollback
-          syncStatus: 'failed',
-          syncFailCount: (item.state?.syncFailCount || 0) + 1,
-          syncLastAttempt: Date.now(),
-        });
+        console.warn('Failed to sync delivered status update in background, running POST fallback:', err);
+        triggerPostFallback();
       }
     }
   };
 
   const deleteOrderFromCloud = async (spreadsheetId: string, orderId: string) => {
     if (spreadsheetId && orderId) {
+      const activeUrl = getActiveScriptUrl(spreadsheetId);
+      const callbackName = 'jsonp_callback_delete_' + Math.round(Math.random() * 100000);
+      const url = new URL(activeUrl);
+
+      url.searchParams.append('action', 'delete_order');
+      url.searchParams.append('spreadsheetId', spreadsheetId);
+      url.searchParams.append('orderId', orderId);
+      url.searchParams.append('callback', callbackName);
+
+      const triggerPostFallback = async () => {
+        console.log("Executing no-cors POST delete_order fallback...");
+        try {
+          await fetch(activeUrl, {
+            method: 'POST',
+            mode: 'no-cors',
+            headers: {
+              'Content-Type': 'text/plain;charset=utf-8'
+            },
+            body: JSON.stringify({
+              action: 'delete_order',
+              spreadsheetId: spreadsheetId,
+              orderId: orderId
+            })
+          });
+          console.log("no-cors POST delete fallback succeeded!");
+        } catch (postErr) {
+          console.error("POST delete fallback failed, queuing for offline:", postErr);
+          addToOfflineQueue({
+            action: 'delete_order',
+            spreadsheetId: spreadsheetId,
+            orderId: orderId
+          }, activeUrl);
+        }
+      };
+
       try {
-        const callbackName = 'jsonp_callback_delete_' + Math.round(Math.random() * 100000);
-        const url = new URL(getActiveScriptUrl(spreadsheetId));
-
-        url.searchParams.append('action', 'delete_order');
-        url.searchParams.append('spreadsheetId', spreadsheetId);
-        url.searchParams.append('orderId', orderId);
-        url.searchParams.append('callback', callbackName);
-
-        await jsonpRequest(url, callbackName);
+        const resp = await jsonpRequest(url, callbackName);
+        if (resp && resp.status === 'success') {
+          console.log('Successfully deleted order from cloud:', resp);
+        } else {
+          console.warn('JSONP deletion failed, attempting POST fallback:', resp);
+          await triggerPostFallback();
+        }
       } catch (err) {
-        console.warn('Failed to delete order from cloud:', err);
+        console.warn('Failed to delete order from cloud via JSONP, running fallback:', err);
+        await triggerPostFallback();
       }
     }
   };
@@ -528,6 +611,9 @@ export function HistoryView() {
 
     setRefreshing(true);
     setSyncErrorToast(null);
+
+    // Wait for offline queue to attempt to clear before pulling results
+    await syncOfflineQueue();
 
     try {
       const currentNow = Date.now();
@@ -563,10 +649,62 @@ export function HistoryView() {
       const results = await Promise.all(fetchPromises);
 
       setHistory(prevHistory => {
-        const updatedHistory = [...prevHistory];
+        let updatedHistory = [...prevHistory];
 
         for (const res of results) {
           if (!res.success) continue;
+
+          // 1. Collect all order IDs that exist in the fetched sheet results
+          const fetchedOrderIds = new Set(res.orders.map(o => o.orderId).filter(Boolean));
+
+          // 2. We can detect if any local synced order is MISSING from the fetched results AND lies in the date range.
+          // Let's compute the sync date range boundaries exactly matching the Apps Script:
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+
+          const startDate = new Date(today);
+          startDate.setDate(today.getDate() - 2);
+
+          const endDate = new Date(today);
+          endDate.setDate(today.getDate() + 3);
+          endDate.setHours(23, 59, 59, 999);
+
+          updatedHistory = updatedHistory.map(item => {
+            const itemOrderId = item.state?.orderId;
+            const itemSpreadsheetId = item.state?.spreadsheetId;
+            const itemDue = item.state?.customerDue;
+
+            let itemDueTimestamp = item.state?.dueTimestamp;
+            if (!itemDueTimestamp && itemDue) {
+              itemDueTimestamp = parseDueTimestamp(itemDue);
+            }
+
+            // If this item was successfully synced to the current spreadsheet before
+            // AND its due date falls in the range [startDate, endDate]
+            // AND it is NOT marked as deleted locally yet
+            // AND its orderId is NOT in the fetched sheet orders list:
+            if (
+              itemSpreadsheetId === res.spreadsheetId &&
+              itemOrderId &&
+              !itemOrderId.startsWith('SYNC-') &&
+              itemDueTimestamp &&
+              itemDueTimestamp >= startDate.getTime() &&
+              itemDueTimestamp <= endDate.getTime() &&
+              !item.state?.isDeleted &&
+              item.state?.syncStatus === 'synced' &&
+              !fetchedOrderIds.has(itemOrderId)
+            ) {
+              return {
+                ...item,
+                state: {
+                  ...item.state,
+                  isDeleted: true
+                }
+              };
+            }
+            return item;
+          });
+
           for (const orderData of res.orders) {
             const generatedOrderId =
               orderData.orderId ||
@@ -585,14 +723,19 @@ export function HistoryView() {
 
             const dueTs = parseDueTimestamp(orderData.due);
 
+            let parsedName = orderData.name ? String(orderData.name).trim() : '';
+            parsedName = parsedName.replace(/\w\S*/g, (txt) => txt.charAt(0).toUpperCase() + txt.substring(1).toLowerCase());
+            
+            let parsedTemplate = orderData.template ? String(orderData.template).trim().toUpperCase() : '';
+
             const newState = {
               isDelivered: !!orderData.isDelivered,
               spreadsheetId: res.spreadsheetId,
-              customerName: orderData.name,
+              customerName: parsedName,
               customerPhone: orderData.phone,
               customerOrder: orderData.order,
-              template: orderData.template,
-              customerTemplate: orderData.template,
+              template: parsedTemplate,
+              customerTemplate: parsedTemplate,
               customerBahasa: orderData.bahasa,
               customerAddOn: orderData.addon,
               customerJenis: orderData.jenis,
@@ -615,28 +758,77 @@ export function HistoryView() {
             if (existingIdx !== -1) {
               const existingItem = updatedHistory[existingIdx];
 
-              // Never revive an item that was marked as deleted locally
               if (existingItem.state?.isDeleted) {
+                const activeSheet = annualSheets.find(s => s.spreadsheetId === res.spreadsheetId);
+                if (activeSheet) {
+                  addToOfflineQueue({
+                    action: 'delete_order',
+                    spreadsheetId: res.spreadsheetId,
+                    orderId: generatedOrderId
+                  }, activeSheet.scriptUrl);
+                }
                 continue;
               }
 
-              // Protect local edits that haven't been confirmed as synced
-              const isUnsynced = existingItem.state?.syncStatus === 'saved_locally' || existingItem.state?.syncStatus === 'syncing';
-              
-              // If the local item was modified within the last 10 minutes, skip overwriting it to prevent stale remote data from clobbering it.
+              const localState = existingItem.state || {};
+              const isUnsynced = localState.syncStatus !== 'synced';
               const isRecentlyModified =
-                existingItem.state?.lastModifiedLocally &&
-                currentNow - existingItem.state.lastModifiedLocally < 600000;
+                localState.lastModifiedLocally &&
+                currentNow - localState.lastModifiedLocally < 600000;
 
-              if (!isUnsynced && !isRecentlyModified) {
-                updatedHistory[existingIdx] = {
-                  ...existingItem,
-                  state: {
-                    ...existingItem.state,
-                    ...newState
+              const hasDiff = 
+                !!localState.isDelivered !== !!newState.isDelivered ||
+                String(localState.customerName || '') !== String(newState.customerName || '') ||
+                String(localState.customerPhone || '') !== String(newState.customerPhone || '') ||
+                String(localState.customerOrder || '') !== String(newState.customerOrder || '') ||
+                String(localState.customerTemplate || '') !== String(newState.customerTemplate || '') ||
+                String(localState.customerDue || '') !== String(newState.customerDue || '') ||
+                String(localState.orderLink || '') !== String(newState.orderLink || '');
+
+              if (hasDiff) {
+                if (!isUnsynced && !isRecentlyModified) {
+                  updatedHistory[existingIdx] = {
+                    ...existingItem,
+                    state: {
+                      ...localState,
+                      ...newState
+                    }
+                  };
+                  totalUpdCou++;
+                } else {
+                  // Local Webapp data has priority due to conflict
+                  const activeSheet = annualSheets.find(s => s.spreadsheetId === res.spreadsheetId);
+                  if (activeSheet) {
+                    const orderRow = [
+                      localState.isDelivered || false,
+                      localState.customerName || '',
+                      localState.customerPhone || '',
+                      localState.customerOrder || '',
+                      localState.customerTemplate || localState.template || '',
+                      localState.customerBahasa || '',
+                      localState.customerAddOn || '',
+                      localState.customerJenis || '',
+                      localState.customerDue || '',
+                      localState.orderLink || localState.googleSheetLink || '',
+                      generatedOrderId
+                    ];
+                    addToOfflineQueue({
+                      action: 'update_order',
+                      spreadsheetId: res.spreadsheetId,
+                      orderId: generatedOrderId,
+                      rowData: orderRow
+                    }, activeSheet.scriptUrl, existingItem.id);
                   }
-                };
-                totalUpdCou++;
+                  
+                  // Mark as failed temporarily to trigger offline queue
+                  updatedHistory[existingIdx] = {
+                    ...existingItem,
+                    state: {
+                      ...localState,
+                      syncStatus: 'failed',
+                    }
+                  };
+                }
               }
             } else {
               updatedHistory.push({
@@ -943,24 +1135,62 @@ export function HistoryView() {
       const result = await jsonpRequest(url, callbackName);
       if (result.status !== 'success') {
         console.warn('Synced status check warning:', result.message || 'Update failed');
-        // Rollback
-        setRemoteResults((prev) =>
-          prev.map((item, idx) => (idx === index ? { 
-            ...item, 
-            isDelivered: currentStatus,
-            syncStatus: 'failed',
-            syncFailCount: (item.syncFailCount || 0) + 1,
-            syncLastAttempt: Date.now()
-          } : item))
-        );
-        if (existingIdx !== -1) {
-          updateSpecificHistoryItem(history[existingIdx].id, {
-            isDelivered: currentStatus,
-            syncStatus: 'failed',
-            syncFailCount: (history[existingIdx].state?.syncFailCount || 0) + 1,
-            syncLastAttempt: Date.now()
+          // Try POST fallback
+          console.log("Executing no-cors POST update_delivered fallback from remote...");
+          fetch(scriptUrl, {
+            method: 'POST',
+            mode: 'no-cors',
+            headers: {
+              'Content-Type': 'text/plain;charset=utf-8'
+            },
+            body: JSON.stringify({
+              action: 'update_delivered',
+              spreadsheetId: spreadsheetId,
+              orderId: orderId,
+              isDelivered: newStatus
+            })
+          }).then(() => {
+             console.log("no-cors POST delivered fallback succeeded!");
+             setRemoteResults((prev) =>
+              prev.map((item, idx) => (idx === index ? { 
+                ...item, 
+                syncStatus: 'synced',
+                syncLastSuccess: Date.now(),
+                syncFailCount: 0
+              } : item))
+            );
+            if (existingIdx !== -1) {
+               updateSpecificHistoryItem(history[existingIdx].id, {
+                 syncStatus: 'synced',
+                 syncLastSuccess: Date.now(),
+                 syncFailCount: 0
+               });
+            }
+          }).catch((postErr) => {
+             console.error("POST delivered status fallback failed, queuing for offline:", postErr);
+             addToOfflineQueue({
+               action: 'update_delivered',
+               spreadsheetId: spreadsheetId,
+               orderId: orderId,
+               isDelivered: newStatus
+             }, scriptUrl, existingIdx !== -1 ? history[existingIdx].id : undefined);
+
+             setRemoteResults((prev) =>
+              prev.map((item, idx) => (idx === index ? { 
+                ...item, 
+                syncStatus: 'failed',
+                syncFailCount: (item.syncFailCount || 0) + 1,
+                syncLastAttempt: Date.now()
+              } : item))
+            );
+            if (existingIdx !== -1) {
+              updateSpecificHistoryItem(history[existingIdx].id, {
+                syncStatus: 'failed',
+                syncFailCount: (history[existingIdx].state?.syncFailCount || 0) + 1,
+                syncLastAttempt: Date.now()
+              });
+            }
           });
-        }
       } else {
          setRemoteResults((prev) =>
           prev.map((item, idx) => (idx === index ? { 
@@ -980,24 +1210,62 @@ export function HistoryView() {
       }
     } catch (err) {
       console.warn('Failed to sync delivered status update in background:', err);
-      // Rollback
-      setRemoteResults((prev) =>
-        prev.map((item, idx) => (idx === index ? { 
-          ...item, 
-          isDelivered: currentStatus,
-          syncStatus: 'failed',
-          syncFailCount: (item.syncFailCount || 0) + 1,
-          syncLastAttempt: Date.now()
-        } : item))
-      );
-      if (existingIdx !== -1) {
-        updateSpecificHistoryItem(history[existingIdx].id, {
-          isDelivered: currentStatus,
-          syncStatus: 'failed',
-          syncFailCount: (history[existingIdx].state?.syncFailCount || 0) + 1,
-          syncLastAttempt: Date.now()
-        });
-      }
+      // Try POST fallback
+      console.log("Executing no-cors POST update_delivered fallback from remote catch...");
+      fetch(scriptUrl, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: {
+          'Content-Type': 'text/plain;charset=utf-8'
+        },
+        body: JSON.stringify({
+          action: 'update_delivered',
+          spreadsheetId: spreadsheetId,
+          orderId: orderId,
+          isDelivered: newStatus
+        })
+      }).then(() => {
+         console.log("no-cors POST delivered fallback succeeded!");
+         setRemoteResults((prev) =>
+          prev.map((item, idx) => (idx === index ? { 
+            ...item, 
+            syncStatus: 'synced',
+            syncLastSuccess: Date.now(),
+            syncFailCount: 0
+          } : item))
+        );
+        if (existingIdx !== -1) {
+           updateSpecificHistoryItem(history[existingIdx].id, {
+             syncStatus: 'synced',
+             syncLastSuccess: Date.now(),
+             syncFailCount: 0
+           });
+        }
+      }).catch((postErr) => {
+         console.error("POST delivered status fallback failed, queuing for offline:", postErr);
+         addToOfflineQueue({
+           action: 'update_delivered',
+           spreadsheetId: spreadsheetId,
+           orderId: orderId,
+           isDelivered: newStatus
+         }, scriptUrl, existingIdx !== -1 ? history[existingIdx].id : undefined);
+
+         setRemoteResults((prev) =>
+          prev.map((item, idx) => (idx === index ? { 
+            ...item, 
+            syncStatus: 'failed',
+            syncFailCount: (item.syncFailCount || 0) + 1,
+            syncLastAttempt: Date.now()
+          } : item))
+        );
+        if (existingIdx !== -1) {
+          updateSpecificHistoryItem(history[existingIdx].id, {
+            syncStatus: 'failed',
+            syncFailCount: (history[existingIdx].state?.syncFailCount || 0) + 1,
+            syncLastAttempt: Date.now()
+          });
+        }
+      });
     }
   };
 
@@ -1398,21 +1666,21 @@ export function HistoryView() {
                                   ? 'Adakah anda pasti mahu memadam rekod ini? Ia juga akan dipadamkan daripada Google Sheet anda.' 
                                   : 'Are you sure you want to delete this record? It will also be deleted from your Google Sheet.',
                                 onConfirm: async () => {
+                                  setConfirmAction(null);
                                   const spreadsheetId = item.state?.spreadsheetId || state.spreadsheetId;
                                   const orderId = item.state?.orderId;
                                   if (spreadsheetId && orderId) {
                                     await deleteOrderFromCloud(spreadsheetId, orderId);
                                   }
                                   deleteOrderFromHistory(item.id);
-                                  setConfirmAction(null);
                                   handleGlobalSync(true);
                                 }
                               });
                             }}
-                            className="relative z-20 w-8 h-8 pointer-events-auto bg-red-100/90 text-red-500 rounded-full flex items-center justify-center hover:bg-red-500 hover:text-white hover:scale-110 active:scale-90 transition-all shadow-xs duration-200"
+                            className="relative z-20 w-9 h-9 pointer-events-auto bg-red-100 text-red-500 rounded-full flex items-center justify-center hover:bg-red-500 hover:text-white hover:scale-110 active:scale-90 transition-all shadow-sm duration-200"
                             title={appLanguage === 'ms' ? 'Padam' : 'Delete'}
                           >
-                            <Trash2 className="w-3.5 h-3.5" />
+                            <Trash2 className="w-4 h-4" />
                           </button>
                         </div>
                       </div>
@@ -1646,9 +1914,9 @@ export function HistoryView() {
                           }
                         });
                       }}
-                      className="p-2 text-red-500 hover:bg-red-50 rounded-full transition-colors"
+                      className="w-9 h-9 flex items-center justify-center text-red-500 hover:bg-red-50 rounded-full transition-all active:scale-90"
                     >
-                      <Trash2 className="w-3.5 h-3.5" />
+                      <Trash2 className="w-4 h-4" />
                     </button>
                   </div>
                   
@@ -1778,7 +2046,7 @@ export function HistoryView() {
                               }
                             });
                           }}
-                          className="p-1 hover:bg-red-50 text-red-500 rounded transition-colors"
+                          className="w-8 h-8 flex items-center justify-center hover:bg-red-50 text-red-500 rounded-full transition-all active:scale-90"
                           title={appLanguage === 'ms' ? 'Hapus' : 'Delete'}
                         >
                           <Trash2 className="w-3.5 h-3.5" />
@@ -2203,6 +2471,7 @@ export function HistoryView() {
                           type="button"
                           onClick={() => {
                             restoreOrderFromHistory(item.id);
+                            syncOfflineQueue();
                             setAlertMsg({
                               type: 'success',
                               message: appLanguage === 'ms' 
@@ -2237,7 +2506,7 @@ export function HistoryView() {
                           }}
                           className="flex-1 h-9 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-xl text-[10px] sm:text-xs font-bold transition-all duration-150 active:scale-[0.97] flex items-center justify-center space-x-1"
                         >
-                          <Trash2 className="w-3 h-3" />
+                          <Trash2 className="w-3.5 h-3.5" />
                           <span>{appLanguage === 'ms' ? 'Padam Kekal' : 'Delete Permanently'}</span>
                         </button>
                       </div>
@@ -2276,18 +2545,41 @@ export function HistoryView() {
           <div className="flex w-full space-x-3">
             <button
               type="button"
-              onClick={() => setConfirmAction(null)}
-              className="flex-1 py-3 px-4 rounded-full font-bold text-sm text-text bg-gray-100 hover:bg-gray-200 active:scale-95 transition-all"
+              disabled={isConfirmLoading}
+              onClick={() => {
+                if (isConfirmLoading) return;
+                setConfirmAction(null);
+              }}
+              className="flex-1 py-3 px-4 rounded-full font-bold text-sm text-text bg-gray-100 hover:bg-gray-200 active:scale-95 transition-all disabled:opacity-50"
             >
               {appLanguage === 'ms' ? 'Batal' : 'Cancel'}
             </button>
 
             <button
               type="button"
-              onClick={confirmAction.onConfirm}
-              className="flex-1 py-3 px-4 rounded-full font-bold text-sm text-white bg-red-500 hover:bg-red-600 active:scale-95 transition-all"
+              disabled={isConfirmLoading}
+              onClick={async () => {
+                if (isConfirmLoading) return;
+                try {
+                  const result = confirmAction.onConfirm();
+                  if (result instanceof Promise) {
+                    setIsConfirmLoading(true);
+                    await result;
+                  }
+                } finally {
+                  setIsConfirmLoading(false);
+                }
+              }}
+              className={cn(
+                "flex-1 py-3 px-4 rounded-full font-bold text-sm text-white transition-all active:scale-95 disabled:opacity-70 flex items-center justify-center",
+                confirmAction.isDestructive !== false ? "bg-red-500 hover:bg-red-600" : "bg-primary hover:bg-primary-dark"
+              )}
             >
-              {appLanguage === 'ms' ? 'Padam' : 'Delete'}
+              {isConfirmLoading ? (
+                <RefreshCcw className="w-4 h-4 animate-spin" />
+              ) : (
+                confirmAction.confirmText || (appLanguage === 'ms' ? 'Padam' : 'Delete')
+              )}
             </button>
           </div>
         </div>

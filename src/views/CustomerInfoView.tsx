@@ -25,8 +25,48 @@ function generateOrderId() {
   return `ORD-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
 }
 
+function jsonpRequest<T>(url: string, params: Record<string, string | number | boolean>): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const callbackName = 'jsonp_edit_callback_' + Math.round(100000 * Math.random());
+    (window as any)[callbackName] = (data: T) => {
+      cleanup();
+      resolve(data);
+    };
+
+    const script = document.createElement('script');
+    const separator = url.indexOf('?') === -1 ? '?' : '&';
+    const queryParts = [`callback=${callbackName}`];
+    Object.entries(params).forEach(([key, value]) => {
+      queryParts.push(`${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`);
+    });
+    
+    script.src = url + separator + queryParts.join('&');
+    script.async = true;
+
+    const timeoutId = setTimeout(() => {
+      cleanup();
+      reject(new Error('JSONP request timed out'));
+    }, 15000);
+
+    const cleanup = () => {
+      clearTimeout(timeoutId);
+      if (script.parentNode) {
+        script.parentNode.removeChild(script);
+      }
+      delete (window as any)[callbackName];
+    };
+
+    script.onerror = () => {
+      cleanup();
+      reject(new Error('JSONP request failed'));
+    };
+
+    document.body.appendChild(script);
+  });
+}
+
 export function CustomerInfoView() {
-  const { appLanguage, state, setState, goHome, viewStack, updateOrderHistoryState, addToOfflineQueue, saveAsDraft: contextSaveAsDraft, deleteDraft, history } = useAppContext();
+  const { appLanguage, state, setState, goHome, viewStack, updateOrderHistoryState, addToOfflineQueue, saveAsDraft: contextSaveAsDraft, deleteDraft, history, setHistory } = useAppContext();
   const isActive = viewStack[viewStack.length - 1] === 'customer-info';
 
   const computeInitialValues = useCallback(() => {
@@ -611,25 +651,64 @@ const updatedInfo = info.replace(
 
 setInfo(updatedInfo);
 
+const oldIdToSend = orderId;
+let finalOrderId = orderId;
 
-    // Save the new values to global state + history
+// Check if we need to upgrade a temporary ID or empty ID to a permanent one
+if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-") === 0) {
+  finalOrderId = generateOrderId();
+  setOrderId(finalOrderId);
+  console.log("Pre-upgraded ID client-side:", oldIdToSend, "->", finalOrderId);
+
+  // 1. Rename existing history item in local memory (so updateOrderHistoryState updates it instead of duplicating)
+  setHistory(prev => {
+    return prev.map(item => {
+      if (item.id === state.historyId || item.id === oldIdToSend || (item.state && item.state.orderId === oldIdToSend)) {
+        return {
+          ...item,
+          id: finalOrderId,
+          state: {
+            ...item.state,
+            orderId: finalOrderId,
+            historyId: finalOrderId,
+          }
+        };
+      }
+      return item;
+    });
+  });
+
+  // 2. Update the main App state to match the pre-upgraded values
+  setState(prev => ({
+    ...prev,
+    orderId: finalOrderId,
+    historyId: finalOrderId,
+  }));
+}
+
+    // Format name and template correctly
+    const finalFormattedName = name.trim().replace(/\w\S*/g, (txt) => txt.charAt(0).toUpperCase() + txt.substring(1).toLowerCase());
+    const finalFormattedTemplate = template.trim().toUpperCase();
+
+    // Save the new values to global state + history with syncing status
     updateOrderHistoryState({
-      customerName: name,
+      customerName: finalFormattedName,
       customerPhone: formattedPhone,
       customerInfo: updatedInfo,
       orderLink: link,
       googleSheetLink: link,
       customerOrder: order,
-      customerTemplate: template,
+      customerTemplate: finalFormattedTemplate,
       customerBahasa: bahasa,
       customerAddOn: addOn,
       customerJenis: jenis,
       customerDue: due,
       dueTimestamp: parsedTimestamp,
       hasNotified: false,
-      orderId: orderId,
+      orderId: finalOrderId,
       spreadsheetId: resolvedSpreadsheetId,
       scriptUrl: resolvedWebhookUrl,
+      syncStatus: 'syncing',
     });
 
     setDueTimestamp(parsedTimestamp);
@@ -638,21 +717,19 @@ setInfo(updatedInfo);
     setSaved(false);
 
     try {
-           let formattedName = name.replace(/\w\S*/g, (txt) => txt.charAt(0).toUpperCase() + txt.substring(1).toLowerCase());
-
       // Columns: Checkbox, Nama, Phone Number, Order, Template, Bahasa, Add On, Jenis, Due, Link, Order ID
       const orderRow = [
-        false,
-        formattedName,
+        state.isDelivered || false,
+        finalFormattedName,
         formattedPhone,
         order,
-        template || "",
+        finalFormattedTemplate || "",
         bahasa || "",
         addOn || "",
         jenis,
         due,
         link || "",
-        orderId || ""
+        finalOrderId || ""
       ].map(v => v == null ? "" : v);
       
       const monthNamesEn = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -675,7 +752,7 @@ setInfo(updatedInfo);
       // Offline check & queue
       if (!navigator.onLine) {
         try {
-          addToOfflineQueue(payload, resolvedWebhookUrl, orderId);
+          addToOfflineQueue(payload, resolvedWebhookUrl, finalOrderId);
           localStorage.removeItem('customer_form_progress');
           setSaved(true);
           showToastMessage(appLanguage === 'ms' ? 'Luar Talian: Disimpan dalam Que' : 'Offline: Saved to Queue');
@@ -693,32 +770,104 @@ setInfo(updatedInfo);
       setIsSaving(false);
       setTimeout(() => goHome(), 500);
 
-      // Perform fetch in the background
-      fetch(resolvedWebhookUrl, {
-        method: 'POST',
-        mode: 'no-cors',
-        headers: {
-          'Content-Type': 'text/plain;charset=utf-8'
-        },
-        body: JSON.stringify(payload)
-      }).then(() => {
-        // Since it's no-cors, we can't be 100% sure, but if it resolved, it's likely better than 'saved_locally'
-        updateOrderHistoryState({
-          syncStatus: 'synced',
-          syncLastSuccess: Date.now(),
-          lastModifiedLocally: Date.now()
-        });
-      }).catch(fetchErr => {
-        try {
-          addToOfflineQueue(payload, resolvedWebhookUrl, orderId);
+      // Perform background update_order via JSONP
+      const jsonpParams = {
+        action: 'update_order',
+        spreadsheetId: resolvedSpreadsheetId,
+        orderId: finalOrderId,
+        oldOrderId: oldIdToSend || "",
+        isDelivered: state.isDelivered || false,
+        name: finalFormattedName,
+        phone: formattedPhone,
+        order: order,
+        template: finalFormattedTemplate || "",
+        bahasa: bahasa || "",
+        addon: addOn || "",
+        jenis: jenis,
+        due: due,
+        link: link || ""
+      };
+
+      const triggerPostFallback = () => {
+        console.log("Executing no-cors POST update_order fallback...");
+        fetch(resolvedWebhookUrl, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: {
+            'Content-Type': 'text/plain;charset=utf-8'
+          },
+          body: JSON.stringify(payload)
+        }).then(() => {
+          console.log("no-cors POST fallback succeeded!");
           updateOrderHistoryState({
-            syncStatus: 'syncing',
+            syncStatus: 'synced',
+            syncLastSuccess: Date.now(),
+            lastModifiedLocally: Date.now()
+          });
+        }).catch(postErr => {
+          console.error("POST fallback failed, adding to offline queue:", postErr);
+          addToOfflineQueue(payload, resolvedWebhookUrl, finalOrderId);
+          updateOrderHistoryState({
+            syncStatus: 'failed',
             syncLastAttempt: Date.now()
           });
-        } catch (e) {
-          console.warn('Failed to add to offline queue after fetch error', e);
-        }
-      });
+        });
+      };
+
+      jsonpRequest<{status: string; message?: string; orderId?: string; isUpgraded?: boolean}>(resolvedWebhookUrl, jsonpParams)
+        .then((resp) => {
+          if (resp && resp.status === 'success') {
+            console.log("JSONP update_order successful:", resp);
+            const returnedId = resp.orderId || finalOrderId;
+            if (returnedId && returnedId !== finalOrderId) {
+              console.log("Upgraded orderId from", finalOrderId, "to", returnedId);
+              
+              // Update matching history item's ID & internal state
+              setHistory(prev => {
+                return prev.map(item => {
+                  if (item.id === finalOrderId || (item.state && item.state.orderId === finalOrderId)) {
+                    return {
+                      ...item,
+                      id: returnedId,
+                      state: {
+                        ...item.state,
+                        orderId: returnedId,
+                        historyId: returnedId,
+                        syncStatus: 'synced',
+                        syncLastSuccess: Date.now(),
+                        lastModifiedLocally: Date.now()
+                      }
+                    };
+                  }
+                  return item;
+                });
+              });
+
+              // Update the main App state
+              setState(prev => ({
+                ...prev,
+                orderId: returnedId,
+                historyId: returnedId,
+                syncStatus: 'synced',
+                syncLastSuccess: Date.now(),
+                lastModifiedLocally: Date.now()
+              }));
+            } else {
+              updateOrderHistoryState({
+                syncStatus: 'synced',
+                syncLastSuccess: Date.now(),
+                lastModifiedLocally: Date.now()
+              });
+            }
+          } else {
+            console.error("JSONP update_order returned error response:", resp);
+            triggerPostFallback();
+          }
+        })
+        .catch(err => {
+          console.error("JSONP update_order failed, running fallback:", err);
+          triggerPostFallback();
+        });
       return;
       
     } catch (err: any) {
@@ -855,6 +1004,7 @@ setInfo(updatedInfo);
             type="text" 
             value={name}
             onChange={(e) => setName(e.target.value)}
+            onBlur={() => setName(name.trim().replace(/\w\S*/g, (txt) => txt.charAt(0).toUpperCase() + txt.substring(1).toLowerCase()))}
             placeholder={appLanguage === 'ms' ? 'Cth: Ali bin Abu' : 'E.g. John Doe'}
             className="w-full h-[46px] bg-surface rounded-xl px-4 font-bold text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all placeholder:text-gray-300 text-sm" 
           />
@@ -900,7 +1050,8 @@ setInfo(updatedInfo);
           <input 
             type="text" 
             value={template}
-            onChange={(e) => setTemplate(e.target.value)}
+            onChange={(e) => setTemplate(e.target.value.toUpperCase())}
+            onBlur={() => setTemplate(template.trim().toUpperCase())}
             className="w-full h-[46px] bg-surface rounded-xl px-4 font-bold text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all text-sm" 
           />
         </div>
