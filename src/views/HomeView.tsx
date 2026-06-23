@@ -87,51 +87,51 @@ export function HomeView() {
       <div className="space-y-2.5">
         <button 
           onClick={() => startNewOrder('resume-type', { mainType: 'Resume' })} 
-          className="h-[58px] bg-surface active:bg-gray-200 md:hover:bg-gray-200 text-text font-bold rounded-[16px] flex items-center px-4 w-full active:scale-[0.98] transition-all"
+          className="h-[58px] bg-surface active:bg-gray-200 md:hover:bg-gray-200 text-text font-bold rounded-2xl flex items-center px-4 w-full active:scale-[0.98] transition-all"
         >
           <span className="w-9 h-9 bg-white rounded-full flex items-center justify-center text-primary shadow-sm shrink-0"><FileText className="w-4.5 h-4.5" /></span>
-          <span className="ml-3.5 text-[15px] sm:text-[16px] text-left tracking-tight">Resume</span>
+          <span className="ml-3.5 text-base sm:text-base text-left tracking-tight">Resume</span>
           <ChevronRight className="ml-auto text-subtext w-4.5 h-4.5 shrink-0" />
         </button>
         <button 
           onClick={() => startNewOrder('general-form', { mainType: 'Surat' })} 
-          className="h-[58px] bg-surface active:bg-gray-200 md:hover:bg-gray-200 text-text font-bold rounded-[16px] flex items-center px-4 w-full active:scale-[0.98] transition-all"
+          className="h-[58px] bg-surface active:bg-gray-200 md:hover:bg-gray-200 text-text font-bold rounded-2xl flex items-center px-4 w-full active:scale-[0.98] transition-all"
         >
           <span className="w-9 h-9 bg-white rounded-full flex items-center justify-center text-primary shadow-sm shrink-0"><Mail className="w-4.5 h-4.5" /></span>
-          <span className="ml-3.5 text-[15px] sm:text-[16px] text-left tracking-tight">{appLanguage === 'ms' ? 'Surat' : 'Letters'}</span>
+          <span className="ml-3.5 text-base sm:text-base text-left tracking-tight">{appLanguage === 'ms' ? 'Surat' : 'Letters'}</span>
           <ChevronRight className="ml-auto text-subtext w-4.5 h-4.5 shrink-0" />
         </button>
         <button 
           onClick={() => startNewOrder('general-form', { mainType: 'Lain-lain' })} 
-          className="h-[58px] bg-surface active:bg-gray-200 md:hover:bg-gray-200 text-text font-bold rounded-[16px] flex items-center px-4 w-full active:scale-[0.98] transition-all"
+          className="h-[58px] bg-surface active:bg-gray-200 md:hover:bg-gray-200 text-text font-bold rounded-2xl flex items-center px-4 w-full active:scale-[0.98] transition-all"
         >
           <span className="w-9 h-9 bg-white rounded-full flex items-center justify-center text-primary shadow-sm shrink-0"><MoreHorizontal className="w-4.5 h-4.5" /></span>
-          <span className="ml-3.5 text-[15px] sm:text-[16px] text-left tracking-tight">{appLanguage === 'ms' ? 'Lain-lain' : 'Others'}</span>
+          <span className="ml-3.5 text-base sm:text-base text-left tracking-tight">{appLanguage === 'ms' ? 'Lain-lain' : 'Others'}</span>
           <ChevronRight className="ml-auto text-subtext w-4.5 h-4.5 shrink-0" />
         </button>
         <button 
           onClick={() => pushView('customer-info')} 
-          className="h-[58px] bg-surface active:bg-gray-200 md:hover:bg-gray-200 text-text font-bold rounded-[16px] flex items-center px-4 w-full active:scale-[0.98] transition-all"
+          className="h-[58px] bg-surface active:bg-gray-200 md:hover:bg-gray-200 text-text font-bold rounded-2xl flex items-center px-4 w-full active:scale-[0.98] transition-all"
         >
           <span className="w-9 h-9 bg-white rounded-full flex items-center justify-center text-primary shadow-sm shrink-0"><svg className="w-4.5 h-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg></span>
-          <span className="ml-3.5 text-[15px] sm:text-[16px] text-left tracking-tight">{appLanguage === 'ms' ? 'Maklumat Pelanggan' : 'Customer Info'}</span>
+          <span className="ml-3.5 text-base sm:text-base text-left tracking-tight">{appLanguage === 'ms' ? 'Maklumat Pelanggan' : 'Customer Info'}</span>
           <ChevronRight className="ml-auto text-subtext w-4.5 h-4.5 shrink-0" />
         </button>
         <button 
           onClick={() => pushView('dashboard')} 
-          className="h-[58px] bg-surface active:bg-gray-200 md:hover:bg-gray-200 text-text font-bold rounded-[16px] flex items-center px-4 w-full active:scale-[0.98] transition-all"
+          className="h-[58px] bg-surface active:bg-gray-200 md:hover:bg-gray-200 text-text font-bold rounded-2xl flex items-center px-4 w-full active:scale-[0.98] transition-all"
         >
           <span className="w-9 h-9 bg-white rounded-full flex items-center justify-center text-primary shadow-sm shrink-0"><BarChart3 className="w-4.5 h-4.5" /></span>
-          <span className="ml-3.5 text-[15px] sm:text-[16px] text-left tracking-tight">{appLanguage === 'ms' ? 'Tinjauan Perniagaan' : 'Business Overview'}</span>
+          <span className="ml-3.5 text-base sm:text-base text-left tracking-tight">{appLanguage === 'ms' ? 'Tinjauan Perniagaan' : 'Business Overview'}</span>
           <ChevronRight className="ml-auto text-subtext w-4.5 h-4.5 shrink-0" />
         </button>
       </div>
 
-      <div className="bg-surface rounded-[16px] p-3 shadow-inner border border-gray-100/50">
+      <div className="bg-surface rounded-2xl p-3 shadow-inner border border-gray-100/50">
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center text-text">
             <Calculator className="w-4 h-4 mr-1.5 text-primary animate-pulse" />
-            <h2 className="font-bold tracking-tight text-[11px] sm:text-xs text-text">{appLanguage === 'ms' ? 'Kira Anggaran Masa Siap' : 'Calculate Estimated Time'}</h2>
+            <h2 className="font-bold tracking-tight text-xs sm:text-xs text-text">{appLanguage === 'ms' ? 'Kira Anggaran Masa Siap' : 'Calculate Estimated Time'}</h2>
           </div>
           {(calcUrgency !== 'all' || superHours !== 2) && (
             <button
@@ -163,7 +163,7 @@ export function HomeView() {
                 key={opt.id}
                 onClick={() => setCalcUrgency(prev => prev === opt.id ? 'all' : opt.id)}
                 className={cn(
-                  "py-1.5 rounded-[8px] font-black text-[10px] sm:text-[11px] transition-all",
+                  "py-1.5 rounded-lg font-black text-[10px] sm:text-xs transition-all",
                   isSelected 
                     ? activeBg 
                     : "text-subtext md:hover:bg-white/50 dark:md:hover:bg-gray-700/50"
@@ -188,7 +188,7 @@ export function HomeView() {
             </button>
             <div className="flex flex-col items-center min-w-[40px]">
                <span className="font-black text-lg leading-none text-primary">{superHours}</span>
-               <span className="text-[8px] font-black tracking-widest uppercase text-subtext mt-0.5">{appLanguage === 'ms' ? 'Jam' : 'Hours'}</span>
+               <span className="text-[10px] font-black tracking-widest uppercase text-subtext mt-0.5">{appLanguage === 'ms' ? 'Jam' : 'Hours'}</span>
             </div>
             <button 
               onClick={() => setSuperHours(h => h + 1)}
@@ -200,12 +200,12 @@ export function HomeView() {
         </div>
 
         <div className="relative">
-          <span className="absolute top-1.5 left-2.5 text-[8px] font-black uppercase tracking-widest text-subtext flex items-center">
+          <span className="absolute top-1.5 left-2.5 text-[10px] font-black uppercase tracking-widest text-subtext flex items-center">
             <Clock className="w-2.5 h-2.5 mr-1 text-primary/70" />
             {appLanguage === 'ms' ? 'Anggaran' : 'Estimate'}
           </span>
           <div 
-            className="w-full pt-[22px] pb-2 px-2.5 pr-9 rounded-[10px] bg-white border border-gray-100 shadow-sm text-[11px] sm:text-[12px] text-text font-normal leading-normal select-text whitespace-pre-wrap"
+            className="w-full pt-[22px] pb-2 px-2.5 pr-9 rounded-[10px] bg-white border border-gray-100 shadow-sm text-xs sm:text-xs text-text font-normal leading-normal select-text whitespace-pre-wrap"
             style={{ minHeight: '46px' }}
           >
             {eta}

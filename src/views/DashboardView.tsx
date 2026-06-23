@@ -264,6 +264,16 @@ export function DashboardView() {
       monthCounts.set(String(i).padStart(2, '0'), 0);
     }
 
+    const dayCounts = new Map<string, number>();
+    if (filterYear !== 'all' && filterMonth !== 'all') {
+      const d = parseInt(filterYear);
+      const m = parseInt(filterMonth);
+      const numDays = new Date(d, m, 0).getDate();
+      for (let i = 1; i <= numDays; i++) {
+        dayCounts.set(String(i).padStart(2, '0'), 0);
+      }
+    }
+
     const filteredOrders = orders.filter(order => {
       if (filterMonth !== 'all' && filterYear !== 'all') {
         if (!order.dueTimestamp || order.dueTimestamp === 0) return false;
@@ -305,7 +315,7 @@ export function DashboardView() {
         .trim()
         .toLowerCase();
 
-      let urgency = 'Tak Urgent';
+      let urgency = appLanguage === 'ms' ? 'Tak Urgent' : 'Not Urgent';
 
       if (urgencyRaw === 'urgent') {
         urgency = 'Urgent';
@@ -329,8 +339,12 @@ export function DashboardView() {
         const date = new Date(order.dueTimestamp);
         const mStr = String(date.getMonth() + 1).padStart(2, '0');
         const yStr = String(date.getFullYear());
+        const dStr = String(date.getDate()).padStart(2, '0');
         monthCounts.set(mStr, (monthCounts.get(mStr) || 0) + 1);
         yearCounts.set(yStr, (yearCounts.get(yStr) || 0) + 1);
+        if (dayCounts.has(dStr)) {
+          dayCounts.set(dStr, (dayCounts.get(dStr) || 0) + 1);
+        }
       } else {
         invalidDatesCount++;
         invalidOrdersList.push(order);
@@ -358,12 +372,19 @@ export function DashboardView() {
             name: yStr, 
             value 
           }))
-      : Array.from(monthCounts.entries())
-          .sort((a, b) => a[0].localeCompare(b[0]))
-          .map(([mStr, value]) => ({ 
-            name: months[parseInt(mStr, 10) - 1], 
-            value 
-          }));
+      : filterMonth === 'all'
+        ? Array.from(monthCounts.entries())
+            .sort((a, b) => a[0].localeCompare(b[0]))
+            .map(([mStr, value]) => ({ 
+              name: months[parseInt(mStr, 10) - 1], 
+              value 
+            }))
+        : Array.from(dayCounts.entries())
+            .sort((a, b) => a[0].localeCompare(b[0]))
+            .map(([dStr, value]) => ({ 
+              name: dStr, 
+              value 
+            }));
 
     const customerTypes = [
       { name: appLanguage === 'ms' ? 'Baru' : 'New', value: totalUniqueCustomers - repeatCustomers },
@@ -459,7 +480,7 @@ export function DashboardView() {
               </button>
             </div>
             <div className="p-4 overflow-y-auto space-y-3 bg-gray-50/30">
-              <p className="text-[11px] text-gray-500 leading-relaxed mb-4">
+              <p className="text-xs text-gray-500 leading-relaxed mb-4">
                 {appLanguage === 'ms' 
                   ? 'Berikut adalah order dengan format tarikh yang tidak dapat diproses. Klik pada order untuk melihat Format Maklumat Pelanggan.'
                   : 'Below are orders with date formats that cannot be processed. Click on an order to view its Customer Info Format.'}
@@ -473,13 +494,13 @@ export function DashboardView() {
                   >
                     <div className="flex justify-between items-start mb-1.5">
                       <span className="font-bold text-sm text-text group-hover:text-primary transition-colors">{order.name || 'Anonymous'}</span>
-                      <span className="text-[9px] font-black text-primary bg-primary/10 px-2 py-0.5 rounded-full uppercase tracking-tighter">
+                      <span className="text-[10px] font-black text-primary bg-primary/10 px-2 py-0.5 rounded-full uppercase tracking-tighter">
                         {order.order || order.jenisTempahan || '-'}
                       </span>
                     </div>
-                    <div className="flex justify-between items-center text-[11px] text-subtext">
+                    <div className="flex justify-between items-center text-xs text-subtext">
                       <span className="font-medium">{order.phone || '-'}</span>
-                      <div className="flex items-center text-amber-600 font-bold uppercase tracking-tighter text-[9px]">
+                      <div className="flex items-center text-amber-600 font-bold uppercase tracking-tighter text-[10px]">
                         <AlertCircle className="w-3 h-3 mr-1" />
                         {appLanguage === 'ms' ? 'Format Tarikh Salah' : 'Wrong Date Format'}
                       </div>
@@ -514,7 +535,7 @@ export function DashboardView() {
           )}
         </div>
         
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 w-full lg:w-auto">
           <button
             onClick={() => fetchDashboardOrders(filterYear)}
             disabled={isLoading}
@@ -543,7 +564,7 @@ export function DashboardView() {
           </div>
           
           {filterYear !== 'all' && (
-            <div className="relative flex-1 sm:flex-none">
+            <div className="relative w-full sm:w-auto sm:flex-none">
               <select 
                 value={filterMonth}
                 onChange={(e) => setFilterMonth(e.target.value)}
@@ -619,7 +640,9 @@ export function DashboardView() {
                 <h3 className="text-sm font-bold text-text mb-4">
                   {filterYear === 'all'
                     ? (appLanguage === 'ms' ? 'Order Mengikut Tahun' : 'Orders By Year')
-                    : (appLanguage === 'ms' ? `Order Mengikut Bulan (${filterYear})` : `Orders By Month (${filterYear})`)}
+                    : filterMonth === 'all'
+                      ? (appLanguage === 'ms' ? `Order Mengikut Bulan (${filterYear})` : `Orders By Month (${filterYear})`)
+                      : (appLanguage === 'ms' ? `Order Mengikut Hari (${stats.months[parseInt(filterMonth) - 1]} ${filterYear})` : `Orders By Day (${stats.months[parseInt(filterMonth) - 1]} ${filterYear})`)}
                 </h3>
                 <div className="h-[200px] w-full">
                   <SafeResponsiveContainer>
@@ -661,7 +684,7 @@ export function DashboardView() {
                     </SafeResponsiveContainer>
                     <div className="absolute inset-0 flex items-center justify-center pointer-events-none flex-col">
                       <span className="text-xl font-black text-text">{stats.totalUniqueCustomers}</span>
-                      <span className="text-[9px] font-bold text-gray-400 uppercase">{appLanguage === 'ms' ? 'Jumlah' : 'Total'}</span>
+                      <span className="text-[10px] font-bold text-gray-400 uppercase">{appLanguage === 'ms' ? 'Jumlah' : 'Total'}</span>
                     </div>
                   </div>
                   <div className="flex flex-col justify-center space-y-2 ml-4">
@@ -720,7 +743,14 @@ export function DashboardView() {
                       <XAxis type="number" hide />
                       <YAxis dataKey="name" type="category" tick={{fontSize: 10}} tickLine={false} axisLine={false} width={80} />
                       <Tooltip cursor={{fill: 'rgba(0,0,0,0.05)'}} contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)'}} />
-                      <Bar dataKey="value" fill="#FF9F0A" radius={[0, 4, 4, 0]}>
+                      <Bar dataKey="value" radius={[0, 4, 4, 0]}>
+                        {stats.urgencyChart.map((entry, index) => {
+                          let color = '#059669'; // default Tak Urgent
+                          if (entry.name === 'Super Urgent') color = '#E11D48';
+                          else if (entry.name === 'Urgent') color = '#EA580C';
+                          else if (entry.name === 'Semi Urgent') color = '#D97706';
+                          return <Cell key={`cell-${index}`} fill={color} />;
+                        })}
                         <LabelList dataKey="value" position="right" style={{ fontSize: '10px', fontWeight: 'bold', fill: '#636366' }} />
                       </Bar>
                     </BarChart>

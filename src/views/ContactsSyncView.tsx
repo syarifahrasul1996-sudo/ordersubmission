@@ -473,7 +473,7 @@ export function ContactsSyncView() {
               <h3 className="text-sm font-bold text-text flex items-center gap-2">
                 {appLanguage === 'ms' ? 'Gabung Data Tempahan (2024–2026)' : 'Load Orders (2024 - 2026)'}
               </h3>
-              <p className="text-[11px] text-subtext leading-relaxed">
+              <p className="text-xs text-subtext leading-relaxed">
                 {appLanguage === 'ms'
                   ? 'Muat dan gabungkan data tempahan daripada Google Sheets bagi tahun 2024–2026.'
                   : 'Fetch and compile records across Google Sheets spreadsheets for the years 2024–2026'}
@@ -533,7 +533,7 @@ export function ContactsSyncView() {
               <span className="block text-xl font-black text-text mt-1">{contacts.length}</span>
             </div>
             <div className="bg-surface p-3 rounded-2xl border border-gray-100/50 dark:border-gray-800 text-center flex items-center justify-center">
-              <span className="px-3 py-1.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">
+              <span className="px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">
                 {appLanguage === 'ms' ? 'Rekod Dimuat' : 'Records Loaded'}
               </span>
             </div>
@@ -658,7 +658,7 @@ export function ContactsSyncView() {
                             {contact.formattedName}
                           </span>
                           {contact.timesOrdered > 1 && (
-                            <span className="px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-primary/10 text-primary shrink-0">
+                            <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-primary/10 text-primary shrink-0">
                               {contact.timesOrdered}x
                             </span>
                           )}
@@ -674,7 +674,7 @@ export function ContactsSyncView() {
                             {contact.phone}
                           </span>
                           <span className="text-gray-300 dark:text-gray-700 font-extralight hidden sm:inline">|</span>
-                          <span className="items-center gap-1 text-[9px] text-[#A3A3A3] hidden sm:flex shrink-0">
+                          <span className="items-center gap-1 text-[10px] text-[#A3A3A3] hidden sm:flex shrink-0">
                             <Clock className="w-2.5 h-2.5 opacity-60" />
                             {new Date(contact.oldestTimestamp).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}
                           </span>
@@ -686,7 +686,7 @@ export function ContactsSyncView() {
                     <div className="flex items-center space-x-2 shrink-0">
                       <button
                         onClick={() => handleExportIndividual(contact)}
-                        className="flex items-center justify-center space-x-1 text-[11px] font-black tracking-tight text-primary hover:bg-primary/5 px-3 py-1.5 rounded-xl border border-primary/20 active:scale-95 transition-all cursor-pointer bg-white"
+                        className="flex items-center justify-center space-x-1 text-xs font-black tracking-tight text-primary hover:bg-primary/5 px-3 py-1.5 rounded-xl border border-primary/20 active:scale-95 transition-all cursor-pointer bg-white"
                       >
                         <FileDown className="w-3.5 h-3.5" />
                         <span className="hidden sm:inline">CSV</span>
@@ -710,7 +710,7 @@ export function ContactsSyncView() {
             </span>
             <button
               onClick={() => setSyncLogs([])}
-              className="text-[9px] font-bold text-gray-500 hover:text-gray-400 border border-gray-800 px-2 py-0.5 rounded-lg active:scale-95 transition-all"
+              className="text-[10px] font-bold text-gray-500 hover:text-gray-400 border border-gray-800 px-2 py-0.5 rounded-lg active:scale-95 transition-all"
             >
               {appLanguage === 'ms' ? 'Padam' : 'Clear'}
             </button>

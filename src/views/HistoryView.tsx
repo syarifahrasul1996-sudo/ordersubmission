@@ -608,14 +608,20 @@ export function HistoryView() {
           };
 
           if (existingIdx !== -1) {
-            existingHistory[existingIdx] = {
-              ...existingHistory[existingIdx],
-              state: {
-                ...existingHistory[existingIdx].state,
-                ...newState
-              }
-            };
-            totalUpdCou++;
+            const existingItem = existingHistory[existingIdx];
+            // If the local item was modified within the last 15 seconds, skip overwriting it to prevent stale remote data from clobbering it.
+            const isRecentlyModified = existingItem.state?.lastModifiedLocally && (currentNow - existingItem.state.lastModifiedLocally < 15000);
+
+            if (!isRecentlyModified) {
+              existingHistory[existingIdx] = {
+                ...existingItem,
+                state: {
+                  ...existingItem.state,
+                  ...newState
+                }
+              };
+              totalUpdCou++;
+            }
           } else {
             existingHistory.push({
               id: 'synced_' + Math.random().toString(36).substr(2, 9),
@@ -1103,7 +1109,7 @@ export function HistoryView() {
                       : "bg-rose-50/50 border-rose-100 hover:bg-rose-50/80 dark:border-gray-800"
                   )}
                 >
-                  <span className={cn("text-[9px] font-black uppercase tracking-tighter truncate w-full text-center leading-none", pendingTimeFilter === 'today' && deliveryFilter === 'pending' ? "text-white/80" : "text-rose-600")}>
+                  <span className={cn("text-[10px] font-black uppercase tracking-tighter truncate w-full text-center leading-none", pendingTimeFilter === 'today' && deliveryFilter === 'pending' ? "text-white/80" : "text-rose-600")}>
                     {appLanguage === 'ms' ? 'Hari Ini' : 'Today'}
                   </span>
                   <span className={cn("text-base font-black leading-none mt-1 sm:mt-1.5", pendingTimeFilter === 'today' && deliveryFilter === 'pending' ? "text-white" : "text-rose-700")}>{pendingStats.today}</span>
@@ -1122,7 +1128,7 @@ export function HistoryView() {
                       : "bg-amber-50/50 border-amber-100 hover:bg-amber-50/80 dark:border-gray-800"
                   )}
                 >
-                  <span className={cn("text-[9px] font-black uppercase tracking-tighter truncate w-full text-center leading-none", pendingTimeFilter === 'tomorrow' && deliveryFilter === 'pending' ? "text-white/80" : "text-amber-600")}>
+                  <span className={cn("text-[10px] font-black uppercase tracking-tighter truncate w-full text-center leading-none", pendingTimeFilter === 'tomorrow' && deliveryFilter === 'pending' ? "text-white/80" : "text-amber-600")}>
                     {appLanguage === 'ms' ? 'Esok' : 'Tomorrow'}
                   </span>
                   <span className={cn("text-base font-black leading-none mt-1 sm:mt-1.5", pendingTimeFilter === 'tomorrow' && deliveryFilter === 'pending' ? "text-white" : "text-amber-700")}>{pendingStats.tomorrow}</span>
@@ -1141,7 +1147,7 @@ export function HistoryView() {
                       : "bg-indigo-50/50 border-indigo-100 hover:bg-indigo-50/80 dark:border-gray-800"
                   )}
                 >
-                  <span className={cn("text-[9px] font-black uppercase tracking-tighter truncate w-full text-center leading-none", pendingTimeFilter === '2days' && deliveryFilter === 'pending' ? "text-white/80" : "text-indigo-600")}>
+                  <span className={cn("text-[10px] font-black uppercase tracking-tighter truncate w-full text-center leading-none", pendingTimeFilter === '2days' && deliveryFilter === 'pending' ? "text-white/80" : "text-indigo-600")}>
                     {appLanguage === 'ms' ? '2 Hari' : '2 Days'}
                   </span>
                   <span className={cn("text-base font-black leading-none mt-1 sm:mt-1.5", pendingTimeFilter === '2days' && deliveryFilter === 'pending' ? "text-white" : "text-indigo-700")}>{pendingStats.day2}</span>
@@ -1160,7 +1166,7 @@ export function HistoryView() {
                       : "bg-blue-50/50 border-blue-100 hover:bg-blue-50/80 dark:border-gray-800"
                   )}
                 >
-                  <span className={cn("text-[9px] font-black uppercase tracking-tighter truncate w-full text-center leading-none", pendingTimeFilter === '3days' && deliveryFilter === 'pending' ? "text-white/80" : "text-blue-600")}>
+                  <span className={cn("text-[10px] font-black uppercase tracking-tighter truncate w-full text-center leading-none", pendingTimeFilter === '3days' && deliveryFilter === 'pending' ? "text-white/80" : "text-blue-600")}>
                     {appLanguage === 'ms' ? '3 Hari' : '3 Days'}
                   </span>
                   <span className={cn("text-base font-black leading-none mt-1 sm:mt-1.5", pendingTimeFilter === '3days' && deliveryFilter === 'pending' ? "text-white" : "text-blue-700")}>{pendingStats.day3}</span>
@@ -1284,13 +1290,13 @@ export function HistoryView() {
                               </div>
 
                               {relDetails && (
-                                <span className={`px-2 py-0.5 rounded-full text-[9px] font-black tracking-wider ${relDetails.className}`}>
+                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-black tracking-wider ${relDetails.className}`}>
                                   {relDetails.text}
                                 </span>
                               )}
                             </div>
 
-                            <p className="font-bold text-[13px] sm:text-[13.5px] leading-tight text-[#111827]">
+                            <p className="font-bold text-sm sm:text-[13.5px] leading-tight text-[#111827]">
                               {item.state?.mainType === 'Lain-lain'
                                 ? item.state?.customDoc
                                 : item.state?.mainType}{' '}
@@ -1331,48 +1337,32 @@ export function HistoryView() {
                         </div>
                       </div>
 
-                      <div className="flex flex-wrap gap-x-2.5 gap-y-0.5 text-[11px] mt-1 leading-normal">
-                        {item.state?.template &&
-                          item.state?.mainType === 'Resume' &&
-                          !item.state?.isEditMode && (
-                            <div>
-                              <span className="text-subtext">
-                                {appLanguage === 'ms' ? 'Templat' : 'Template'}:
-                              </span>{' '}
-                              <span className="font-medium text-text">{item.state.template}</span>
-                            </div>
-                          )}
-
-                        {item.state?.customerBahasa && (
-                          <div>
-                            <span className="text-subtext">
-                              {appLanguage === 'ms' ? 'Bahasa' : 'Language'}:
-                            </span>{' '}
-                            <span className="font-medium text-text">{item.state.customerBahasa}</span>
-                          </div>
-                        )}
-
-                        {item.state?.customerJenis && (() => {
-                          const val = String(item.state.customerJenis).toLowerCase();
-                          let badgeStyle = "bg-noturgent/10 text-noturgent border border-noturgent/20";
-                          if (val.includes('super')) {
-                            badgeStyle = "bg-super/10 text-super border border-super/20";
-                          } else if (val.includes('semi')) {
-                            badgeStyle = "bg-semi/10 text-semi border border-semi/20";
-                          } else if (val.includes('urgent')) {
-                            badgeStyle = "bg-urgent/10 text-urgent border border-urgent/20";
-                          }
-                          return (
-                            <div className="flex items-center gap-1">
-                              <span className="text-subtext">
-                                {appLanguage === 'ms' ? 'Jenis' : 'Type'}:
-                              </span>
-                              <span className={`px-2 py-0.5 rounded-md text-[10.5px] font-black tracking-wide ${badgeStyle}`}>
-                                {item.state.customerJenis}
-                              </span>
-                            </div>
-                          );
-                        })()}
+                      <div className="flex flex-wrap gap-x-2.5 gap-y-0.5 text-xs mt-1 leading-normal">
+                        <div className="w-full flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+                          {[
+                            (item.state?.mainType === 'Resume' && !item.state?.isEditMode && item.state?.template) ? (
+                              <span key="template" className="font-medium text-text">{item.state.template}</span>
+                            ) : null,
+                            item.state?.customerBahasa ? (
+                              <span key="bahasa" className="font-medium text-text">{item.state.customerBahasa}</span>
+                            ) : null,
+                            item.state?.customerJenis ? (() => {
+                              const val = String(item.state.customerJenis).toLowerCase();
+                              let bColor = "text-gray-500 font-medium";
+                              let displayVal = item.state.customerJenis;
+                              if (val.includes('super')) { bColor = "text-super font-bold"; displayVal = "Super Urgent"; }
+                              else if (val.includes('semi')) { bColor = "text-semi font-bold"; displayVal = "Semi Urgent"; }
+                              else if (val.includes('normal') || val.includes('tak') || val.includes('not') || val.includes('tidak')) { bColor = "text-noturgent font-bold"; displayVal = appLanguage === 'ms' ? "Tak Urgent" : "Not Urgent"; }
+                              else if (val.includes('urgent')) { bColor = "text-urgent font-bold"; displayVal = "Urgent"; }
+                              return <span key="jenis" className={bColor}>{displayVal}</span>;
+                            })() : null
+                          ].filter(Boolean).map((part, index, array) => (
+                            <React.Fragment key={index}>
+                              {part}
+                              {index < array.length - 1 && <span className="text-gray-300 font-bold mx-0.5">•</span>}
+                            </React.Fragment>
+                          ))}
+                        </div>
 
                         {item.state?.customerAddOn && (
                           <div className="w-full">
@@ -1521,7 +1511,7 @@ export function HistoryView() {
       <div className="space-y-4">
         <div className="mb-1">
           <div className="bg-blue-50/50 p-3 rounded-2xl border border-blue-100/50">
-            <p className="text-[11px] text-blue-700 leading-relaxed font-medium">
+            <p className="text-xs text-blue-700 leading-relaxed font-medium">
               {appLanguage === 'ms' 
                 ? 'Draf disimpan secara tempatan sahaja dan tidak dihantar ke Google Sheets. Tekan draf untuk memuatkan semula borang.' 
                 : 'Drafts are saved locally only and are not sent to Google Sheets. Tap a draft to reload the form.'}
@@ -1558,7 +1548,7 @@ export function HistoryView() {
                       <h4 className="font-bold text-sm text-text truncate">
                         {draft.state.customerName || (appLanguage === 'ms' ? 'Tanpa Nama' : 'Untitled')}
                       </h4>
-                      <p className="text-[11px] text-subtext font-medium">
+                      <p className="text-xs text-subtext font-medium">
                         {draft.state.mainType} • {formattedDate}
                       </p>
                     </div>
@@ -1654,7 +1644,7 @@ export function HistoryView() {
 
           {showDbSettings && (
             <div className="p-4 border-t border-gray-100 bg-gray-50/30 space-y-4 animate-in slide-in-from-top-1 duration-150">
-              <div className="bg-blue-50/50 p-2.5 rounded-lg border border-blue-100 text-[11px] text-blue-800 leading-relaxed">
+              <div className="bg-blue-50/50 p-2.5 rounded-lg border border-blue-100 text-xs text-blue-800 leading-relaxed">
                 {appLanguage === 'ms' 
                   ? 'Konfigurasikan Spreadsheet ID bagi setiap tahun. Anda boleh memasukkan pautan Google Sheet penuh (URL) atau ID terus.'
                   : 'Configure the Spreadsheet ID for each year. You can paste the full Google Sheet Link (URL) or directly the Spreadsheet ID.'}
@@ -1667,7 +1657,7 @@ export function HistoryView() {
                 </span>
                 <input
                   type="text"
-                  className="w-full text-[11px] bg-gray-50 font-mono rounded px-2.5 py-1.5 border border-gray-200 outline-none text-text focus:bg-white"
+                  className="w-full text-xs bg-gray-50 font-mono rounded px-2.5 py-1.5 border border-gray-200 outline-none text-text focus:bg-white"
                   value={globalScriptUrl}
                   onChange={(e) => setGlobalScriptUrl(e.target.value)}
                   placeholder="https://script.google.com/macros/s/.../exec"
@@ -1729,10 +1719,10 @@ export function HistoryView() {
                             setAnnualSheets(prev => prev.map((s, idx) => idx === index ? { ...s, spreadsheetId: val } : s));
                           }}
                           placeholder={appLanguage === 'ms' ? 'Salin pautan Google Sheet di sini...' : 'Paste Google Sheet Link here...'}
-                          className="w-full text-[11px] bg-gray-50 font-mono rounded px-2.5 py-1.5 border border-gray-200 outline-none text-text focus:bg-white"
+                          className="w-full text-xs bg-gray-50 font-mono rounded px-2.5 py-1.5 border border-gray-200 outline-none text-text focus:bg-white"
                         />
                         {sheet.spreadsheetId && (
-                          <span className="text-[9px] text-green-600 block mt-1 font-semibold">
+                          <span className="text-[10px] text-green-600 block mt-1 font-semibold">
                             ✓ ID: {sheet.spreadsheetId.includes('docs.google.com/spreadsheets/d/') 
                               ? (sheet.spreadsheetId.match(/\/d\/([a-zA-Z0-9-_]+)/)?.[1] || 'URL valid') 
                               : 'Raw ID'}
@@ -1867,13 +1857,13 @@ export function HistoryView() {
                               </span>
                             )}
                           </div>
-                          <span className="px-2 py-0.5 rounded-full text-[9px] font-black tracking-wider bg-purple-100 text-purple-700">
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-black tracking-wider bg-purple-100 text-purple-700">
                             <Database className="w-2.5 h-2.5 inline mr-0.5" />
                             {item.sheetName || 'Google Sheet'}
                           </span>
                         </div>
 
-                        <p className="font-bold text-[13px] sm:text-[13.5px] leading-tight text-[#111827]">
+                        <p className="font-bold text-sm sm:text-[13.5px] leading-tight text-[#111827]">
                           {item.order === 'Lain-lain' || item.order === 'Lain2'
                             ? item.order
                             : item.order}
@@ -1882,34 +1872,32 @@ export function HistoryView() {
                       </div>
                     </div>
 
-                    <div className="flex flex-wrap gap-x-2.5 gap-y-0.5 text-[11px] mt-1 leading-normal">
-                      {item.template && (
-                        <div>
-                          <span className="text-subtext">T: </span>
-                          <span className="font-medium text-[#374151]">{item.template}</span>
-                        </div>
-                      )}
-
-                      {item.bahasa && (
-                        <div>
-                          <span className="text-subtext">B: </span>
-                          <span className="font-medium text-[#374151]">{item.bahasa}</span>
-                        </div>
-                      )}
-
-                      {item.jenis && (() => {
-                        const val = String(item.jenis).toLowerCase();
-                        let bColor = "text-gray-500";
-                        if (val.includes('super')) bColor = "text-super font-bold";
-                        else if (val.includes('semi')) bColor = "text-semi font-bold";
-                        else if (val.includes('urgent')) bColor = "text-urgent font-bold";
-                        
-                        return (
-                          <div className={bColor}>
-                            {item.jenis}
-                          </div>
-                        );
-                      })()}
+                    <div className="flex flex-wrap gap-x-2.5 gap-y-0.5 text-xs mt-1 leading-normal">
+                      <div className="w-full flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+                        {[
+                          item.template ? (
+                            <span key="template" className="font-medium text-[#374151]">{item.template}</span>
+                          ) : null,
+                          item.bahasa ? (
+                            <span key="bahasa" className="font-medium text-[#374151]">{item.bahasa}</span>
+                          ) : null,
+                          item.jenis ? (() => {
+                            const val = String(item.jenis).toLowerCase();
+                            let bColor = "text-gray-500 font-medium";
+                            let displayVal = item.jenis;
+                            if (val.includes('super')) { bColor = "text-super font-bold"; displayVal = "Super Urgent"; }
+                            else if (val.includes('semi')) { bColor = "text-semi font-bold"; displayVal = "Semi Urgent"; }
+                            else if (val.includes('normal') || val.includes('tak') || val.includes('not') || val.includes('tidak')) { bColor = "text-noturgent font-bold"; displayVal = appLanguage === 'ms' ? "Tak Urgent" : "Not Urgent"; }
+                            else if (val.includes('urgent')) { bColor = "text-urgent font-bold"; displayVal = "Urgent"; }
+                            return <span key="jenis" className={bColor}>{displayVal}</span>;
+                          })() : null
+                        ].filter(Boolean).map((part, index, array) => (
+                          <React.Fragment key={index}>
+                            {part}
+                            {index < array.length - 1 && <span className="text-gray-300 font-bold mx-0.5">•</span>}
+                          </React.Fragment>
+                        ))}
+                      </div>
                     </div>
 
                     <div className="flex flex-col gap-0.5 mt-1 text-[11.5px] text-subtext leading-snug">
@@ -2044,17 +2032,17 @@ export function HistoryView() {
         onClick={() => setConfirmAction(null)}
       />
 
-      <div className="relative bg-white rounded-[24px] p-6 w-full max-w-[320px] shadow-2xl animate-fade-in-up">
+      <div className="relative bg-white rounded-3xl p-6 w-full max-w-[320px] shadow-2xl animate-fade-in-up">
         <div className="flex flex-col items-center text-center space-y-4">
           <div className="w-12 h-12 bg-red-50 rounded-full flex items-center justify-center text-red-500 mb-2">
             <AlertCircle className="w-6 h-6" />
           </div>
 
-          <h3 className="text-[18px] font-bold text-text">
+          <h3 className="text-lg font-bold text-text">
             {confirmAction.title || (appLanguage === 'ms' ? 'Pasti?' : 'Are you sure?')}
           </h3>
 
-          <p className="text-[14px] text-subtext pb-4">
+          <p className="text-sm text-subtext pb-4">
             {confirmAction.message}
           </p>
 
@@ -2062,7 +2050,7 @@ export function HistoryView() {
             <button
               type="button"
               onClick={() => setConfirmAction(null)}
-              className="flex-1 py-3 px-4 rounded-full font-bold text-[14px] text-text bg-gray-100 hover:bg-gray-200 active:scale-95 transition-all"
+              className="flex-1 py-3 px-4 rounded-full font-bold text-sm text-text bg-gray-100 hover:bg-gray-200 active:scale-95 transition-all"
             >
               {appLanguage === 'ms' ? 'Batal' : 'Cancel'}
             </button>
@@ -2070,7 +2058,7 @@ export function HistoryView() {
             <button
               type="button"
               onClick={confirmAction.onConfirm}
-              className="flex-1 py-3 px-4 rounded-full font-bold text-[14px] text-white bg-red-500 hover:bg-red-600 active:scale-95 transition-all"
+              className="flex-1 py-3 px-4 rounded-full font-bold text-sm text-white bg-red-500 hover:bg-red-600 active:scale-95 transition-all"
             >
               {appLanguage === 'ms' ? 'Padam' : 'Delete'}
             </button>
@@ -2087,7 +2075,7 @@ export function HistoryView() {
         className="absolute inset-0 bg-black/40 backdrop-blur-sm"
         onClick={() => setAlertMsg(null)}
       />
-      <div className="relative bg-white rounded-[24px] p-6 w-full max-w-[320px] shadow-2xl animate-fade-in-up">
+      <div className="relative bg-white rounded-3xl p-6 w-full max-w-[320px] shadow-2xl animate-fade-in-up">
         <div className="flex flex-col items-center text-center space-y-4">
           <div className={`w-12 h-12 rounded-full flex items-center justify-center mb-2 ${
             alertMsg.type === 'error' ? 'bg-red-100 text-red-500' :
@@ -2097,17 +2085,17 @@ export function HistoryView() {
             {alertMsg.type === 'success' ? <Check className="w-6 h-6" /> : <AlertCircle className="w-6 h-6" />}
           </div>
           {alertMsg.title && (
-            <h3 className="text-[18px] font-bold text-text">
+            <h3 className="text-lg font-bold text-text">
               {alertMsg.title}
             </h3>
           )}
-          <p className="text-[14px] text-subtext pb-4">
+          <p className="text-sm text-subtext pb-4">
             {alertMsg.message}
           </p>
           <button
             type="button"
             onClick={() => setAlertMsg(null)}
-            className="w-full py-3 px-4 rounded-full font-bold text-[14px] text-white bg-blue-600 hover:bg-blue-700 active:scale-95 transition-all"
+            className="w-full py-3 px-4 rounded-full font-bold text-sm text-white bg-blue-600 hover:bg-blue-700 active:scale-95 transition-all"
           >
             OK
           </button>

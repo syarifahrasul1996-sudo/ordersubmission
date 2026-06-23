@@ -55,7 +55,7 @@ export function CustomerInfoView() {
     }
 
     let initJenis = '';
-    if (state.urgency === 'noturgent' || state.urgency === 'standard') initJenis = 'Tak Urgent';
+    if (state.urgency === 'noturgent' || state.urgency === 'standard') initJenis = appLanguage === 'ms' ? 'Tak Urgent' : 'Not Urgent';
     else if (state.urgency === 'urgent') initJenis = 'Urgent';
     else if (state.urgency === 'super') initJenis = 'Super Urgent';
     else if (state.urgency === 'semi') initJenis = 'Semi Urgent';
@@ -169,7 +169,7 @@ export function CustomerInfoView() {
       initAddOn: state.customerAddOn || initAddOn,
       initAddOnDropdown,
       initInfo: state.customerInfo || '',
-      initLink: state.orderLink || '',
+      initLink: state.googleSheetLink || state.orderLink || '',
       initOrderId,
     };
   }, [state]);
@@ -353,7 +353,10 @@ export function CustomerInfoView() {
       });
 
       const newLink = `https://docs.google.com/document/d/${documentId}/edit`;
-      setLink(newLink);
+      setLink(prev => {
+        const cleaned = (prev || '').trim();
+        return cleaned ? `${cleaned}\n${newLink}` : newLink;
+      });
       showToastMessage(appLanguage === 'ms' ? "Surat berjaya dicipta!" : "Letter generated!");
     } catch (e: any) {
       console.error(e);
@@ -469,6 +472,7 @@ setInfo(updatedInfo);
       customerPhone: formattedPhone,
       customerInfo: updatedInfo,
       orderLink: link,
+      googleSheetLink: link,
       customerOrder: order,
       customerTemplate: template,
       customerBahasa: bahasa,
@@ -535,63 +539,28 @@ setInfo(updatedInfo);
         }
       }
 
-      let response;
-      try {
-        response = await fetch(resolvedWebhookUrl, {
-          method: 'POST',
-          mode: 'no-cors',
-          headers: {
-            'Content-Type': 'text/plain;charset=utf-8'
-          },
-          body: JSON.stringify(payload)
-        });
-      } catch (fetchErr: any) {
-        // Fallback to offline queue if network fails
+      // Optimistic instant response
+      setSaved(true);
+      showToastMessage(appLanguage === 'ms' ? 'Berjaya dihantar!' : 'Successfully submitted!');
+      setIsSaving(false);
+      setTimeout(() => goHome(), 500);
+
+      // Perform fetch in the background
+      fetch(resolvedWebhookUrl, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: {
+          'Content-Type': 'text/plain;charset=utf-8'
+        },
+        body: JSON.stringify(payload)
+      }).catch(fetchErr => {
         try {
           addToOfflineQueue(payload, resolvedWebhookUrl, orderId);
-          setSaved(true);
-          showToastMessage(appLanguage === 'ms' 
-            ? 'Sambungan gagal: Disimpan dalam Que' 
-            : 'Connection failed: Saved to Queue');
-          setTimeout(() => goHome(), 1800);
-          return;
         } catch (e) {
-          throw fetchErr; // rethrow the original fetch error
+          console.warn('Failed to add to offline queue after fetch error', e);
         }
-      }
-
-      // Handle opaque response for no-cors
-      if (response.type === 'opaque') {
-        setSaved(true);
-        showToastMessage(appLanguage === 'ms' ? 'Berjaya dihantar!' : 'Successfully submitted!');
-        setTimeout(() => {
-          goHome();
-        }, 2000);
-        return;
-      }
-
-      const responseText = await response.text();
-      let result;
-      try {
-        result = JSON.parse(responseText);
-      } catch (e) {
-        throw new Error('Failed to parse response: ' + responseText);
-      }
-
-      if (result.status === 'error') {
-        const errorLogs = result.logs && result.logs.length > 0 ? `\nLogs: ${result.logs.join(' -> ')}` : '';
-        throw new Error((result.message || 'Error from server') + errorLogs);
-      }
-
-      setSaved(true);
-      showToastMessage(appLanguage === 'ms' 
-        ? `Berjaya disalurkan ke tab: ${result.message.replace('Data added to ', '').replace(' tab', '')}` 
-        : `Successfully saved to tab: ${result.message.replace('Data added to ', '').replace(' tab', '')}`);
-      
-      // Auto return home after successful save
-      setTimeout(() => {
-        goHome();
-      }, 2000);
+      });
+      return;
       
     } catch (err: any) {
       console.error(err);
@@ -621,6 +590,7 @@ setInfo(updatedInfo);
       dueTimestamp: dueTimestamp,
       customerInfo: info,
       orderLink: link,
+      googleSheetLink: link,
       orderId: orderId,
     }));
     
@@ -708,7 +678,7 @@ setInfo(updatedInfo);
         )}
 
         <div className="space-y-1">
-          <label className="text-[11px] font-black text-gray-400 ml-1 uppercase tracking-widest">
+          <label className="text-xs font-black text-gray-400 ml-1 uppercase tracking-widest">
             {appLanguage === 'ms' ? 'Nama Pelanggan' : 'Customer Name'}
           </label>
           <input 
@@ -716,12 +686,12 @@ setInfo(updatedInfo);
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder={appLanguage === 'ms' ? 'Cth: Ali bin Abu' : 'E.g. John Doe'}
-            className="w-full h-[46px] bg-surface rounded-[12px] px-4 font-bold text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all placeholder:text-gray-300 text-sm" 
+            className="w-full h-[46px] bg-surface rounded-xl px-4 font-bold text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all placeholder:text-gray-300 text-sm" 
           />
         </div>
 
         <div className="space-y-1">
-          <label className="text-[11px] font-black text-gray-400 ml-1 uppercase tracking-widest">
+          <label className="text-xs font-black text-gray-400 ml-1 uppercase tracking-widest">
             {appLanguage === 'ms' ? 'No. Telefon' : 'Phone Number'}
           </label>
           <input 
@@ -730,17 +700,17 @@ setInfo(updatedInfo);
             onChange={(e) => setPhone(e.target.value)}
             onBlur={() => setPhone(formatPhoneUniversal(phone))}
             placeholder="01X-XXX XXXX"
-            className="w-full h-[46px] bg-surface rounded-[12px] px-4 font-bold text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all placeholder:text-gray-300 text-sm" 
+            className="w-full h-[46px] bg-surface rounded-xl px-4 font-bold text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all placeholder:text-gray-300 text-sm" 
           />
         </div>
 
         <div className="space-y-1">
-          <label className="text-[11px] font-black text-gray-400 ml-1 uppercase tracking-widest">Order</label>
+          <label className="text-xs font-black text-gray-400 ml-1 uppercase tracking-widest">Order</label>
           <div className="relative">
             <select 
               value={order}
               onChange={(e) => setOrder(e.target.value)}
-              className="w-full h-[46px] bg-surface text-text rounded-[12px] px-4 font-bold border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all appearance-none text-sm" 
+              className="w-full h-[46px] bg-surface text-text rounded-xl px-4 font-bold border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all appearance-none text-sm" 
             >
               <option value="Resume">Resume</option>
               <option value="Surat">Surat</option>
@@ -756,22 +726,22 @@ setInfo(updatedInfo);
         </div>
 
         <div className="space-y-1">
-          <label className="text-[11px] font-black text-gray-400 ml-1 uppercase tracking-widest">Template</label>
+          <label className="text-xs font-black text-gray-400 ml-1 uppercase tracking-widest">Template</label>
           <input 
             type="text" 
             value={template}
             onChange={(e) => setTemplate(e.target.value)}
-            className="w-full h-[46px] bg-surface rounded-[12px] px-4 font-bold text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all text-sm" 
+            className="w-full h-[46px] bg-surface rounded-xl px-4 font-bold text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all text-sm" 
           />
         </div>
 
         <div className="space-y-1">
-          <label className="text-[11px] font-black text-gray-400 ml-1 uppercase tracking-widest">Bahasa</label>
+          <label className="text-xs font-black text-gray-400 ml-1 uppercase tracking-widest">Bahasa</label>
           <div className="relative">
             <select 
               value={bahasa}
               onChange={(e) => setBahasa(e.target.value)}
-              className="w-full h-[46px] bg-surface text-text rounded-[12px] px-4 font-bold border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all appearance-none text-sm" 
+              className="w-full h-[46px] bg-surface text-text rounded-xl px-4 font-bold border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all appearance-none text-sm" 
             >
               <option value="Melayu">Melayu</option>
               <option value="English">English</option>
@@ -785,12 +755,12 @@ setInfo(updatedInfo);
         </div>
 
         <div className="space-y-1">
-          <label className="text-[11px] font-black text-gray-400 ml-1 uppercase tracking-widest">Add On</label>
+          <label className="text-xs font-black text-gray-400 ml-1 uppercase tracking-widest">Add On</label>
           <div className="relative">
             <select 
               value={addOn}
               onChange={(e) => setAddOn(e.target.value)}
-              className="w-full h-[46px] bg-surface text-text rounded-[12px] px-4 font-bold border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all appearance-none text-sm" 
+              className="w-full h-[46px] bg-surface text-text rounded-xl px-4 font-bold border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all appearance-none text-sm" 
             >
               <option value=""></option>
               <option value="Editable softcopy BI">Editable softcopy BI</option>
@@ -810,7 +780,7 @@ setInfo(updatedInfo);
         </div>
 
         <div className="space-y-1">
-          <label className="text-[11px] font-black text-gray-400 ml-1 uppercase tracking-widest">Jenis</label>
+          <label className="text-xs font-black text-gray-400 ml-1 uppercase tracking-widest">Jenis</label>
           <div className="relative">
             {(() => {
               let selectColorClass = "border-gray-100/50";
@@ -821,7 +791,7 @@ setInfo(updatedInfo);
                 selectColorClass = "border-semi focus:border-semi focus:ring-semi/20 text-semi font-black bg-semi/5 dark:bg-semi/10 ml-0";
               } else if (v.includes('urgent')) {
                 selectColorClass = "border-urgent focus:border-urgent focus:ring-urgent/20 text-urgent font-black bg-urgent/5 dark:bg-urgent/10 ml-0";
-              } else if (v.includes('tak') || v.includes('normal') || v.includes('not')) {
+              } else if (v.includes('tak') || v.includes('normal') || v.includes('not') || v.includes('tidak')) {
                 selectColorClass = "border-noturgent focus:border-noturgent focus:ring-noturgent/20 text-noturgent font-black bg-noturgent/5 dark:bg-noturgent/10 ml-0";
               }
               return (
@@ -829,11 +799,11 @@ setInfo(updatedInfo);
                   value={jenis}
                   onChange={(e) => setJenis(e.target.value)}
                   className={cn(
-                    "w-full h-[46px] bg-surface text-text rounded-[12px] px-4 font-bold border outline-none focus:ring-2 transition-all appearance-none text-sm",
+                    "w-full h-[46px] bg-surface text-text rounded-xl px-4 font-bold border outline-none focus:ring-2 transition-all appearance-none text-sm",
                     selectColorClass
                   )} 
                 >
-                  <option className="text-text font-normal bg-surface" value="Tak Urgent">Tak Urgent</option>
+                  <option className="text-text font-normal bg-surface" value="Tak Urgent">{appLanguage === 'ms' ? 'Tak Urgent' : 'Not Urgent'}</option>
                   <option className="text-text font-normal bg-surface" value="Semi Urgent">Semi Urgent</option>
                   <option className="text-text font-normal bg-surface" value="Urgent">Urgent</option>
                   <option className="text-text font-normal bg-surface" value="Super Urgent">Super Urgent</option>
@@ -848,7 +818,7 @@ setInfo(updatedInfo);
         </div>
 
         <div className="space-y-1">
-          <label className="text-[11px] font-black text-gray-400 ml-1 uppercase tracking-widest">Due</label>
+          <label className="text-xs font-black text-gray-400 ml-1 uppercase tracking-widest">Due</label>
           <div className="relative">
             <input 
               type="text" 
@@ -856,12 +826,12 @@ setInfo(updatedInfo);
               onChange={(e) => setDue(e.target.value)}
               placeholder={appLanguage === 'ms' ? 'HH/BB/TTTT (Contoh: 25/12/2024)' : 'DD/MM/YYYY (Example: 25/12/2024)'}
               className={cn(
-                "w-full h-[46px] bg-surface rounded-[12px] px-4 font-bold text-text border outline-none focus:ring-2 transition-all text-sm",
+                "w-full h-[46px] bg-surface rounded-xl px-4 font-bold text-text border outline-none focus:ring-2 transition-all text-sm",
                 state.isDueInvalid ? "border-amber-400 bg-amber-50/10 ring-amber-400/10 focus:border-amber-500 placeholder:text-amber-300" : "border-gray-100/50 focus:border-primary/50 focus:ring-primary/10"
               )} 
             />
             {state.isDueInvalid && (
-              <div className="flex items-center mt-1.5 ml-1 text-[9px] font-black text-amber-600 uppercase tracking-tight">
+              <div className="flex items-center mt-1.5 ml-1 text-[10px] font-black text-amber-600 uppercase tracking-tight">
                 <AlertCircle className="w-3.5 h-3.5 mr-1" />
                 {appLanguage === 'ms' ? 'Format Tarikh Tidak Sah / Kosong dari Sheets' : 'Invalid Date Format / Empty from Sheets'}
               </div>
@@ -870,47 +840,87 @@ setInfo(updatedInfo);
         </div>
 
         <div className="space-y-1">
-          <label className="text-[11px] font-black text-gray-400 ml-1 uppercase tracking-widest">Link</label>
-          <div className="flex gap-2">
-            <input 
-              type="text" 
-              value={link}
-              onChange={(e) => setLink(e.target.value)}
-              placeholder="https://..."
-              className="flex-1 w-full h-[46px] bg-surface rounded-[12px] px-4 font-bold text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all text-[13px] sm:text-sm" 
-            />
-            {link && (
-              <a 
-                href={link} 
-                target="_blank" 
-                rel="noopener noreferrer"
-                className="h-[46px] px-3 bg-blue-50 text-blue-600 rounded-[12px] border border-blue-100/50 flex items-center justify-center font-bold text-[12px] hover:bg-blue-100 transition-colors"
-                title={appLanguage === 'ms' ? "Buka Link" : "Open Link"}
-              >
-                <ExternalLink className="w-4 h-4" />
-              </a>
-            )}
+          <div className="flex justify-between items-center ml-1 mb-0.5">
+            <label className="text-xs font-black text-gray-400 uppercase tracking-widest">
+              {appLanguage === 'ms' ? 'Link (Boleh masukkan lebih dari 1 link - asingkan dengan enter/koma)' : 'Links (Can insert multiple - separate with enter/comma)'}
+            </label>
             {!(order === 'Resume' || order === 'Edit Resume') && (
               <button
+                type="button"
                 onClick={handleGenerateDoc}
                 disabled={isGeneratingDoc}
-                className="h-[46px] px-3 bg-purple-50 text-purple-600 rounded-[12px] border border-purple-100/50 flex items-center justify-center font-bold text-[12px] hover:bg-purple-100 transition-colors disabled:opacity-50"
+                className="h-7 px-2.5 bg-purple-50 hover:bg-purple-100 text-purple-700 rounded-lg border border-purple-100/50 flex items-center gap-1.5 font-black text-[10px] uppercase tracking-wider transition-colors disabled:opacity-50 cursor-pointer"
                 title={appLanguage === 'ms' ? "Jana Surat dengan Gemini" : "Generate Letter with Gemini"}
               >
-                {isGeneratingDoc ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
+                {isGeneratingDoc ? (
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                ) : (
+                  <FileText className="w-3 h-3" />
+                )}
+                <span>{appLanguage === 'ms' ? 'Gemini AI' : 'Gemini AI'}</span>
               </button>
             )}
           </div>
+          
+          <div className="relative">
+            <textarea 
+              value={link}
+              onChange={(e) => setLink(e.target.value)}
+              placeholder="https://example1.com&#10;https://example2.com"
+              className="w-full min-h-[68px] py-2 bg-surface rounded-xl px-4 font-bold text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all text-sm sm:text-sm resize-none" 
+            />
+          </div>
+          
+          {/* Display multiple parsed links as clickable pills under the field */}
+          {(() => {
+            const parsedLinks = link.split(/[\n,;\s]+/).map(l => l.trim()).filter(l => l.startsWith('http://') || l.startsWith('https://') || l.includes('.com') || l.includes('docs.google.com') || l.includes('drive.google.com'));
+            if (parsedLinks.length > 0) {
+              return (
+                <div className="mt-1.5 flex flex-wrap gap-1.5 p-1.5 bg-gray-50/50 rounded-xl border border-gray-100/30">
+                  {parsedLinks.map((pLink, idx) => {
+                    let label = `Link ${idx + 1}`;
+                    try {
+                      const url = new URL(pLink.startsWith('http') ? pLink : `https://${pLink}`);
+                      if (url.hostname.includes('docs.google.com')) {
+                        label = `Google Doc ${idx + 1}`;
+                      } else if (url.hostname.includes('drive.google.com')) {
+                        label = `Google Drive ${idx + 1}`;
+                      } else if (url.hostname.includes('canva.com')) {
+                        label = `Canva ${idx + 1}`;
+                      } else {
+                        label = `${url.hostname.replace('www.', '')} [${idx + 1}]`;
+                      }
+                    } catch (e) {
+                      // ignore
+                    }
+                    return (
+                      <a 
+                        key={idx}
+                        href={pLink.startsWith('http') ? pLink : `https://${pLink}`}
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 px-2.5 py-1 bg-blue-50/70 border border-blue-100/60 hover:bg-blue-100 text-blue-600 rounded-lg text-[11px] font-black tracking-normal transition-colors cursor-pointer select-none"
+                      >
+                        <ExternalLink className="w-3 h-3 text-blue-500" />
+                        <span className="truncate max-w-[140px]">{label}</span>
+                      </a>
+                    );
+                  })}
+                </div>
+              );
+            }
+            return null;
+          })()}
         </div>
 
         <div className="space-y-1">
           <div className="flex items-center justify-between ml-1 mb-1">
-            <label className="text-[11px] font-black text-gray-400 uppercase tracking-widest">
+            <label className="text-xs font-black text-gray-400 uppercase tracking-widest">
               {appLanguage === 'ms' ? 'Maklumat Pelanggan' : 'Customer Information'}
             </label>
             <button
               onClick={handleAutoFill}
-              className="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-[8px] hover:bg-blue-100 transition-colors active:scale-95"
+              className="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-lg hover:bg-blue-100 transition-colors active:scale-95"
             >
               {appLanguage === 'ms' ? 'Auto-isi' : 'Auto-fill'}
             </button>
@@ -920,7 +930,7 @@ setInfo(updatedInfo);
             onChange={(e) => setInfo(e.target.value)}
             rows={8}
             placeholder={appLanguage === 'ms' ? 'Salin dan tampal maklumat pelanggan/resume di sini...' : 'Copy and paste customer/resume details here...'}
-            className="w-full bg-surface rounded-[12px] p-3 font-medium text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all placeholder:text-gray-300 text-sm resize-y min-h-[10rem]" 
+            className="w-full bg-surface rounded-xl p-3 font-medium text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all placeholder:text-gray-300 text-sm resize-y min-h-[10rem]" 
           />
         </div>
 
@@ -933,7 +943,7 @@ setInfo(updatedInfo);
         <div className="pt-2 space-y-2">
           <button
             onClick={handleSaveDraft}
-            className="w-full h-[48px] bg-white dark:bg-gray-800 text-blue-600 border-2 border-blue-600/20 font-bold text-[14px] rounded-[16px] flex items-center justify-center space-x-2 active:scale-[0.98] transition-all hover:bg-blue-50 dark:hover:bg-blue-900/10"
+            className="w-full h-[48px] bg-white dark:bg-gray-800 text-blue-600 border-2 border-blue-600/20 font-bold text-sm rounded-2xl flex items-center justify-center space-x-2 active:scale-[0.98] transition-all hover:bg-blue-50 dark:hover:bg-blue-900/10"
           >
             <RefreshCcw className="w-4 h-4" />
             <span>{appLanguage === 'ms' ? 'Simpan Sebagai Draf' : 'Save as Draft'}</span>
@@ -942,7 +952,7 @@ setInfo(updatedInfo);
           <button
             onClick={handleSaveInfo}
             disabled={isSaving}
-            className="w-full h-[58px] bg-blue-600 hover:bg-blue-700 text-white font-black text-[15px] sm:text-[16px] rounded-[16px] flex items-center justify-center space-x-2 active:scale-[0.98] transition-all disabled:opacity-70 shadow-md shadow-blue-500/10"
+            className="w-full h-[58px] bg-blue-600 hover:bg-blue-700 text-white font-black text-base sm:text-base rounded-2xl flex items-center justify-center space-x-2 active:scale-[0.98] transition-all disabled:opacity-70 shadow-md shadow-blue-500/10"
           >
             {isSaving ? (
               <RefreshCcw className="w-4 h-4 animate-spin" />

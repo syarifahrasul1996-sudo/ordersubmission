@@ -33,13 +33,13 @@ export function OutputView({ onCopy }: { onCopy: (msg: string) => void }) {
           <Check className="w-8 h-8 sm:w-10 sm:h-10" />
         </div>
         <h2 className="text-3xl sm:text-4xl font-black text-text tracking-tighter">{appLanguage === 'ms' ? 'Selesai!' : 'Done!'}</h2>
-        <p className="text-subtext mt-2 sm:mt-3 px-4 font-medium text-[14px] sm:text-[15px]">{appLanguage === 'ms' ? 'Mesej utama telah disalin secara automatik.' : 'Main message has been copied automatically.'}</p>
+        <p className="text-subtext mt-2 sm:mt-3 px-4 font-medium text-sm sm:text-base">{appLanguage === 'ms' ? 'Mesej utama telah disalin secara automatik.' : 'Main message has been copied automatically.'}</p>
       </div>
 
       <div className="space-y-6 sm:space-y-8 w-full text-left" aria-live="polite">
         {generatedMessages.map((msg, i) => (
           <div key={i} className="relative w-full">
-            <p className="text-[10px] sm:text-[11px] font-black text-subtext mb-2 uppercase tracking-widest px-1">
+            <p className="text-[10px] sm:text-xs font-black text-subtext mb-2 uppercase tracking-widest px-1">
               {i === 0 ? (appLanguage === 'ms' ? 'Message Utama' : 'Main Message') : (state.isEditMode ? (appLanguage === 'ms' ? 'Info Penting' : 'Important Info') : (appLanguage === 'ms' ? 'Butiran Template' : 'Template Details'))}
             </p>
             <AutoResizeTextarea value={msg} />
@@ -56,13 +56,13 @@ export function OutputView({ onCopy }: { onCopy: (msg: string) => void }) {
       <div className="pt-4 w-full space-y-4">
         <button 
           onClick={() => pushView('customer-info')}
-          className="w-full h-[64px] sm:h-20 bg-primary text-white font-black text-[15px] sm:text-[16px] rounded-[18px] active:scale-[0.98] md:hover:bg-primary/90 transition-all shadow-md"
+          className="w-full h-[64px] sm:h-20 bg-primary text-white font-black text-base sm:text-base rounded-[18px] active:scale-[0.98] md:hover:bg-primary/90 transition-all shadow-md"
         >
           {appLanguage === 'ms' ? 'Simpan Maklumat Pelanggan' : 'Save Customer Info'}
         </button>
         <button 
           onClick={handleReset}
-          className="w-full h-[64px] sm:h-20 bg-surface text-text font-black text-[15px] sm:text-[16px] rounded-[18px] border border-gray-100/80 active:scale-[0.98] md:hover:bg-gray-200 transition-all"
+          className="w-full h-[64px] sm:h-20 bg-surface text-text font-black text-base sm:text-base rounded-[18px] border border-gray-100/80 active:scale-[0.98] md:hover:bg-gray-200 transition-all"
         >
           {appLanguage === 'ms' ? 'Buat Tempahan Baru' : 'Create New Order'}
         </button>
@@ -74,29 +74,29 @@ export function OutputView({ onCopy }: { onCopy: (msg: string) => void }) {
             className="absolute inset-0 bg-black/40 backdrop-blur-sm"
             onClick={() => setConfirmAction(null)}
           />
-          <div className="relative bg-white rounded-[24px] p-6 w-full max-w-[320px] shadow-2xl animate-fade-in-up text-left">
+          <div className="relative bg-white rounded-3xl p-6 w-full max-w-[320px] shadow-2xl animate-fade-in-up text-left">
             <div className="flex flex-col items-center text-center space-y-4">
               <div className="w-12 h-12 bg-red-50 rounded-full flex items-center justify-center text-red-500 mb-2">
                 <AlertCircle className="w-6 h-6" />
               </div>
-              <h3 className="text-[18px] font-bold text-text">
+              <h3 className="text-lg font-bold text-text">
                 {confirmAction.title || (appLanguage === 'ms' ? 'Pasti?' : 'Are you sure?')}
               </h3>
-              <p className="text-[14px] text-subtext pb-4">
+              <p className="text-sm text-subtext pb-4">
                 {confirmAction.message}
               </p>
               <div className="flex w-full space-x-3">
                 <button
                   type="button"
                   onClick={() => setConfirmAction(null)}
-                  className="flex-1 py-3 px-4 rounded-full font-bold text-[14px] text-text bg-gray-100 hover:bg-gray-200 active:scale-95 transition-all"
+                  className="flex-1 py-3 px-4 rounded-full font-bold text-sm text-text bg-gray-100 hover:bg-gray-200 active:scale-95 transition-all"
                 >
                   {appLanguage === 'ms' ? 'Batal' : 'Cancel'}
                 </button>
                 <button
                   type="button"
                   onClick={confirmAction.onConfirm}
-                  className="flex-1 py-3 px-4 rounded-full font-bold text-[14px] text-white bg-red-500 hover:bg-red-600 active:scale-95 transition-all"
+                  className="flex-1 py-3 px-4 rounded-full font-bold text-sm text-white bg-red-500 hover:bg-red-600 active:scale-95 transition-all"
                 >
                   {appLanguage === 'ms' ? 'Teruskan' : 'Continue'}
                 </button>
@@ -125,7 +125,7 @@ function AutoResizeTextarea({ value }: { value: string }) {
       ref={ref}
       readOnly 
       value={value}
-      className="w-full p-4 sm:p-5 pr-14 sm:pr-16 rounded-[20px] sm:rounded-[24px] bg-surface border border-gray-100/50 text-[13px] sm:text-[14px] font-mono outline-none resize-none shadow-inner overflow-hidden text-text/90 select-text" 
+      className="w-full p-4 sm:p-5 pr-14 sm:pr-16 rounded-[20px] sm:rounded-3xl bg-surface border border-gray-100/50 text-sm sm:text-sm font-mono outline-none resize-none shadow-inner overflow-hidden text-text/90 select-text" 
       style={{ minHeight: '100px' }}
     />
   );

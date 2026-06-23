@@ -70,20 +70,20 @@ export function ResumeFormFieldsView() {
   return (
     <div className="flex flex-col p-4 sm:p-5 space-y-4 pb-[calc(env(safe-area-inset-bottom)+5rem)]">
       <section>
-        <h2 className="text-[11px] font-black uppercase tracking-widest mb-2 text-gray-400">{appLanguage === 'ms' ? 'Pilihan Pakej' : 'Package Option'}</h2>
+        <h2 className="text-xs font-black uppercase tracking-widest mb-2 text-gray-400">{appLanguage === 'ms' ? 'Pilihan Pakej' : 'Package Option'}</h2>
         <UrgencyGrid mode={state.isEditMode ? 'edit' : 'new'} />
       </section>
 
       {!state.isEditMode && (
         <section>
-          <h2 className="text-[11px] font-black uppercase tracking-widest mb-2 text-gray-400">{appLanguage === 'ms' ? 'Bahasa Resume' : 'Resume Language'}</h2>
-          <div className="flex bg-surface p-1 rounded-[12px] h-[46px] gap-1.5">
+          <h2 className="text-xs font-black uppercase tracking-widest mb-2 text-gray-400">{appLanguage === 'ms' ? 'Bahasa Resume' : 'Resume Language'}</h2>
+          <div className="flex bg-surface p-1 rounded-xl h-[46px] gap-1.5">
             {['Melayu', 'English'].map(lang => (
               <button 
                 key={lang}
                 onClick={() => toggleResumeLang(lang)}
                 className={cn(
-                  "flex-1 rounded-[8px] sm:rounded-[10px] font-bold transition-all text-[12px] sm:text-[13px]",
+                  "flex-1 rounded-lg sm:rounded-[10px] font-bold transition-all text-xs sm:text-sm",
                   state.resumeLangs.includes(lang) ? "bg-[#1C1C1E] text-white shadow-sm transform scale-[1.01]" : "text-text active:bg-gray-200"
                 )}
               >
@@ -96,7 +96,7 @@ export function ResumeFormFieldsView() {
 
       {!state.isEditMode && (
         <section>
-          <h2 className="text-[11px] font-black uppercase tracking-widest mb-2 text-gray-400">{appLanguage === 'ms' ? 'Add-ons (Pilihan)' : 'Add-ons (Optional)'}</h2>
+          <h2 className="text-xs font-black uppercase tracking-widest mb-2 text-gray-400">{appLanguage === 'ms' ? 'Add-ons (Pilihan)' : 'Add-ons (Optional)'}</h2>
           <div className="space-y-2.5">
             
             {/* Soft Copy Word */}
@@ -108,12 +108,12 @@ export function ResumeFormFieldsView() {
                   state.addons.includes('Soft Copy Word') ? "bg-primary text-white shadow-md font-bold" : "bg-surface font-semibold text-text"
                 )}
               >
-                <span className="text-sm sm:text-[15px]">Soft Copy Word</span>
+                <span className="text-sm sm:text-base">Soft Copy Word</span>
                 <CheckCircle2 className={cn("w-5 h-5 transition-opacity", state.addons.includes('Soft Copy Word') ? "opacity-100" : "opacity-20")} />
               </button>
               {state.addons.includes('Soft Copy Word') && isMulti && (
                 <div className="p-4 bg-surface rounded-xl border border-primary/20 space-y-3 shadow-inner">
-                  <p className="text-[11px] font-bold text-primary tracking-tight">{appLanguage === 'ms' ? 'Pilih Bahasa Soft Copy:' : 'Choose Soft Copy Language:'}</p>
+                  <p className="text-xs font-bold text-primary tracking-tight">{appLanguage === 'ms' ? 'Pilih Bahasa Soft Copy:' : 'Choose Soft Copy Language:'}</p>
                   <div className="flex gap-2">
                     {['Melayu', 'English'].map(lang => (
                       <button 
@@ -141,12 +141,12 @@ export function ResumeFormFieldsView() {
                   state.addons.includes('Cover Letter') ? "bg-primary text-white shadow-md font-bold" : "bg-surface font-semibold text-text"
                 )}
               >
-                <span className="text-sm sm:text-[15px]">Cover Letter</span>
+                <span className="text-sm sm:text-base">Cover Letter</span>
                 <CheckCircle2 className={cn("w-5 h-5 transition-opacity", state.addons.includes('Cover Letter') ? "opacity-100" : "opacity-20")} />
               </button>
               {state.addons.includes('Cover Letter') && isMulti && (
                 <div className="p-4 bg-surface rounded-xl border border-primary/20 space-y-3 shadow-inner">
-                  <p className="text-[11px] font-bold text-primary tracking-tight">{appLanguage === 'ms' ? 'Pilih Bahasa Cover Letter:' : 'Choose Cover Letter Language:'}</p>
+                  <p className="text-xs font-bold text-primary tracking-tight">{appLanguage === 'ms' ? 'Pilih Bahasa Cover Letter:' : 'Choose Cover Letter Language:'}</p>
                   <div className="flex gap-2">
                     {['Melayu', 'English'].map(lang => (
                       <button 
@@ -174,7 +174,7 @@ export function ResumeFormFieldsView() {
                     state.addons.includes('Soft Copy Dua Bahasa') ? "bg-primary text-white shadow-md font-bold" : "bg-surface font-semibold text-text"
                   )}
                 >
-                  <span className="text-sm sm:text-[15px]">Soft Copy Dua Bahasa</span>
+                  <span className="text-sm sm:text-base">Soft Copy Dua Bahasa</span>
                   <CheckCircle2 className={cn("w-5 h-5 transition-opacity", state.addons.includes('Soft Copy Dua Bahasa') ? "opacity-100" : "opacity-20")} />
               </button>
             )}
@@ -188,7 +188,7 @@ export function ResumeFormFieldsView() {
                   state.addons.includes('Custom') ? "bg-primary text-white shadow-md font-bold" : "bg-surface font-semibold text-text"
                 )}
               >
-                <span className="text-sm sm:text-[15px]">Custom</span>
+                <span className="text-sm sm:text-base">Custom</span>
                 <CheckCircle2 className={cn("w-5 h-5 transition-opacity", state.addons.includes('Custom') ? "opacity-100" : "opacity-20")} />
               </button>
               {state.addons.includes('Custom') && (
@@ -198,7 +198,7 @@ export function ResumeFormFieldsView() {
                     value={state.customDoc} 
                     onChange={(e) => setState(prev => ({...prev, customDoc: e.target.value}))}
                     placeholder={appLanguage === 'ms' ? 'Apa yang anda perlukan?' : 'What do you need?'}
-                    className="w-full bg-surface border-2 border-transparent rounded-[12px] h-[46px] px-4 focus:outline-none focus:border-primary font-bold text-text shadow-inner transition-all select-text text-sm"
+                    className="w-full bg-surface border-2 border-transparent rounded-xl h-[46px] px-4 focus:outline-none focus:border-primary font-bold text-text shadow-inner transition-all select-text text-sm"
                   />
                 </div>
               )}
@@ -209,12 +209,12 @@ export function ResumeFormFieldsView() {
       )}
 
       <section>
-        <label className="block text-[11px] font-black uppercase tracking-widest mb-2 text-gray-400">Template Info</label>
+        <label className="block text-xs font-black uppercase tracking-widest mb-2 text-gray-400">Template Info</label>
         <input 
           type="text" 
           value={state.template}
           onChange={(e) => setState(prev => ({...prev, template: e.target.value}))}
-          className="w-full bg-surface border-2 border-transparent rounded-[12px] h-[46px] px-4 focus:outline-none focus:border-primary font-bold uppercase tracking-wider text-text shadow-inner transition-all select-text text-sm" 
+          className="w-full bg-surface border-2 border-transparent rounded-xl h-[46px] px-4 focus:outline-none focus:border-primary font-bold uppercase tracking-wider text-text shadow-inner transition-all select-text text-sm" 
           placeholder="CTH: MODERN 01" 
         />
       </section>

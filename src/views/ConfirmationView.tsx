@@ -38,7 +38,7 @@ export function ConfirmationView({ onGenerated }: { onGenerated: () => void }) {
     'super': 'Super Urgent',
     'urgent': 'Urgent',
     'semi': 'Semi Urgent',
-    'noturgent': 'Tak Urgent'
+    'noturgent': appLanguage === 'ms' ? 'Tak Urgent' : 'Not Urgent'
   };
   const urgencyLabel = urgencyLabels[state.urgency || ''] || '';
   
@@ -120,13 +120,13 @@ export function ConfirmationView({ onGenerated }: { onGenerated: () => void }) {
 
         <div className="pt-4 border-t border-gray-200/80 bg-white/50 -mx-4 -mb-4 p-4 rounded-b-[20px]">
             <p className="text-[10px] font-black text-subtext uppercase tracking-widest mb-1">{appLanguage === 'ms' ? 'Anggaran Siap' : 'Estimated Time'}</p>
-            <p className="text-[18px] sm:text-[20px] font-black text-text tracking-tighter leading-tight">{dlInfo.formatted}</p>
+            <p className="text-lg sm:text-xl font-black text-text tracking-tighter leading-tight">{dlInfo.formatted}</p>
         </div>
       </div>
 
       <div className="relative">
         <div 
-          className="w-full pt-[30px] pb-3 px-3 pr-11 rounded-[12px] bg-white border border-gray-100 shadow-sm text-[13px] text-text font-normal leading-relaxed select-text"
+          className="w-full pt-[30px] pb-3 px-3 pr-11 rounded-xl bg-white border border-gray-100 shadow-sm text-sm text-text font-normal leading-relaxed select-text"
           style={{ minHeight: '65px' }}
         >
           {priceMsg}
@@ -145,7 +145,7 @@ export function ConfirmationView({ onGenerated }: { onGenerated: () => void }) {
       <div className="space-y-2.5">
         <button 
           onClick={handleGenerate} 
-          className="w-full h-[58px] bg-primary text-white font-black text-[15px] sm:text-[16px] rounded-[16px] shadow-lg shadow-primary/20 hover:shadow-primary/30 active:scale-[0.98] transition-all"
+          className="w-full h-[58px] bg-primary text-white font-black text-base sm:text-base rounded-2xl shadow-lg shadow-primary/20 hover:shadow-primary/30 active:scale-[0.98] transition-all"
         >
           Submit & Copy
         </button>
