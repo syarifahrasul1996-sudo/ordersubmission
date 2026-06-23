@@ -39,6 +39,7 @@ export interface AppState {
   isDueInvalid?: boolean;
   dashboardFilterMonth?: string;
   dashboardFilterYear?: string;
+  lastModifiedLocally?: number;
 }
 
 export type ViewType = 'home' | 'resume-type' | 'resume-form-fields' | 'general-form' | 'confirmation' | 'output' | 'history' | 'customer-info' | 'dashboard' | 'contacts-sync';
