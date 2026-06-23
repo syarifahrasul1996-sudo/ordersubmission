@@ -41,6 +41,7 @@ export interface AppState {
   dashboardFilterMonth?: string;
   dashboardFilterYear?: string;
   lastModifiedLocally?: number;
+  isDeleted?: boolean;
 }
 
 export type ViewType = 'home' | 'resume-type' | 'resume-form-fields' | 'general-form' | 'confirmation' | 'output' | 'history' | 'customer-info' | 'dashboard' | 'contacts-sync';
@@ -88,4 +89,5 @@ export const INITIAL_STATE: AppState = {
   isDueInvalid: false,
   dashboardFilterMonth: 'all',
   dashboardFilterYear: new Date().getFullYear().toString(),
+  isDeleted: false,
 };

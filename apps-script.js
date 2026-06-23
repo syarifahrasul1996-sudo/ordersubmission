@@ -108,9 +108,60 @@ function doGet(e) {
     return searchDatabase(e);
   }
 
+  if (action === "delete_order") {
+    return deleteOrder(e);
+  }
+
   return ContentService
     .createTextOutput("OK")
     .setMimeType(ContentService.MimeType.TEXT);
+}
+
+function deleteOrder(e) {
+  var spreadsheetId = e.parameter.spreadsheetId;
+  var orderId = e.parameter.orderId;
+  var callback = e.parameter.callback;
+
+  try {
+    if (!spreadsheetId) {
+      return jsonOrJsonp(callback, {
+        status: "error",
+        message: "Missing spreadsheetId"
+      });
+    }
+
+    if (!orderId) {
+      return jsonOrJsonp(callback, {
+        status: "error",
+        message: "Missing orderId"
+      });
+    }
+
+    var ss = SpreadsheetApp.openById(spreadsheetId);
+    var sheets = ss.getSheets();
+    var deleted = false;
+
+    for (var s = 0; s < sheets.length; s++) {
+      var sheet = sheets[s];
+      var row = findRowByOrderId(sheet, orderId);
+      if (row) {
+        sheet.deleteRow(row);
+        deleted = true;
+        break;
+      }
+    }
+
+    return jsonOrJsonp(callback, {
+      status: "success",
+      deleted: deleted
+    });
+
+  } catch (error) {
+    return jsonOrJsonp(callback, {
+      status: "error",
+      message: error.toString()
+    });
+  }
 }
 
 function syncRecentOrders(e) {
@@ -267,17 +318,47 @@ function ensureSheetSetup(sheet) {
   sheet.setFrozenRows(1);
 }
 
-function findRowByOrderId(sheet, orderId) {
+function findRowByOrderId(sheet, orderId, optionalContent) {
   var lastRow = sheet.getLastRow();
-
   if (lastRow < 2) return null;
 
-  var values = sheet.getRange(2, 11, lastRow - 1, 1).getValues();
+  var range = sheet.getRange(2, 1, lastRow - 1, 11);
+  var values = range.getValues();
 
+  // 1. Try exact ID match in column K (index 10)
   for (var i = 0; i < values.length; i++) {
-    if (String(values[i][0] || "").trim() === String(orderId).trim()) {
+    if (String(values[i][10] || "").trim() === String(orderId).trim()) {
       return i + 2;
     }
+  }
+
+  // 2. If ID starts with SYNC- and we didn't find it, try matching by content
+  // SYNC-Name-Phone-Due
+  if (String(orderId).indexOf("SYNC-") === 0) {
+    for (var j = 0; j < values.length; j++) {
+      var row = values[j];
+      // Compare Name (col 2), Phone (col 3), Due (col 10)
+      // Note: your generated ID logic: `SYNC-${orderData.name || 'UNKNOWN'}-${orderData.phone || ''}-${orderData.due || ''}`
+      var generatedForThisRow = ("SYNC-" + (row[1] || "UNKNOWN") + "-" + (row[2] || "") + "-" + (row[9] || ""))
+        .replace(/\s+/g, "-")
+        .replace(/[^a-zA-Z0-9-]/g, "");
+      
+      if (generatedForThisRow === orderId) {
+        return j + 2;
+      }
+    }
+  }
+
+  // 3. Last resort: if optionalContent is provided, try matching by that
+  if (optionalContent && optionalContent.name) {
+     for (var k = 0; k < values.length; k++) {
+       var r = values[k];
+       if (String(r[1]).trim() === String(optionalContent.name).trim() && 
+           String(r[2]).trim() === String(optionalContent.phone || "").trim() &&
+           String(r[9]).trim() === String(optionalContent.due || "").trim()) {
+         return k + 2;
+       }
+     }
   }
 
   return null;

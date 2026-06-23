@@ -600,9 +600,20 @@ setInfo(updatedInfo);
           'Content-Type': 'text/plain;charset=utf-8'
         },
         body: JSON.stringify(payload)
+      }).then(() => {
+        // Since it's no-cors, we can't be 100% sure, but if it resolved, it's likely better than 'saved_locally'
+        updateOrderHistoryState({
+          syncStatus: 'synced',
+          syncLastSuccess: Date.now(),
+          lastModifiedLocally: Date.now()
+        });
       }).catch(fetchErr => {
         try {
           addToOfflineQueue(payload, resolvedWebhookUrl, orderId);
+          updateOrderHistoryState({
+            syncStatus: 'syncing',
+            syncLastAttempt: Date.now()
+          });
         } catch (e) {
           console.warn('Failed to add to offline queue after fetch error', e);
         }

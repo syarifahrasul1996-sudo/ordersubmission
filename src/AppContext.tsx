@@ -35,6 +35,7 @@ interface AppContextType {
   lastSyncTime: number | null;
   syncOfflineQueue: () => Promise<void>;
   addToOfflineQueue: (payload: any, webhookUrl: string, orderId: string) => void;
+  deletedOrderIds: string[];
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -109,6 +110,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return [];
     }
   });
+
+  const [deletedOrderIds, setDeletedOrderIds] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('deletedOrderIds');
+      const parsed = saved ? JSON.parse(saved) : [];
+      return Array.isArray(parsed) ? parsed.slice(-100) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  useEffect(() => {
+    localStorage.setItem('deletedOrderIds', JSON.stringify(deletedOrderIds));
+  }, [deletedOrderIds]);
 
   const [drafts, setDrafts] = useState<OrderHistoryItem[]>(() => {
     try {
@@ -558,7 +573,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const newItem: OrderHistoryItem = {
       id: currentId,
       timestamp: currentTimestamp!,
-      state: finalState,
+      state: { ...finalState, syncStatus: 'saved_locally' },
       messages: [...messages]
     };
     
@@ -615,7 +630,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
   };
 
   const deleteOrderFromHistory = (id: string) => {
-    setHistory(prev => prev.filter(item => item.id !== id));
+    const itemToDelete = history.find(h => h.id === id);
+    if (itemToDelete) {
+      setDeletedOrderIds(prev => {
+        const idsToBlacklist = [itemToDelete.id];
+        if (itemToDelete.state?.orderId) {
+          idsToBlacklist.push(itemToDelete.state.orderId);
+        }
+        const next = [...prev, ...idsToBlacklist];
+        return [...new Set(next)].slice(-100);
+      });
+      
+      // Mark as deleted in state to persist the status
+      setHistory(prev => prev.map(item => 
+        item.id === id 
+          ? { ...item, state: { ...item.state, isDeleted: true, lastModifiedLocally: Date.now() } } 
+          : item
+      ));
+    }
+
     clearPushNotifications(id).catch(console.warn);
   };
 
@@ -720,7 +753,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AppContext.Provider value={{ state, setState, viewStack, pushView, startNewOrder, popView, goHome, reset, generatedMessages, setGeneratedMessages, history, setHistory, saveOrderToHistory, updateOrderHistoryState, updateSpecificHistoryItem, deleteOrderFromHistory, clearHistory, loadOrder, drafts, saveAsDraft, deleteDraft, loadDraft, theme, toggleTheme, appLanguage, toggleLanguage, isOnline, isSyncing, queueSize, lastSyncTime, syncOfflineQueue, addToOfflineQueue }}>
+    <AppContext.Provider value={{ state, setState, viewStack, pushView, startNewOrder, popView, goHome, reset, generatedMessages, setGeneratedMessages, history, setHistory, saveOrderToHistory, updateOrderHistoryState, updateSpecificHistoryItem, deleteOrderFromHistory, clearHistory, loadOrder, drafts, saveAsDraft, deleteDraft, loadDraft, theme, toggleTheme, appLanguage, toggleLanguage, isOnline, isSyncing, queueSize, lastSyncTime, syncOfflineQueue, addToOfflineQueue, deletedOrderIds }}>
       {children}
     </AppContext.Provider>
   );

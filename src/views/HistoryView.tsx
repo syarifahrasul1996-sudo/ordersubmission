@@ -90,7 +90,8 @@ export function HistoryView() {
     pushView,
     appLanguage,
     updateSpecificHistoryItem,
-    updateOrderHistoryState
+    updateOrderHistoryState,
+    deletedOrderIds
   } = useAppContext();
   const [currentTime, setCurrentTime] = useState(() => Date.now());
   const [confirmAction, setConfirmAction] = useState<{ title?: string; message: string; onConfirm: () => void } | null>(null);
@@ -203,6 +204,7 @@ export function HistoryView() {
 
   const localizedHistoryItems = useMemo(() => {
     return history.filter(Boolean).filter((item) => {
+      if (item.state?.isDeleted) return false;
       if (deliveryFilter === 'delivered' && !item.state?.isDelivered) return false;
       if (deliveryFilter === 'pending' && item.state?.isDelivered) return false;
       
@@ -338,7 +340,7 @@ export function HistoryView() {
 
     // Use full history for stats, not just filtered results
     history.forEach(item => {
-      if (item.state?.isDelivered) return;
+      if (item.state?.isDeleted || item.state?.isDelivered) return;
       
       const due = parseDueTimestamp(item.state?.dueTimestamp || item.timestamp);
       if (!due) return;
@@ -598,7 +600,12 @@ export function HistoryView() {
             h => h.state?.orderId === generatedOrderId
           );
 
-         const dueTs = parseDueTimestamp(orderData.due);
+          // If this order was recently deleted locally, skip it during sync to prevent it from reappearing
+          if (deletedOrderIds.includes(generatedOrderId)) {
+            continue;
+          }
+
+          const dueTs = parseDueTimestamp(orderData.due);
 
           const newState = {
             isDelivered: !!orderData.isDelivered,
@@ -616,6 +623,8 @@ export function HistoryView() {
             googleSheetLink: orderData.link,
             orderId: generatedOrderId,
             dueTimestamp: dueTs,
+            syncStatus: 'synced' as const,
+            syncLastSuccess: currentNow,
             mainType:
               orderData.order === 'Resume'
                 ? 'Resume'
@@ -627,10 +636,21 @@ export function HistoryView() {
 
           if (existingIdx !== -1) {
             const existingItem = existingHistory[existingIdx];
-            // If the local item was modified within the last 15 seconds, skip overwriting it to prevent stale remote data from clobbering it.
-            const isRecentlyModified = existingItem.state?.lastModifiedLocally && (currentNow - existingItem.state.lastModifiedLocally < 15000);
 
-            if (!isRecentlyModified) {
+            // Never revive an item that was marked as deleted locally
+            if (existingItem.state?.isDeleted) {
+              continue;
+            }
+
+            // Protect local edits that haven't been confirmed as synced
+            const isUnsynced = existingItem.state?.syncStatus === 'saved_locally' || existingItem.state?.syncStatus === 'syncing';
+            
+            // If the local item was modified within the last 10 minutes, skip overwriting it to prevent stale remote data from clobbering it.
+            const isRecentlyModified =
+              existingItem.state?.lastModifiedLocally &&
+              currentNow - existingItem.state.lastModifiedLocally < 600000;
+
+            if (!isUnsynced && !isRecentlyModified) {
               existingHistory[existingIdx] = {
                 ...existingItem,
                 state: {
@@ -642,7 +662,7 @@ export function HistoryView() {
             }
           } else {
             existingHistory.push({
-              id: 'synced_' + Math.random().toString(36).substr(2, 9),
+              id: generatedOrderId,
               timestamp: currentNow,
               state: newState,
               messages: []
@@ -767,12 +787,20 @@ export function HistoryView() {
             const data = await jsonpRequest(url, callbackName);
 
             if (data.status === 'success' && Array.isArray(data.orders)) {
-              const annotated = data.orders.map((o: any) => ({
-                ...o,
-                sheetName: sheet.year,
-                spreadsheetId: sId,
-                scriptUrl: sUrl
-              }));
+              const annotated = data.orders.map((o: any) => {
+                const genId = o.orderId || `SYNC-${o.name || 'UNKNOWN'}-${o.phone || ''}-${o.due || ''}`
+                   .replace(/\s+/g, '-')
+                   .replace(/[^a-zA-Z0-9-]/g, '');
+                return {
+                  ...o,
+                  generatedId: genId,
+                  sheetName: sheet.year,
+                  spreadsheetId: sId,
+                  scriptUrl: sUrl
+                };
+              }).filter((o: any) => {
+                return !deletedOrderIds.includes(o.generatedId) && !deletedOrderIds.includes(o.orderId);
+              });
               allMatchedOrders.push(...annotated);
             } else {
               errors.push(`${sheet.year}: ${data.message || 'Error'}`);
@@ -812,7 +840,7 @@ export function HistoryView() {
   const handleLoadRemoteOrder = (orderData: any) => {
     const generatedOrderId =
       orderData.orderId ||
-      `REMOTE-${orderData.name || 'UNKNOWN'}-${orderData.phone || ''}-${orderData.due || ''}`
+      `SYNC-${orderData.name || 'UNKNOWN'}-${orderData.phone || ''}-${orderData.due || ''}`
         .replace(/\s+/g, '-')
         .replace(/[^a-zA-Z0-9-]/g, '');
 
@@ -1042,7 +1070,7 @@ export function HistoryView() {
         </div>
         {activeTab === 'local' && (
           <div className="space-y-4">
-            {history.length === 0 ? (
+            {history.filter(item => !item.state?.isDeleted).length === 0 ? (
               <div className="flex flex-col items-center justify-center py-20 text-subtext space-y-4">
                 <Clock className="w-16 h-16 opacity-50" />
                 <p className="font-bold">
@@ -1846,7 +1874,7 @@ export function HistoryView() {
 
             {remoteResults.map((item, idx) => {
               const isDelivered = !!item.isDelivered;
-              const orderId = item.orderId || `REMOTE-${idx}`;
+              const orderId = item.orderId || item.generatedId || `SYNC-TMP-${idx}`;
 
               return (
                 <div
