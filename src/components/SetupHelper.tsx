@@ -378,13 +378,13 @@ function doOptions(e) {
 
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-surface w-full max-w-2xl rounded-[24px] shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
+      <div className="bg-surface w-full max-w-2xl rounded-3xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
         <div className="flex items-center justify-between p-6 border-b border-gray-100/10">
           <div className="flex items-center space-x-3">
             <div className="w-10 h-10 bg-primary/10 rounded-full flex items-center justify-center">
               <Code className="w-5 h-5 text-primary" />
             </div>
-            <h2 className="text-[18px] font-bold text-text">
+            <h2 className="text-lg font-bold text-text">
               {appLanguage === 'ms' ? 'Persediaan Google Apps Script' : 'Google Apps Script Setup'}
             </h2>
           </div>
@@ -398,10 +398,10 @@ function doOptions(e) {
         
         <div className="p-6 overflow-y-auto w-full flex-1 space-y-6">
           <div className="bg-blue-50/50 p-4 rounded-xl border border-blue-100 space-y-3">
-            <h3 className="font-bold text-blue-900 text-[15px]">
+            <h3 className="font-bold text-blue-900 text-base">
               {appLanguage === 'ms' ? 'Mengapa data tidak masuk ke sheet?' : 'Why is data not entering the sheet?'}
             </h3>
-            <p className="text-[14px] text-blue-800 leading-relaxed">
+            <p className="text-sm text-blue-800 leading-relaxed">
               {appLanguage === 'ms' 
                 ? 'Walaupun sambungan berjaya, web app URL anda mungkin menggunakan script lama yang tidak menyokong parameter ID spreadsheet atau sheet tab dinamis (bulan ini). Sila ikuti langkah di bawah untuk mengemas kini script anda.'
                 : 'Even though the connection succeeds, your current web app URL might be using an old script that does not read the provided spreadsheet ID or dynamically create monthly tabs. Please replace your script with the code below.'}
@@ -410,29 +410,29 @@ function doOptions(e) {
 
           <div className="space-y-4">
             <div className="flex items-center justify-between">
-              <h3 className="font-bold text-text text-[15px]">
+              <h3 className="font-bold text-text text-base">
                 {appLanguage === 'ms' ? 'Langkah 1: Salin Kod (Copy Code)' : 'Step 1: Copy Code'}
               </h3>
               <button
                 onClick={copyToClipboard}
-                className="flex items-center space-x-2 px-4 py-2 bg-primary/10 text-primary font-bold text-[13px] rounded-lg hover:bg-primary/20 transition-colors"
+                className="flex items-center space-x-2 px-4 py-2 bg-primary/10 text-primary font-bold text-sm rounded-lg hover:bg-primary/20 transition-colors"
               >
                 {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
                 <span>{appLanguage === 'ms' ? (copied ? 'Tersalin!' : 'Salin Kod') : (copied ? 'Copied!' : 'Copy Code')}</span>
               </button>
             </div>
             <div className="bg-gray-900 rounded-xl p-4 overflow-x-auto">
-              <pre className="text-[12px] font-mono text-green-400 leading-relaxed">
+              <pre className="text-xs font-mono text-green-400 leading-relaxed">
                 {scriptCode}
               </pre>
             </div>
           </div>
           
           <div className="space-y-2">
-            <h3 className="font-bold text-text text-[15px]">
+            <h3 className="font-bold text-text text-base">
               {appLanguage === 'ms' ? 'Langkah 2: Kemas Kini (Update Web App)' : 'Step 2: Update Web App'}
             </h3>
-            <ul className="list-decimal pl-5 space-y-2 text-[14px] text-subtext leading-relaxed">
+            <ul className="list-decimal pl-5 space-y-2 text-sm text-subtext leading-relaxed">
               <li>{appLanguage === 'ms' ? 'Pergi ke ' : 'Go to '} <strong>Extensions &gt; Apps Script</strong>.</li>
               <li>{appLanguage === 'ms' ? 'Gantikan semua kod lama dengan kod di atas.' : 'Replace all old code with the code above.'}</li>
               <li className="text-orange-600 dark:text-orange-400 font-bold bg-orange-50 dark:bg-orange-900/20 p-2 rounded-lg">

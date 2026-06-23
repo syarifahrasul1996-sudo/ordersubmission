@@ -82,7 +82,7 @@ export function SettingsDropdown() {
         <div className="absolute right-0 mt-2 w-64 bg-white dark:bg-[#1C1C1E] border border-gray-100 dark:border-gray-800 rounded-2xl shadow-xl p-4 shrink-0 z-50 text-xs text-text animate-fade-in-up">
           {/* Header */}
           <div className="flex items-center justify-between pb-2.5 border-b border-gray-100 dark:border-gray-800">
-            <span className="font-bold text-[13px] tracking-tight text-text">
+            <span className="font-bold text-sm tracking-tight text-text">
               {appLanguage === 'ms' ? 'Tetapan & Sistem' : 'Settings & Sync'}
             </span>
             {hasPending && isOnline && (
@@ -180,7 +180,7 @@ export function SettingsDropdown() {
             <div className="flex justify-between items-center py-0.5">
               <span className="text-subtext">{appLanguage === 'ms' ? 'Barisan Penghantaran' : 'Outbox Queue'}</span>
               <span className={cn(
-                "px-2.5 py-0.5 rounded-full font-mono text-[11px] font-bold",
+                "px-2.5 py-0.5 rounded-full font-mono text-xs font-bold",
                 hasPending 
                   ? "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300" 
                   : "bg-surface text-subtext"
@@ -214,7 +214,7 @@ export function SettingsDropdown() {
                   setIsOpen(false);
                   pushView('contacts-sync');
                 }}
-                className="w-full flex items-center justify-center gap-1.5 bg-primary text-white py-2 rounded-xl font-bold text-[11px] hover:bg-primary-hover active:scale-[0.98] transition-all cursor-pointer"
+                className="w-full flex items-center justify-center gap-1.5 bg-primary text-white py-2 rounded-xl font-bold text-xs hover:bg-primary-hover active:scale-[0.98] transition-all cursor-pointer"
               >
                 <FileDown className="w-3.5 h-3.5" />
                 {appLanguage === 'ms' ? 'Export Contacts (CSV)' : 'Export Contacts (CSV)'}

@@ -41,7 +41,7 @@ export function Header() {
         <h1 className="text-lg sm:text-xl font-black text-text tracking-tight truncate">{title}</h1>
       </div>
       {showCounter && (
-        <div aria-live="polite" className="bg-primary text-white px-3.5 py-1.5 rounded-full text-[11px] font-black shadow-lg flex items-center">
+        <div aria-live="polite" className="bg-primary text-white px-3.5 py-1.5 rounded-full text-xs font-black shadow-lg flex items-center">
           <Clock className="w-3.5 h-3.5 mr-1" />
           +{state.extraHours}h
         </div>

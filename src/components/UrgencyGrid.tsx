@@ -30,8 +30,8 @@ export function UrgencyGrid({ mode }: UrgencyGridProps) {
               : "bg-surface text-text hover:bg-gray-200/50 dark:hover:bg-gray-800/40"
           )}
         >
-          <span className="font-black text-[14px] sm:text-[15px]">Super Urgent</span>
-          <span className={cn("px-2.5 py-1 rounded-lg text-[9px] sm:text-[10px] font-black leading-none", state.urgency === 'super' ? "bg-white/20" : "bg-white/60")}>{appLanguage === 'ms' ? '1 Jam' : '1 Hour'}</span>
+          <span className="font-black text-sm sm:text-base">Super Urgent</span>
+          <span className={cn("px-2.5 py-1 rounded-lg text-[10px] sm:text-[10px] font-black leading-none", state.urgency === 'super' ? "bg-white/20" : "bg-white/60")}>{appLanguage === 'ms' ? '1 Jam' : '1 Hour'}</span>
         </button>
         <button 
           onClick={() => handleSelect('urgent', 24, 'Urgent')}
@@ -42,17 +42,17 @@ export function UrgencyGrid({ mode }: UrgencyGridProps) {
               : "bg-surface text-text hover:bg-gray-200/50 dark:hover:bg-gray-800/40"
           )}
         >
-          <span className="font-black text-[14px] sm:text-[15px]">Urgent</span>
-          <span className={cn("px-2.5 py-1 rounded-lg text-[9px] sm:text-[10px] font-black leading-none", state.urgency === 'urgent' ? "bg-white/20" : "bg-white/60")}>{appLanguage === 'ms' ? '24 Jam' : '24 Hours'}</span>
+          <span className="font-black text-sm sm:text-base">Urgent</span>
+          <span className={cn("px-2.5 py-1 rounded-lg text-[10px] sm:text-[10px] font-black leading-none", state.urgency === 'urgent' ? "bg-white/20" : "bg-white/60")}>{appLanguage === 'ms' ? '24 Jam' : '24 Hours'}</span>
         </button>
       </div>
     );
   }
 
   const configs = {
-    new: [ {id:'super', h:2, l:'Super', s: appLanguage === 'ms' ? '2 Jam' : '2 Hours'}, {id:'urgent', h:24, l:'Urgent', s: appLanguage === 'ms' ? '24 Jam' : '24 Hours'}, {id:'semi', h:48, l:'Semi', s: appLanguage === 'ms' ? '2 Hari' : '2 Days'}, {id:'noturgent', h:72, l:'Normal', s: appLanguage === 'ms' ? '3 Hari' : '3 Days'} ],
-    surat: [ {id:'super', h:1, l:'Super', s: appLanguage === 'ms' ? '1 Jam' : '1 Hour'}, {id:'urgent', h:24, l:'Urgent', s: appLanguage === 'ms' ? '24 Jam' : '24 Hours'}, {id:'semi', h:48, l:'Semi', s: appLanguage === 'ms' ? '2 Hari' : '2 Days'}, {id:'noturgent', h:72, l:'Normal', s: appLanguage === 'ms' ? '3 Hari' : '3 Days'} ],
-    'lain-lain': [ {id:'super', h:1, l:'Super', s: appLanguage === 'ms' ? '1 Jam' : '1 Hour'}, {id:'urgent', h:24, l:'Urgent', s: appLanguage === 'ms' ? '24 Jam' : '24 Hours'}, {id:'semi', h:48, l:'Semi', s: appLanguage === 'ms' ? '2 Hari' : '2 Days'}, {id:'noturgent', h:72, l:'Normal', s: appLanguage === 'ms' ? '3 Hari' : '3 Days'} ]
+    new: [ {id:'super', h:2, l:'Super', s: appLanguage === 'ms' ? '2 Jam' : '2 Hours'}, {id:'urgent', h:24, l:'Urgent', s: appLanguage === 'ms' ? '24 Jam' : '24 Hours'}, {id:'semi', h:48, l:'Semi', s: appLanguage === 'ms' ? '2 Hari' : '2 Days'}, {id:'noturgent', h:72, l: appLanguage === 'ms' ? 'Tak Urgent' : 'Not Urgent', s: appLanguage === 'ms' ? '3 Hari' : '3 Days'} ],
+    surat: [ {id:'super', h:1, l:'Super', s: appLanguage === 'ms' ? '1 Jam' : '1 Hour'}, {id:'urgent', h:24, l:'Urgent', s: appLanguage === 'ms' ? '24 Jam' : '24 Hours'}, {id:'semi', h:48, l:'Semi', s: appLanguage === 'ms' ? '2 Hari' : '2 Days'}, {id:'noturgent', h:72, l: appLanguage === 'ms' ? 'Tak Urgent' : 'Not Urgent', s: appLanguage === 'ms' ? '3 Hari' : '3 Days'} ],
+    'lain-lain': [ {id:'super', h:1, l:'Super', s: appLanguage === 'ms' ? '1 Jam' : '1 Hour'}, {id:'urgent', h:24, l:'Urgent', s: appLanguage === 'ms' ? '24 Jam' : '24 Hours'}, {id:'semi', h:48, l:'Semi', s: appLanguage === 'ms' ? '2 Hari' : '2 Days'}, {id:'noturgent', h:72, l: appLanguage === 'ms' ? 'Tak Urgent' : 'Not Urgent', s: appLanguage === 'ms' ? '3 Hari' : '3 Days'} ]
   };
 
   const options = configs[mode];
@@ -90,8 +90,8 @@ export function UrgencyGrid({ mode }: UrgencyGridProps) {
               shadowClass
             )}
           >
-            <span className="font-black text-[14px] sm:text-[15px] leading-tight">{opt.l}</span>
-            <span className="text-[9px] sm:text-[10px] font-black opacity-60 uppercase tracking-tight mt-0.5">{opt.s}</span>
+            <span className="font-black text-sm sm:text-base leading-tight">{opt.l}</span>
+            <span className="text-[10px] sm:text-[10px] font-black opacity-60 uppercase tracking-tight mt-0.5">{opt.s}</span>
           </button>
         )
       })}

@@ -33,7 +33,7 @@ export function FloatingControls() {
         disabled={!isReady}
         onClick={() => pushView('confirmation')}
         className={cn(
-          "flex-1 h-12 sm:h-14 font-black text-[15px] sm:text-[17px] rounded-[14px] transition-all active:scale-[0.98]",
+          "flex-1 h-12 sm:h-14 font-black text-base sm:text-[17px] rounded-[14px] transition-all active:scale-[0.98]",
           isReady ? "bg-primary text-white shadow-md" : "bg-disabled text-white opacity-50"
         )}
       >
