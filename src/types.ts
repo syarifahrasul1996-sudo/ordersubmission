@@ -31,6 +31,7 @@ export interface AppState {
   orderLink?: string;
   googleSheetLink?: string;
   orderId?: string;
+  price?: number;
   hasThreeHourChecked?: boolean;
   threeHourAlerted?: boolean;
   syncStatus?: 'saved_locally' | 'syncing' | 'synced' | 'failed';

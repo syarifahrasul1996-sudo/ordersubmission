@@ -211,6 +211,7 @@ export function CustomerInfoView() {
       initInfo: state.customerInfo || '',
       initLink: state.googleSheetLink || state.orderLink || '',
       initOrderId,
+      initPrice: state.price !== undefined ? String(state.price) : '',
     };
   }, [state]);
 
@@ -227,6 +228,7 @@ export function CustomerInfoView() {
   const [due, setDue] = useState('');
   const [dueTimestamp, setDueTimestamp] = useState(0);
   const [orderId, setOrderId] = useState('');
+  const [price, setPrice] = useState('');
   const [isAddOnOpen, setIsAddOnOpen] = useState(false);
   const addOnRef = useRef<HTMLDivElement>(null);
 
@@ -495,6 +497,7 @@ Dokumen Dijana Secara Automatik`;
       setDue(initVals.initDue);
       setDueTimestamp(initVals.initDueTimestamp);
       setOrderId(initVals.initOrderId);
+      setPrice(initVals.initPrice);
       setSpreadsheetId(state.spreadsheetId);
 
       // Check if there is unsaved progress to restore
@@ -554,6 +557,7 @@ Dokumen Dijana Secara Automatik`;
         if (data.due !== undefined) setDue(data.due);
         if (data.dueTimestamp !== undefined) setDueTimestamp(data.dueTimestamp);
         if (data.orderId !== undefined) setOrderId(data.orderId);
+        if (data.price !== undefined) setPrice(data.price);
         
         showToastMessage(appLanguage === 'ms' ? 'Kemajuan borang telah dipulihkan!' : 'Form progress restored!');
       }
@@ -585,6 +589,7 @@ Dokumen Dijana Secara Automatik`;
       orderLink: link,
       googleSheetLink: link,
       orderId: orderId,
+      price: price ? parseFloat(price) : undefined,
     }));
     
     if (isDraftSave) {
@@ -628,13 +633,14 @@ Dokumen Dijana Secara Automatik`;
           due,
           dueTimestamp,
           orderId,
+          price,
           savedAt: Date.now()
         };
         localStorage.setItem('customer_form_progress', JSON.stringify(data));
       }, 1000); // 1s debounce to align updates nicely
       return () => clearTimeout(timer);
     }
-  }, [name, phone, info, link, order, template, bahasa, addOn, jenis, due, dueTimestamp, orderId, isActive, showResumeBanner]);
+  }, [name, phone, info, link, order, template, bahasa, addOn, jenis, due, dueTimestamp, orderId, price, isActive, showResumeBanner]);
 
   const handleSaveInfo = async () => {
     if (!name.trim() || !phone.trim()) {
@@ -751,6 +757,7 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
       hasNotified: false,
       orderId: finalOrderId,
       historyId: finalOrderId,
+      price: price ? parseFloat(price) : undefined,
       spreadsheetId: resolvedSpreadsheetId,
       scriptUrl: resolvedWebhookUrl,
       syncStatus: 'syncing',
@@ -774,7 +781,8 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
         jenis,
         due,
         link || "",
-        finalOrderId || ""
+        finalOrderId || "",
+        price ? price.toString() : ""
       ].map(v => v == null ? "" : v);
       
       const monthNamesEn = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -830,7 +838,8 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
         addon: addOn || "",
         jenis: jenis,
         due: due,
-        link: link || ""
+        link: link || "",
+        price: price ? price.toString() : ""
       };
 
       const triggerPostFallback = () => {
@@ -1265,6 +1274,18 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
               </div>
             )}
           </div>
+        </div>
+
+        <div className="space-y-1">
+          <label className="text-xs font-black text-gray-400 ml-1 uppercase tracking-widest">{appLanguage === 'ms' ? 'Harga (RM)' : 'Price (RM)'}</label>
+          <input 
+            type="number"
+            step="0.01"
+            value={price}
+            onChange={(e) => setPrice(e.target.value)}
+            placeholder={appLanguage === 'ms' ? 'Contoh: 50.00' : 'Example: 50.00'}
+            className="w-full h-[46px] bg-surface rounded-xl px-4 font-bold text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all text-sm placeholder:text-gray-300"
+          />
         </div>
 
         <div className="space-y-1">

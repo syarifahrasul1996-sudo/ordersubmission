@@ -104,7 +104,7 @@ function SafeResponsiveContainer({ children }: SafeResponsiveContainerProps) {
 }
 
 export function DashboardView() {
-  const { appLanguage, pushView } = useAppContext();
+  const { appLanguage, pushView, history } = useAppContext();
   
   const [filterYear, setFilterYear] = useState<string>(new Date().getFullYear().toString());
   const [filterMonth, setFilterMonth] = useState<string>('all');
@@ -286,6 +286,7 @@ export function DashboardView() {
     });
 
     let totalOrders = 0;
+    let totalIncome = 0;
     const customers = new Map<string, number>(); 
     const typeCounts = new Map<string, number>();
     const urgencyCounts = new Map<string, number>();
@@ -293,10 +294,29 @@ export function DashboardView() {
     let invalidDatesCount = 0;
     const invalidOrdersList: any[] = [];
 
+    // Create a lookup map for local history prices
+    const historyPrices = new Map<string, number>();
+    history.forEach(item => {
+      if (item.state.price !== undefined && item.state.orderId) {
+        historyPrices.set(item.state.orderId, item.state.price);
+      }
+    });
+
     filteredOrders.forEach(order => {
       // Order ID deduplication
       if (String(order.name || '').trim() !== '') {
         totalOrders++;
+        
+        // Income calculation
+        const orderId = order.orderId;
+        const localPrice = orderId ? historyPrices.get(orderId) : undefined;
+        const remotePrice = parseFloat(order.price || order.harga); // in case backend is updated in future
+        
+        if (!isNaN(remotePrice)) {
+          totalIncome += remotePrice;
+        } else if (localPrice !== undefined) {
+          totalIncome += localPrice;
+        }
       }
 
       // Customer Phone normalization
@@ -403,6 +423,7 @@ export function DashboardView() {
 
     return {
       totalUniqueOrders: totalOrders,
+      totalIncome,
       totalUniqueCustomers,
       repeatCustomers,
       repeatCustomerRate,
@@ -598,25 +619,32 @@ export function DashboardView() {
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="bg-surface border border-gray-100 rounded-2xl p-4 shadow-sm flex flex-col justify-center">
-              <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">{appLanguage === 'ms' ? 'Jumlah Order' : 'Total Orders'}</p>
-              <p className="text-3xl font-black text-text">{stats.totalUniqueOrders}</p>
+          <div className="grid grid-cols-2 gap-3 mb-3">
+            <div className="bg-surface border border-gray-100 rounded-xl p-3 shadow-sm flex flex-col justify-center">
+              <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-0.5 truncate">{appLanguage === 'ms' ? 'Pendapatan (RM)' : 'Total Income (RM)'}</p>
+              <p className="text-2xl font-black text-emerald-600">{stats.totalIncome.toFixed(2)}</p>
             </div>
             
-            <div className="bg-surface border border-gray-100 rounded-2xl p-4 shadow-sm flex flex-col justify-center">
-              <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">{appLanguage === 'ms' ? 'Pelanggan Unik' : 'Unique Customers'}</p>
-              <p className="text-3xl font-black text-text">{stats.totalUniqueCustomers}</p>
+            <div className="bg-surface border border-gray-100 rounded-xl p-3 shadow-sm flex flex-col justify-center">
+              <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-0.5 truncate">{appLanguage === 'ms' ? 'Jumlah Order' : 'Total Orders'}</p>
+              <p className="text-2xl font-black text-text">{stats.totalUniqueOrders}</p>
+            </div>
+          </div>
+            
+          <div className="grid grid-cols-3 gap-3 mb-4">
+            <div className="bg-surface border border-gray-100 rounded-xl p-3 shadow-sm flex flex-col justify-center">
+              <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-0.5 truncate">{appLanguage === 'ms' ? 'Pelanggan Unik' : 'Unique Customers'}</p>
+              <p className="text-2xl font-black text-text">{stats.totalUniqueCustomers}</p>
             </div>
 
-            <div className="bg-surface border border-gray-100 rounded-2xl p-4 shadow-sm flex flex-col justify-center">
-              <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">{appLanguage === 'ms' ? 'Pelanggan Berulang' : 'Repeat Customers'}</p>
-              <p className="text-3xl font-black text-text">{stats.repeatCustomers}</p>
+            <div className="bg-surface border border-gray-100 rounded-xl p-3 shadow-sm flex flex-col justify-center">
+              <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-0.5 truncate">{appLanguage === 'ms' ? 'Berulang' : 'Repeat Customers'}</p>
+              <p className="text-2xl font-black text-text">{stats.repeatCustomers}</p>
             </div>
 
-            <div className="bg-surface border border-gray-100 rounded-2xl p-4 shadow-sm flex flex-col justify-center relative overflow-hidden">
-              <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">{appLanguage === 'ms' ? 'Kadar Ulangan' : 'Repeat Rate'}</p>
-              <p className="text-3xl font-black text-primary">{stats.repeatCustomerRate}%</p>
+            <div className="bg-surface border border-gray-100 rounded-xl p-3 shadow-sm flex flex-col justify-center relative overflow-hidden">
+              <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-0.5 truncate">{appLanguage === 'ms' ? 'Kadar Ulangan' : 'Repeat Rate'}</p>
+              <p className="text-2xl font-black text-primary">{stats.repeatCustomerRate}%</p>
             </div>
           </div>
 

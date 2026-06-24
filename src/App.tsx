@@ -21,6 +21,8 @@ const OthersView = lazy(() => import('./views/OthersView').then(m => ({ default:
 import { BottomNavigation } from './components/BottomNavigation';
 
 
+import { DesktopSidebar } from './components/DesktopSidebar';
+
 function AppContent() {
   const { viewStack } = useAppContext();
   const [showToast, setShowToast] = useState(false);
@@ -44,19 +46,26 @@ function AppContent() {
   const currentView = viewStack[viewStack.length - 1];
 
   return (
-    <div className="flex justify-center w-full select-none bg-black/5 dark:bg-black/40 h-[100dvh] overflow-hidden">
-      <div className="w-full max-w-[500px] bg-background h-full flex flex-col relative shadow-2xl overflow-hidden text-base">
-        <Header />
+    <div className="flex justify-center w-full select-none bg-[#F2F2F7] dark:bg-[#000000] h-[100dvh] overflow-hidden">
+      <div className="w-full md:max-w-4xl lg:max-w-5xl xl:max-w-6xl 2xl:max-w-7xl md:flex-row bg-background h-full flex flex-col relative md:shadow-2xl overflow-hidden text-base md:border-x md:border-gray-200 dark:md:border-zinc-800">
         
-        <main className="flex-1 overflow-y-auto overflow-x-hidden relative">
-          <Suspense fallback={<div className="p-4 text-center">Loading...</div>}>
-            <ViewSection id="view-home" active={currentView === 'home'}>
-              <HomeView />
-            </ViewSection>
-            
-            <ViewSection id="view-resume-type" active={currentView === 'resume-type'}>
-              <ResumeTypeView />
-            </ViewSection>
+        <div className="hidden md:flex flex-col w-64 lg:w-72 bg-surface border-r border-gray-100 dark:border-zinc-800 shrink-0 h-full overflow-y-auto z-10 relative">
+          <DesktopSidebar />
+        </div>
+
+        <div className="flex-1 flex flex-col h-full overflow-hidden relative w-full bg-gray-50/50 dark:bg-black/20">
+          <Header />
+          
+          <main className="flex-1 overflow-y-auto overflow-x-hidden relative flex justify-center">
+            <div className="w-full max-w-4xl h-full relative">
+              <Suspense fallback={<div className="p-4 text-center">Loading...</div>}>
+                <ViewSection id="view-home" active={currentView === 'home'}>
+                  <HomeView />
+                </ViewSection>
+                
+                <ViewSection id="view-resume-type" active={currentView === 'resume-type'}>
+                  <ResumeTypeView />
+                </ViewSection>
             
             <ViewSection id="view-resume-form-fields" active={currentView === 'resume-form-fields'}>
               <ResumeFormFieldsView />
@@ -93,11 +102,15 @@ function AppContent() {
             <ViewSection id="view-others" active={currentView === 'others'}>
               <OthersView />
             </ViewSection>
-          </Suspense>
-        </main>
+              </Suspense>
+            </div>
+          </main>
 
-        <FloatingControls />
-        <BottomNavigation />
+          <FloatingControls />
+          <div className="md:hidden">
+            <BottomNavigation />
+          </div>
+        </div>
       </div>
       <Toast show={showToast} message="BERJAYA DISALIN!" />
     </div>
