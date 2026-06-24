@@ -134,7 +134,6 @@ export function HistoryView() {
   const setPendingTimeFilter = setHistoryPendingTimeFilter;
   const [activeTab, setActiveTab] = useState<'local' | 'remote' | 'drafts' | 'trash'>('local');
   const [searchQuery, setSearchQuery] = useState('');
-  const [localSearchQuery, setLocalSearchQuery] = useState('');
   const [remoteResults, setRemoteResults] = useState<any[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState('');
@@ -224,8 +223,8 @@ export function HistoryView() {
         if (pendingTimeFilter === '3days' && orderDateTs !== day3Ts) return false;
       }
       
-      if (localSearchQuery.trim()) {
-        const query = localSearchQuery.toLowerCase().trim();
+      if (searchQuery.trim()) {
+        const query = searchQuery.toLowerCase().trim();
         const nameMatch = String(item.state?.customerName || '').toLowerCase().includes(query);
         const idMatch = String(item.state?.orderId || '').toLowerCase().includes(query);
         const phoneMatch = String(item.state?.customerPhone || '').toLowerCase().includes(query);
@@ -301,7 +300,31 @@ export function HistoryView() {
         (Number(a.timestamp) || 0)
       );
     });
-  }, [history, deliveryFilter, localSearchQuery, currentTime]);
+  }, [history, deliveryFilter, searchQuery, currentTime]);
+
+  const filteredDrafts = useMemo(() => {
+    if (!searchQuery.trim()) return drafts;
+    const query = searchQuery.toLowerCase().trim();
+    return drafts.filter(draft => {
+      const nameMatch = String(draft.data?.customerName || draft.data?.name || '').toLowerCase().includes(query);
+      const phoneMatch = String(draft.data?.customerPhone || draft.data?.phone || '').toLowerCase().includes(query);
+      const typeMatch = String(draft.type || '').toLowerCase().includes(query);
+      const orderMatch = String(draft.data?.mainType || '').toLowerCase().includes(query);
+      return nameMatch || phoneMatch || typeMatch || orderMatch;
+    });
+  }, [drafts, searchQuery]);
+
+  const filteredTrash = useMemo(() => {
+    const deletedItems = history.filter(item => item?.state?.isDeleted);
+    if (!searchQuery.trim()) return deletedItems;
+    const query = searchQuery.toLowerCase().trim();
+    return deletedItems.filter(item => {
+      const nameMatch = String(item.state?.customerName || item.state?.name || '').toLowerCase().includes(query);
+      const idMatch = String(item.state?.orderId || '').toLowerCase().includes(query);
+      const phoneMatch = String(item.state?.customerPhone || '').toLowerCase().includes(query);
+      return nameMatch || idMatch || phoneMatch;
+    });
+  }, [history, searchQuery]);
 
   const pendingStats = useMemo(() => {
     const now = new Date(currentTime);
@@ -1282,6 +1305,57 @@ export function HistoryView() {
       </div>
 
       <div className="p-4 sm:p-6 space-y-4">
+        {/* Unified Search Bar */}
+        <div className="flex gap-2 mb-2">
+          <div className="relative flex-1 group">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  if (activeTab === 'remote') {
+                    handleRemoteSearch();
+                  } else {
+                    // Optional: maybe auto-switch to remote if searching? 
+                    // For now, just allow filtering local.
+                  }
+                }
+              }}
+              placeholder={appLanguage === 'ms' ? 'Cari nama, Order ID, atau no. telefon...' : 'Search name, Order ID, or phone...'}
+              className="w-full h-11 bg-gray-100/80 dark:bg-zinc-900/50 rounded-xl pl-10 pr-10 font-bold text-text border border-transparent outline-none focus:bg-white dark:focus:bg-zinc-900 focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all text-[11px] sm:text-xs placeholder:text-gray-400 placeholder:font-medium"
+            />
+            <Search className="w-4 h-4 text-subtext/75 absolute left-3.5 top-3.5" />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-3.5 top-3 w-5 h-5 rounded-full bg-gray-200 dark:bg-zinc-800 hover:bg-gray-300 dark:hover:bg-zinc-700 text-subtext flex items-center justify-center transition-colors"
+              >
+                <X className="w-3" />
+              </button>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              if (activeTab === 'remote') {
+                handleRemoteSearch();
+              } else {
+                handleGlobalSync(false);
+              }
+            }}
+            disabled={refreshing || isSearching}
+            className="w-11 h-11 bg-gray-100/80 dark:bg-zinc-900/50 text-subtext hover:bg-gray-200 dark:hover:bg-zinc-800 active:scale-95 flex items-center justify-center rounded-xl transition-all duration-200 shadow-sm"
+          >
+            {activeTab === 'remote' ? (
+              isSearching ? <RefreshCcw className="w-4 h-4 animate-spin text-primary" /> : <Search className="w-4 h-4" />
+            ) : (
+              <RefreshCcw className={`w-4 h-4 ${refreshing ? 'animate-spin text-primary' : ''}`} />
+            )}
+          </button>
+        </div>
+
         {/* Tab Segment Selector */}
         <div className="flex bg-gray-100/80 p-1 rounded-xl shadow-sm mb-1">
           <button
@@ -1366,37 +1440,7 @@ export function HistoryView() {
               </div>
             ) : (
               <div className="space-y-4">
-                {/* Carian Tempatan / Local Search Input */}
-            <div className="flex gap-2 mt-2.5">
-              <div className="relative flex-1">
-                <input
-                  type="text"
-                  value={localSearchQuery}
-                  onChange={(e) => setLocalSearchQuery(e.target.value)}
-                  placeholder={appLanguage === 'ms' ? 'Cari nama, Order ID, atau no. telefon...' : 'Search name, Order ID, or phone...'}
-                  className="w-full h-11 bg-gray-100 rounded-xl pl-10 pr-10 font-semibold text-text border border-transparent outline-none focus:bg-white focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all text-xs placeholder:text-gray-400"
-                />
-                <Search className="w-4 h-4 text-subtext/75 absolute left-3.5 top-3.5" />
-                {localSearchQuery && (
-                  <button
-                    type="button"
-                    onClick={() => setLocalSearchQuery('')}
-                    className="absolute right-3.5 top-3 w-5 h-5 rounded-full bg-gray-200 hover:bg-gray-300 text-subtext flex items-center justify-center transition-colors"
-                  >
-                    <X className="w-3" />
-                  </button>
-                )}
-              </div>
-              <button
-                type="button"
-                onClick={() => handleGlobalSync(false)}
-                disabled={refreshing}
-                title={appLanguage === 'ms' ? 'Sync dari Google Sheet' : 'Sync from Google Sheet'}
-                className="w-11 h-11 bg-gray-100 text-subtext hover:bg-gray-200 active:scale-95 flex items-center justify-center rounded-xl transition-all duration-200 shadow-sm"
-              >
-                <RefreshCcw className={`w-4 h-4 ${refreshing ? 'animate-spin text-primary' : ''}`} />
-              </button>
-            </div>
+                {/* No local search input here anymore, moved to top */}
 
             <div className="flex bg-gray-100 p-1 rounded-xl">
               {(['all', 'pending', 'delivered'] as const).map((filterOpt) => {
@@ -1854,7 +1898,7 @@ export function HistoryView() {
           </div>
         </div>
 
-        {drafts.length === 0 ? (
+        {filteredDrafts.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 text-subtext space-y-4">
             <Save className="w-16 h-16 opacity-30" />
             <p className="font-bold">
@@ -1863,7 +1907,7 @@ export function HistoryView() {
           </div>
         ) : (
           <div className="space-y-2.5">
-            {drafts.map((draft) => {
+            {filteredDrafts.map((draft) => {
               const date = new Date(draft.timestamp);
               const formattedDate = date.toLocaleString(appLanguage === 'ms' ? 'ms-MY' : 'en-US', {
                 day: 'numeric',
@@ -1930,19 +1974,6 @@ export function HistoryView() {
     {activeTab === 'remote' && (
       <div className="space-y-4 mt-2.5">
         <div className="bg-surface border border-gray-100 p-4 rounded-xl shadow-sm space-y-3">
-          <div className="relative">
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleRemoteSearch();
-              }}
-              placeholder={appLanguage === 'ms' ? 'Cari nama, Order ID, atau no. telefon...' : 'Search name, Order ID, or phone number...'}
-              className="w-full h-11 bg-gray-50 rounded-xl pl-10 pr-4 font-semibold text-text border border-gray-200 outline-none focus:bg-white focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all text-xs placeholder:text-gray-400"
-            />
-            <Search className="w-4 h-4 text-subtext/70 absolute left-3.5 top-3.5" />
-          </div>
           <button
             type="button"
             onClick={handleRemoteSearch}
@@ -1954,7 +1985,7 @@ export function HistoryView() {
             ) : (
               <Search className="w-3.5 h-3.5" />
             )}
-            <span>{appLanguage === 'ms' ? 'Cari Database' : 'Search Database'}</span>
+            <span>{appLanguage === 'ms' ? 'Cari Database Cloud' : 'Search Cloud Database'}</span>
           </button>
         </div>
 
@@ -2363,7 +2394,7 @@ export function HistoryView() {
     {activeTab === 'trash' && (
       <div className="space-y-4 mt-2.5">
         {(() => {
-          const deletedItems = history.filter(item => item?.state?.isDeleted);
+          const deletedItems = filteredTrash;
           
           if (deletedItems.length === 0) {
             return (

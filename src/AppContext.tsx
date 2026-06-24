@@ -761,17 +761,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
   };
 
   const loadDraft = (item: OrderHistoryItem) => {
+    const s = (item.state || {}) as any;
     setState({
       ...INITIAL_STATE,
-      ...item.state,
-      addons: Array.isArray(item.state?.addons) ? item.state.addons : INITIAL_STATE.addons,
-      clLangs: Array.isArray(item.state?.clLangs) ? item.state.clLangs : INITIAL_STATE.clLangs,
-      resumeLangs: Array.isArray(item.state?.resumeLangs) ? item.state.resumeLangs : INITIAL_STATE.resumeLangs,
+      ...s,
+      customerName: s.customerName || s.name || INITIAL_STATE.customerName,
+      customerPhone: s.customerPhone || s.phone || INITIAL_STATE.customerPhone,
+      addons: Array.isArray(s.addons) ? s.addons : INITIAL_STATE.addons,
+      clLangs: Array.isArray(s.clLangs) ? s.clLangs : INITIAL_STATE.clLangs,
+      resumeLangs: Array.isArray(s.resumeLangs) ? s.resumeLangs : INITIAL_STATE.resumeLangs,
       timestamp: item.timestamp,
-      historyId: item.id
+      historyId: item.id,
+      isEditMode: true
     });
     // Go to the appropriate form view based on state
-    if (item.state.mainType === 'Resume' || item.state.mainType === 'Curriculum Vitae') {
+    if (s.mainType === 'Resume' || s.mainType === 'Curriculum Vitae') {
       setViewStack(['home', 'resume-type', 'resume-form-fields', 'customer-info']);
     } else {
       setViewStack(['home', 'general-form', 'customer-info']);
@@ -792,14 +796,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return [item, ...prev];
     });
 
+    const s = (item.state || {}) as any;
     setState({
       ...INITIAL_STATE,
-      ...item.state,
-      addons: Array.isArray(item.state?.addons) ? item.state.addons : INITIAL_STATE.addons,
-      clLangs: Array.isArray(item.state?.clLangs) ? item.state.clLangs : INITIAL_STATE.clLangs,
-      resumeLangs: Array.isArray(item.state?.resumeLangs) ? item.state.resumeLangs : INITIAL_STATE.resumeLangs,
+      ...s,
+      customerName: s.customerName || s.name || INITIAL_STATE.customerName,
+      customerPhone: s.customerPhone || s.phone || INITIAL_STATE.customerPhone,
+      addons: Array.isArray(s.addons) ? s.addons : INITIAL_STATE.addons,
+      clLangs: Array.isArray(s.clLangs) ? s.clLangs : INITIAL_STATE.clLangs,
+      resumeLangs: Array.isArray(s.resumeLangs) ? s.resumeLangs : INITIAL_STATE.resumeLangs,
       timestamp: item.timestamp,
-      historyId: item.id
+      historyId: item.id,
+      isEditMode: true
     });
     setViewStack(['home', 'history', 'customer-info']);
   };

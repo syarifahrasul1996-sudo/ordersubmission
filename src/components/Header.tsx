@@ -2,9 +2,10 @@ import React from 'react';
 import { ChevronLeft, Clock, History, Home } from 'lucide-react';
 import { useAppContext } from '../AppContext';
 import { SettingsDropdown } from './SettingsDropdown';
+import { NotificationsDropdown } from './NotificationsDropdown';
 
 export function Header() {
-  const { viewStack, popView, goHome, state, pushView, theme, toggleTheme, appLanguage, toggleLanguage } = useAppContext();
+  const { viewStack, popView, goHome, state, theme, toggleTheme, appLanguage, toggleLanguage } = useAppContext();
   const currentView = viewStack[viewStack.length - 1];
 
   const titles: Record<string, { ms: string, en: string }> = {
@@ -50,6 +51,7 @@ export function Header() {
       )}
       {isPrimaryTab ? (
         <div className="flex items-center space-x-1">
+          <NotificationsDropdown />
           <SettingsDropdown />
         </div>
       ) : (
@@ -62,6 +64,7 @@ export function Header() {
           >
             <Home className="w-5 h-5" />
           </button>
+          <NotificationsDropdown />
           <SettingsDropdown />
         </div>
       )}

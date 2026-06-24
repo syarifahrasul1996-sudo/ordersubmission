@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { RefreshCcw, Save, Check, FileText, ExternalLink, LogOut, Loader2, AlertCircle } from 'lucide-react';
+import { RefreshCcw, Save, Check, FileText, ExternalLink, LogOut, Loader2, AlertCircle, ChevronDown } from 'lucide-react';
 import { useAppContext } from '../AppContext';
 import { calculateDeadline, formatPhoneUniversal, parseDateStringToTimestamp } from '../utils';
 import { Toast } from '../components/Toast';
@@ -195,8 +195,8 @@ export function CustomerInfoView() {
     }
 
     return { 
-      initName: state.customerName ? String(state.customerName) : '',
-      initPhone: state.customerPhone ? String(state.customerPhone) : '',
+      initName: state.customerName || (state as any).name || '',
+      initPhone: state.customerPhone || (state as any).phone || '',
       initOrder: state.customerOrder ? String(state.customerOrder) : initOrder, 
       initBahasa: state.customerBahasa ? String(state.customerBahasa) : initBahasa, 
       initType: state.mainType || 'Resume',
@@ -227,6 +227,8 @@ export function CustomerInfoView() {
   const [due, setDue] = useState('');
   const [dueTimestamp, setDueTimestamp] = useState(0);
   const [orderId, setOrderId] = useState('');
+  const [isAddOnOpen, setIsAddOnOpen] = useState(false);
+  const addOnRef = useRef<HTMLDivElement>(null);
 
   const [spreadsheetId, setSpreadsheetId] = useState(state.spreadsheetId);
   const webhookUrl = 'https://script.google.com/macros/s/AKfycbw5KpBvJyFpIXmsHueg4XPSRkZ0mg6kxHqjMGp3WEs8Hx_JodvKSoKEg6RMsdH54iCa/exec';
@@ -252,6 +254,16 @@ export function CustomerInfoView() {
       () => setGoogleUser(null)
     );
     return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (addOnRef.current && !addOnRef.current.contains(event.target as Node)) {
+        setIsAddOnOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
   const handleGenerateDoc = async () => {
@@ -716,13 +728,6 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
       return item;
     });
   });
-
-  // 2. Update the main App state to match the pre-upgraded values
-  setState(prev => ({
-    ...prev,
-    orderId: finalOrderId,
-    historyId: finalOrderId,
-  }));
 }
 
     // Format name and template correctly
@@ -745,6 +750,7 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
       dueTimestamp: parsedTimestamp,
       hasNotified: false,
       orderId: finalOrderId,
+      historyId: finalOrderId,
       spreadsheetId: resolvedSpreadsheetId,
       scriptUrl: resolvedWebhookUrl,
       syncStatus: 'syncing',
@@ -1131,52 +1137,64 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
           </div>
         </div>
 
-        <div className="space-y-1.5 col-span-full">
+        <div className="space-y-1.5 col-span-full" ref={addOnRef}>
           <label className="text-xs font-black text-gray-400 ml-1 uppercase tracking-widest">{appLanguage === 'ms' ? 'Add On (Boleh Pilih Lebih Dari 1)' : 'Add On (Select Multiple)'}</label>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 bg-gray-50/30 dark:bg-gray-950/20 p-2.5 rounded-2xl border border-gray-100/30">
-            {[
-              'Editable softcopy BI',
-              'Editable softcopy BM',
-              'ATS',
-              'Cover Letter BI',
-              'Cover Letter BM',
-              'Resign Letter',
-              'Fail',
-              'Nota Temuduga',
-              'Pakej Temuduga Kerajaan'
-            ].map((option) => {
-              const selectedAddons = addOn ? addOn.split(',').map(s => s.trim()).filter(Boolean) : [];
-              const isSelected = selectedAddons.some(item => item.toLowerCase() === option.toLowerCase());
-              return (
-                <button
-                  key={option}
-                  type="button"
-                  onClick={() => {
-                    let nextAddons;
-                    if (isSelected) {
-                      nextAddons = selectedAddons.filter(item => item.toLowerCase() !== option.toLowerCase());
-                    } else {
-                      nextAddons = [...selectedAddons, option];
-                    }
-                    setAddOn(nextAddons.join(', '));
-                  }}
-                  className={`flex items-center justify-between p-2.5 rounded-xl border text-left transition-all active:scale-[0.98] cursor-pointer ${
-                    isSelected 
-                      ? 'bg-primary/5 border-primary/50 text-primary font-bold shadow-sm' 
-                      : 'bg-surface border-gray-100/50 text-text hover:border-gray-200/80 font-semibold'
-                  }`}
-                >
-                  <span className="text-xs">{option}</span>
-                  <div className={`w-4 h-4 rounded flex items-center justify-center border transition-all ${
-                    isSelected 
-                      ? 'bg-primary border-primary text-white' 
-                      : 'border-gray-300 dark:border-gray-700 bg-white dark:bg-zinc-900'
-                  }`}>
-                    {isSelected && <Check className="w-2.5 h-2.5 stroke-[3]" />}
-                  </div>
-                </button>
-              );
-            })}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setIsAddOnOpen(!isAddOnOpen)}
+              className="w-full h-[46px] bg-surface text-text rounded-xl px-4 font-bold border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all flex items-center justify-between text-sm text-left"
+            >
+              <span className="truncate pr-4 text-gray-500 font-semibold">
+                {appLanguage === 'ms' ? 'Pilih Add On...' : 'Select Add On...'}
+              </span>
+              <ChevronDown className={cn("w-4 h-4 text-subtext transition-transform shrink-0", isAddOnOpen && "rotate-180")} />
+            </button>
+            {isAddOnOpen && (
+              <div className="absolute z-10 w-full mt-2 bg-white dark:bg-[#1C1C1E] border border-gray-100 dark:border-gray-800 rounded-2xl shadow-xl max-h-60 overflow-y-auto p-2 animate-fade-in-up">
+                {[
+                  'Editable softcopy BI',
+                  'Editable softcopy BM',
+                  'ATS',
+                  'Cover Letter BI',
+                  'Cover Letter BM',
+                  'Resign Letter',
+                  'Fail',
+                  'Nota Temuduga',
+                  'Pakej Temuduga Kerajaan'
+                ].map((option) => {
+                  const selectedAddons = addOn ? addOn.split(',').map(s => s.trim()).filter(Boolean) : [];
+                  const isSelected = selectedAddons.some(item => item.toLowerCase() === option.toLowerCase());
+                  return (
+                    <button
+                      key={option}
+                      type="button"
+                      onClick={() => {
+                        let nextAddons;
+                        if (isSelected) {
+                          nextAddons = selectedAddons.filter(item => item.toLowerCase() !== option.toLowerCase());
+                        } else {
+                          nextAddons = [...selectedAddons, option];
+                        }
+                        setAddOn(nextAddons.join(', '));
+                      }}
+                      className={`w-full flex items-center justify-between p-2.5 rounded-xl text-left transition-all hover:bg-gray-50 dark:hover:bg-zinc-800/50 cursor-pointer ${
+                        isSelected ? 'text-primary font-bold' : 'text-text font-semibold'
+                      }`}
+                    >
+                      <span className="text-xs">{option}</span>
+                      <div className={`w-4 h-4 rounded flex items-center justify-center border transition-all shrink-0 ${
+                        isSelected 
+                          ? 'bg-primary border-primary text-white' 
+                          : 'border-gray-300 dark:border-gray-700 bg-white dark:bg-zinc-900'
+                      }`}>
+                        {isSelected && <Check className="w-2.5 h-2.5 stroke-[3]" />}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
           <div className="pt-0.5">
             <input 
