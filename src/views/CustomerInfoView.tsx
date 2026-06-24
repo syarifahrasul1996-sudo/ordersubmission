@@ -314,28 +314,67 @@ export function CustomerInfoView() {
         mode = "agreement";
       }
 
-      // Use backend generation (Gemini) - fetch template client-side first if needed, 
-      // but simpler: backend generates, then we create locally
-      const promptData = {
-        name, phone, order, template, bahasa, addOn, jenis, due, orderId, info
-      };
-      
-      const genRes = await fetch("/api/generate-letter", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          customerDetails: promptData,
-          templateContent,
-          documentMode: mode,
-          language: bahasa
-        })
-      });
+      // Perform standard placeholder replacements locally instead of using Gemini AI
+      let text = templateContent;
+      if (text) {
+        const replacements: Record<string, string> = {
+          "NAMA": name || "",
+          "NAME": name || "",
+          "NAMA_PELANGGAN": name || "",
+          "CUSTOMER_NAME": name || "",
+          "TELEFON": phone || "",
+          "PHONE": phone || "",
+          "NO_TELEFON": phone || "",
+          "PHONE_NUMBER": phone || "",
+          "ORDER": order || "",
+          "JENIS_ORDER": order || "",
+          "TEMPLATE": template || "",
+          "BAHASA": bahasa || "",
+          "ADD_ON": addOn || "",
+          "JENIS": jenis || "",
+          "DUE": due || "",
+          "DUE_DATE": due || "",
+          "TARIKH_AKHIR": due || "",
+          "ORDER_ID": orderId || "",
+          "ID_ORDER": orderId || "",
+          "INFO": info || "",
+          "MAKLUMAT": info || "",
+        };
 
-      if (!genRes.ok) {
-        const errText = await genRes.text();
-        throw new Error(`Gagal menjana teks dengan AI: ${errText}`);
+        Object.entries(replacements).forEach(([key, value]) => {
+          const bracketRegex = new RegExp(`\\[${key}\\]|\\{${key}\\}|\\{\\{${key}\\}\\}`, 'gi');
+          text = text.replace(bracketRegex, value);
+        });
+      } else {
+        // Fallback layout if template doc couldn't be loaded or is empty
+        text = `RUJUKAN: ${orderId}
+TARIKH: ${new Date().toLocaleDateString('ms-MY')}
+
+Kepada:
+${name}
+${phone}
+
+Perkara: ${order.toUpperCase()} - TEMPLATE: ${template.toUpperCase()}
+
+Tuan/Puan,
+
+Merujuk kepada perkara di atas, berikut adalah maklumat terperinci mengenai pesanan anda:
+
+1. ID PESANAN: ${orderId}
+2. JENIS TEMPLATE: ${template}
+3. BAHASA: ${bahasa || 'N/A'}
+4. ADD-ON: ${addOn || 'N/A'}
+5. JENIS PESANAN: ${jenis || 'N/A'}
+6. TARIKH AKHIR (DUE DATE): ${due || 'N/A'}
+
+MAKLUMAT TAMBAHAN:
+${info || 'Tiada maklumat tambahan disediakan.'}
+
+Sekian, terima kasih.
+
+Yang benar,
+Dokumen Dijana Secara Automatik`;
       }
-      const { text } = await genRes.json();
       
       // Create new doc
       const createRes = await fetch('https://docs.googleapis.com/v1/documents', {
@@ -439,7 +478,7 @@ export function CustomerInfoView() {
       setOrder(initVals.initOrder);
       setTemplate(initVals.initTemplate);
       setBahasa(initVals.initBahasa);
-      setAddOn(initVals.initAddOnDropdown);
+      setAddOn(initVals.initAddOn);
       setJenis(initVals.initJenis);
       setDue(initVals.initDue);
       setDueTimestamp(initVals.initDueTimestamp);
@@ -466,7 +505,7 @@ export function CustomerInfoView() {
                                 data.order !== initVals.initOrder ||
                                 data.template !== initVals.initTemplate ||
                                 data.bahasa !== initVals.initBahasa ||
-                                data.addOn !== initVals.initAddOnDropdown ||
+                                data.addOn !== initVals.initAddOn ||
                                 data.jenis !== initVals.initJenis ||
                                 data.due !== initVals.initDue;
             
@@ -887,11 +926,22 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
     let newName = name;
     let newOrder = order;
     let newBahasa = bahasa;
+    let newTemplate = template;
+
+    const properCase = (str: string) => {
+      return str.trim().replace(/\w\S*/g, (txt) => txt.charAt(0).toUpperCase() + txt.substring(1).toLowerCase());
+    };
 
     // 1. Extract Nama
     const nameMatch = info.match(/(?:Nama Penuh|Full Name):\s*(.*)/i);
     if (nameMatch && nameMatch[1].trim()) {
-      newName = nameMatch[1].trim();
+      newName = properCase(nameMatch[1]);
+    }
+
+    // 1.2 Extract Template / Design Info
+    const templateMatch = info.match(/(?:Template|Pilihan Template|Template Info|Design):\s*(.*)/i);
+    if (templateMatch && templateMatch[1].trim()) {
+      newTemplate = templateMatch[1].trim().toUpperCase();
     }
 
     // 2. Extract Order
@@ -923,6 +973,7 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
     setName(newName);
     setOrder(newOrder);
     setBahasa(newBahasa);
+    setTemplate(newTemplate);
     showToastMessage(appLanguage === 'ms' ? 'Auto-isi terpakai!' : 'Auto-fill applied!');
   };
 
@@ -940,7 +991,7 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
   }
 
   return (
-    <div className="flex flex-col p-4 sm:p-5 pb-[calc(env(safe-area-inset-bottom)+4rem)]">
+    <div className="flex flex-col p-4 sm:p-5 pb-[calc(env(safe-area-inset-bottom)+6.5rem)]">
       <div className="mb-4">
         <div className="flex items-center justify-between mb-1.5">
           <h2 className="text-xl font-black text-text tracking-tighter">
@@ -1003,7 +1054,12 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
           <input 
             type="text" 
             value={name}
-            onChange={(e) => setName(e.target.value)}
+            onChange={(e) => {
+              const val = e.target.value;
+              // Capitalize first letter of each word in real-time as they type
+              const properVal = val.replace(/(^|\s)\S/g, (match) => match.toUpperCase());
+              setName(properVal);
+            }}
             onBlur={() => setName(name.trim().replace(/\w\S*/g, (txt) => txt.charAt(0).toUpperCase() + txt.substring(1).toLowerCase()))}
             placeholder={appLanguage === 'ms' ? 'Cth: Ali bin Abu' : 'E.g. John Doe'}
             className="w-full h-[46px] bg-surface rounded-xl px-4 font-bold text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all placeholder:text-gray-300 text-sm" 
@@ -1075,28 +1131,61 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
           </div>
         </div>
 
-        <div className="space-y-1">
-          <label className="text-xs font-black text-gray-400 ml-1 uppercase tracking-widest">Add On</label>
-          <div className="relative">
-            <select 
+        <div className="space-y-1.5 col-span-full">
+          <label className="text-xs font-black text-gray-400 ml-1 uppercase tracking-widest">{appLanguage === 'ms' ? 'Add On (Boleh Pilih Lebih Dari 1)' : 'Add On (Select Multiple)'}</label>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 bg-gray-50/30 dark:bg-gray-950/20 p-2.5 rounded-2xl border border-gray-100/30">
+            {[
+              'Editable softcopy BI',
+              'Editable softcopy BM',
+              'ATS',
+              'Cover Letter BI',
+              'Cover Letter BM',
+              'Resign Letter',
+              'Fail',
+              'Nota Temuduga',
+              'Pakej Temuduga Kerajaan'
+            ].map((option) => {
+              const selectedAddons = addOn ? addOn.split(',').map(s => s.trim()).filter(Boolean) : [];
+              const isSelected = selectedAddons.some(item => item.toLowerCase() === option.toLowerCase());
+              return (
+                <button
+                  key={option}
+                  type="button"
+                  onClick={() => {
+                    let nextAddons;
+                    if (isSelected) {
+                      nextAddons = selectedAddons.filter(item => item.toLowerCase() !== option.toLowerCase());
+                    } else {
+                      nextAddons = [...selectedAddons, option];
+                    }
+                    setAddOn(nextAddons.join(', '));
+                  }}
+                  className={`flex items-center justify-between p-2.5 rounded-xl border text-left transition-all active:scale-[0.98] cursor-pointer ${
+                    isSelected 
+                      ? 'bg-primary/5 border-primary/50 text-primary font-bold shadow-sm' 
+                      : 'bg-surface border-gray-100/50 text-text hover:border-gray-200/80 font-semibold'
+                  }`}
+                >
+                  <span className="text-xs">{option}</span>
+                  <div className={`w-4 h-4 rounded flex items-center justify-center border transition-all ${
+                    isSelected 
+                      ? 'bg-primary border-primary text-white' 
+                      : 'border-gray-300 dark:border-gray-700 bg-white dark:bg-zinc-900'
+                  }`}>
+                    {isSelected && <Check className="w-2.5 h-2.5 stroke-[3]" />}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+          <div className="pt-0.5">
+            <input 
+              type="text"
               value={addOn}
               onChange={(e) => setAddOn(e.target.value)}
-              className="w-full h-[46px] bg-surface text-text rounded-xl px-4 font-bold border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all appearance-none text-sm" 
-            >
-              <option value=""></option>
-              <option value="Editable softcopy BI">Editable softcopy BI</option>
-              <option value="Editable softcopy BM">Editable softcopy BM</option>
-              <option value="ATS">ATS</option>
-              <option value="Cover Letter BI">Cover Letter BI</option>
-              <option value="Cover Letter BM">Cover Letter BM</option>
-              <option value="Resign Letter">Resign Letter</option>
-              <option value="Fail">Fail</option>
-              <option value="Nota Temuduga">Nota Temuduga</option>
-              <option value="Pakej Temuduga Kerajaan">Pakej Temuduga Kerajaan</option>
-            </select>
-            <div className="absolute top-0 right-4 h-full flex items-center pointer-events-none">
-              <svg className="w-4 h-4 text-subtext" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
-            </div>
+              placeholder={appLanguage === 'ms' ? 'Pilihan terpilih (boleh taip atau edit secara manual di sini)...' : 'Selected options (type or edit manually here)...'}
+              className="w-full h-[40px] bg-surface rounded-xl px-4 font-bold text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all text-xs placeholder:text-gray-300 placeholder:font-semibold" 
+            />
           </div>
         </div>
 
@@ -1171,14 +1260,14 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
                 onClick={handleGenerateDoc}
                 disabled={isGeneratingDoc}
                 className="h-7 px-2.5 bg-purple-50 hover:bg-purple-100 text-purple-700 rounded-lg border border-purple-100/50 flex items-center gap-1.5 font-black text-[10px] uppercase tracking-wider transition-colors disabled:opacity-50 cursor-pointer"
-                title={appLanguage === 'ms' ? "Jana Surat dengan Gemini" : "Generate Letter with Gemini"}
+                title={appLanguage === 'ms' ? "Jana Dokumen Google" : "Generate Google Doc"}
               >
                 {isGeneratingDoc ? (
                   <Loader2 className="w-3 h-3 animate-spin" />
                 ) : (
                   <FileText className="w-3 h-3" />
                 )}
-                <span>{appLanguage === 'ms' ? 'Gemini AI' : 'Gemini AI'}</span>
+                <span>{appLanguage === 'ms' ? 'Auto Doc' : 'Auto Doc'}</span>
               </button>
             )}
           </div>

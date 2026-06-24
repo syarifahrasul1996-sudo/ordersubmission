@@ -17,11 +17,13 @@ export function Header() {
     'history': { ms: 'Sejarah Tempahan', en: 'Order History' },
     'dashboard': { ms: 'Tinjauan Perniagaan', en: 'Business Overview' },
     'customer-info': { ms: 'Maklumat Pelanggan', en: 'Customer Info' },
-    'contacts-sync': { ms: 'Eksport Kenalan (CSV)', en: 'Export Contacts (CSV)' }
+    'contacts-sync': { ms: 'Eksport Kenalan (CSV)', en: 'Export Contacts (CSV)' },
+    'others': { ms: 'Tetapan & Sistem', en: 'Settings & System' }
   };
 
   const title = titles[currentView]?.[appLanguage] || (appLanguage === 'ms' ? 'Butiran' : 'Details');
-  const showBack = currentView !== 'home';
+  const isPrimaryTab = ['home', 'history', 'dashboard', 'others'].includes(currentView);
+  const showBack = !isPrimaryTab;
   const showCounter = state.extraHours > 0 && !['confirmation', 'output'].includes(currentView);
 
   return (
@@ -46,16 +48,8 @@ export function Header() {
           +{state.extraHours}h
         </div>
       )}
-      {currentView === 'home' ? (
+      {isPrimaryTab ? (
         <div className="flex items-center space-x-1">
-          <button 
-            onClick={() => pushView('history')}
-            className="w-10 h-10 flex items-center justify-center rounded-full active:bg-surface text-text active:scale-95 transition-all md:hover:bg-surface mr-1"
-            aria-label="Sejarah Tempahan"
-            title="Sejarah"
-          >
-            <History className="w-5 h-5" />
-          </button>
           <SettingsDropdown />
         </div>
       ) : (

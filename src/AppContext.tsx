@@ -7,6 +7,7 @@ interface AppContextType {
   setState: React.Dispatch<React.SetStateAction<AppState>>;
   viewStack: ViewType[];
   pushView: (view: ViewType, updates?: Partial<AppState>) => void;
+  changeTab: (tab: ViewType) => void;
   startNewOrder: (view: ViewType, updates: Partial<AppState>) => void;
   popView: () => void;
   goHome: () => void;
@@ -38,6 +39,10 @@ interface AppContextType {
   syncOfflineQueue: () => Promise<void>;
   addToOfflineQueue: (payload: any, webhookUrl: string, orderId: string) => void;
   deletedOrderIds: string[];
+  historyDeliveryFilter: 'all' | 'delivered' | 'pending';
+  setHistoryDeliveryFilter: (val: 'all' | 'delivered' | 'pending') => void;
+  historyPendingTimeFilter: 'all' | 'today' | 'tomorrow' | '2days' | '3days';
+  setHistoryPendingTimeFilter: (val: 'all' | 'today' | 'tomorrow' | '2days' | '3days') => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -401,6 +406,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [appLanguage]);
 
   const [isOnline, setIsOnline] = useState<boolean>(() => typeof navigator !== 'undefined' ? navigator.onLine : true);
+  const [historyDeliveryFilter, setHistoryDeliveryFilter] = useState<'all' | 'delivered' | 'pending'>('all');
+  const [historyPendingTimeFilter, setHistoryPendingTimeFilter] = useState<'all' | 'today' | 'tomorrow' | '2days' | '3days'>('all');
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [queueSize, setQueueSize] = useState<number>(() => {
     try {
@@ -437,7 +444,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     try {
       const queueStr = localStorage.getItem('db_offline_sync_queue');
       const queue = queueStr ? JSON.parse(queueStr) : [];
+      const uid = Math.random().toString(36).substring(2) + Date.now().toString(36);
       queue.push({
+        uid,
         payload,
         webhookUrl,
         id: orderId,
@@ -495,7 +504,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           headers: { 'Content-Type': 'text/plain;charset=utf-8' },
           body: JSON.stringify(item.payload)
         });
-        remainingQueue = remainingQueue.filter(q => q.id !== item.id);
+        remainingQueue = remainingQueue.filter(q => q.uid ? q.uid !== item.uid : q.id !== item.id);
         processedCount++;
         
         if (remainingQueue.length === 0) {
@@ -807,6 +816,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setViewStack(prev => [...prev, view]);
   };
 
+  const changeTab = (tab: ViewType) => {
+    if (tab === 'home') {
+      setViewStack(['home']);
+    } else {
+      setViewStack(['home', tab]);
+    }
+  };
+
   const popView = () => {
     setViewStack(prev => {
       if (prev.length <= 1) return prev;
@@ -828,7 +845,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AppContext.Provider value={{ state, setState, viewStack, pushView, startNewOrder, popView, goHome, reset, generatedMessages, setGeneratedMessages, history, setHistory, saveOrderToHistory, updateOrderHistoryState, updateSpecificHistoryItem, deleteOrderFromHistory, restoreOrderFromHistory, permanentlyDeleteOrderFromHistory, clearHistory, loadOrder, drafts, saveAsDraft, deleteDraft, loadDraft, theme, toggleTheme, appLanguage, toggleLanguage, isOnline, isSyncing, queueSize, lastSyncTime, syncOfflineQueue, addToOfflineQueue, deletedOrderIds }}>
+    <AppContext.Provider value={{ state, setState, viewStack, pushView, changeTab, startNewOrder, popView, goHome, reset, generatedMessages, setGeneratedMessages, history, setHistory, saveOrderToHistory, updateOrderHistoryState, updateSpecificHistoryItem, deleteOrderFromHistory, restoreOrderFromHistory, permanentlyDeleteOrderFromHistory, clearHistory, loadOrder, drafts, saveAsDraft, deleteDraft, loadDraft, theme, toggleTheme, appLanguage, toggleLanguage, isOnline, isSyncing, queueSize, lastSyncTime, syncOfflineQueue, addToOfflineQueue, deletedOrderIds, historyDeliveryFilter, setHistoryDeliveryFilter, historyPendingTimeFilter, setHistoryPendingTimeFilter }}>
       {children}
     </AppContext.Provider>
   );

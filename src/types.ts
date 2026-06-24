@@ -44,7 +44,7 @@ export interface AppState {
   isDeleted?: boolean;
 }
 
-export type ViewType = 'home' | 'resume-type' | 'resume-form-fields' | 'general-form' | 'confirmation' | 'output' | 'history' | 'customer-info' | 'dashboard' | 'contacts-sync';
+export type ViewType = 'home' | 'resume-type' | 'resume-form-fields' | 'general-form' | 'confirmation' | 'output' | 'history' | 'customer-info' | 'dashboard' | 'contacts-sync' | 'others';
 
 export interface OrderHistoryItem {
   id: string;

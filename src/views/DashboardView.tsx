@@ -521,7 +521,7 @@ export function DashboardView() {
         </div>
       )}
 
-      <div className="flex flex-col p-4 sm:p-6 space-y-6 pb-[calc(env(safe-area-inset-bottom)+2rem)] max-w-7xl mx-auto w-full">
+      <div className="flex flex-col p-4 sm:p-6 space-y-6 pb-[calc(env(safe-area-inset-bottom)+6.5rem)] max-w-7xl mx-auto w-full">
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-2">
         <div>
           <h2 className="text-2xl font-black text-text tracking-tighter">

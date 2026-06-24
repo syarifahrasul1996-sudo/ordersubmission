@@ -213,7 +213,8 @@ export function ResumeFormFieldsView() {
         <input 
           type="text" 
           value={state.template}
-          onChange={(e) => setState(prev => ({...prev, template: e.target.value}))}
+          onChange={(e) => setState(prev => ({...prev, template: e.target.value.toUpperCase()}))}
+          onBlur={() => setState(prev => ({...prev, template: state.template.trim().toUpperCase()}))}
           className="w-full bg-surface border-2 border-transparent rounded-xl h-[46px] px-4 focus:outline-none focus:border-primary font-bold uppercase tracking-wider text-text shadow-inner transition-all select-text text-sm" 
           placeholder="CTH: MODERN 01" 
         />

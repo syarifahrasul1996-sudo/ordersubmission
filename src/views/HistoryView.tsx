@@ -95,7 +95,11 @@ export function HistoryView() {
     updateOrderHistoryState,
     addToOfflineQueue,
     syncOfflineQueue,
-    deletedOrderIds
+    deletedOrderIds,
+    historyDeliveryFilter,
+    setHistoryDeliveryFilter,
+    historyPendingTimeFilter,
+    setHistoryPendingTimeFilter
   } = useAppContext();
   const historyRef = useRef(history);
   const deletedOrderIdsRef = useRef(deletedOrderIds);
@@ -124,8 +128,10 @@ export function HistoryView() {
   const [startY, setStartY] = useState(0);
   const [isPulling, setIsPulling] = useState(false);
   const [syncingId, setSyncingId] = useState<string | null>(null);
-  const [deliveryFilter, setDeliveryFilter] = useState<'all' | 'delivered' | 'pending'>('all');
-  const [pendingTimeFilter, setPendingTimeFilter] = useState<'all' | 'today' | 'tomorrow' | '2days' | '3days'>('all');
+  const deliveryFilter = historyDeliveryFilter;
+  const setDeliveryFilter = setHistoryDeliveryFilter;
+  const pendingTimeFilter = historyPendingTimeFilter;
+  const setPendingTimeFilter = setHistoryPendingTimeFilter;
   const [activeTab, setActiveTab] = useState<'local' | 'remote' | 'drafts' | 'trash'>('local');
   const [searchQuery, setSearchQuery] = useState('');
   const [localSearchQuery, setLocalSearchQuery] = useState('');
@@ -447,14 +453,15 @@ export function HistoryView() {
   const handleDeliveredToggle = async (
     e: React.MouseEvent,
     item: any,
-    currentStatus: boolean
+    currentStatus: boolean,
+    isRetry = false
   ) => {
     e.preventDefault();
     e.stopPropagation();
 
     const spreadsheetId = item.state?.spreadsheetId || state.spreadsheetId;
     const orderId = item.state?.orderId;
-    const newStatus = !currentStatus;
+    const newStatus = isRetry ? currentStatus : !currentStatus;
     const now = Date.now();
 
     // 1. Instantly update local state for perfect responsiveness and offline action
@@ -772,9 +779,6 @@ export function HistoryView() {
 
               const localState = existingItem.state || {};
               const isUnsynced = localState.syncStatus !== 'synced';
-              const isRecentlyModified =
-                localState.lastModifiedLocally &&
-                currentNow - localState.lastModifiedLocally < 600000;
 
               const hasDiff = 
                 !!localState.isDelivered !== !!newState.isDelivered ||
@@ -786,48 +790,26 @@ export function HistoryView() {
                 String(localState.orderLink || '') !== String(newState.orderLink || '');
 
               if (hasDiff) {
-                if (!isUnsynced && !isRecentlyModified) {
-                  updatedHistory[existingIdx] = {
-                    ...existingItem,
-                    state: {
-                      ...localState,
-                      ...newState
-                    }
-                  };
-                  totalUpdCou++;
-                } else {
-                  // Local Webapp data has priority due to conflict
-                  const activeSheet = annualSheets.find(s => s.spreadsheetId === res.spreadsheetId);
-                  if (activeSheet) {
-                    const orderRow = [
-                      localState.isDelivered || false,
-                      localState.customerName || '',
-                      localState.customerPhone || '',
-                      localState.customerOrder || '',
-                      localState.customerTemplate || localState.template || '',
-                      localState.customerBahasa || '',
-                      localState.customerAddOn || '',
-                      localState.customerJenis || '',
-                      localState.customerDue || '',
-                      localState.orderLink || localState.googleSheetLink || '',
-                      generatedOrderId
-                    ];
-                    addToOfflineQueue({
-                      action: 'update_order',
-                      spreadsheetId: res.spreadsheetId,
-                      orderId: generatedOrderId,
-                      rowData: orderRow
-                    }, activeSheet.scriptUrl, existingItem.id);
+                if (!isUnsynced) {
+                  // If the item was recently toggled or edited locally (within 30 seconds),
+                  // we temporarily protect the local UI state from flickering to old values
+                  // while Google Sheets/script cache catches up. Otherwise, we accept the sheet's new data.
+                  const recentlyToggledOrEdited = localState.lastModifiedLocally && (currentNow - localState.lastModifiedLocally < 30000);
+                  if (!recentlyToggledOrEdited) {
+                    updatedHistory[existingIdx] = {
+                      ...existingItem,
+                      state: {
+                        ...localState,
+                        ...newState,
+                        syncStatus: 'synced'
+                      }
+                    };
+                    totalUpdCou++;
                   }
-                  
-                  // Mark as failed temporarily to trigger offline queue
-                  updatedHistory[existingIdx] = {
-                    ...existingItem,
-                    state: {
-                      ...localState,
-                      syncStatus: 'failed',
-                    }
-                  };
+                } else {
+                  // If local is genuinely unsynced (offline), we preserve local data.
+                  // We do NOT call addToOfflineQueue here again because the offline queue already tracks
+                  // unsynced edits, preventing infinite loops/duplicate spam.
                 }
               }
             } else {
@@ -1086,7 +1068,12 @@ export function HistoryView() {
     loadOrder(mockHistoryItem);
   };
 
-  const handleRemoteDeliveredToggle = async (e: React.MouseEvent, index: number, orderData: any) => {
+  const handleRemoteDeliveredToggle = async (
+    e: React.MouseEvent,
+    index: number,
+    orderData: any,
+    isRetry = false
+  ) => {
     e.preventDefault();
     e.stopPropagation();
 
@@ -1094,7 +1081,7 @@ export function HistoryView() {
     const scriptUrl = orderData.scriptUrl || getActiveScriptUrl(spreadsheetId);
     const orderId = orderData.orderId;
     const currentStatus = !!orderData.isDelivered;
-    const newStatus = !currentStatus;
+    const newStatus = isRetry ? currentStatus : !currentStatus;
 
     if (!spreadsheetId || !orderId) {
       setAlertMsg({ type: 'error', message: appLanguage === 'ms' ? 'Kekurangan Order ID atau Spreadsheet ID.' : 'Missing Order ID or Spreadsheet ID.' });
@@ -1828,7 +1815,7 @@ export function HistoryView() {
                                 <button 
                                   type="button"
                                   className="text-red-600 font-bold hover:underline flex items-center active:scale-95 transition-transform"
-                                  onClick={(e) => handleDeliveredToggle(e, item, isDelivered)}
+                                  onClick={(e) => handleDeliveredToggle(e, item, isDelivered, true)}
                                 >
                                   <AlertCircle className="w-2.5 h-2.5 mr-1" /> Sync failed — tap to retry
                                 </button>
@@ -2339,7 +2326,7 @@ export function HistoryView() {
                             <button 
                               type="button"
                               className="text-red-600 font-bold hover:underline flex items-center active:scale-95 transition-transform"
-                              onClick={(e) => handleRemoteDeliveredToggle(e, idx, item)}
+                              onClick={(e) => handleRemoteDeliveredToggle(e, idx, item, true)}
                             >
                               <AlertCircle className="w-2.5 h-2.5 mr-1" /> Sync failed — tap to retry
                             </button>
