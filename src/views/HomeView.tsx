@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { isActivePendingOrder } from '../utils/orderWindow';
 import { 
   Calculator, 
   Clock, 
@@ -114,8 +115,30 @@ export function HomeView() {
     { id: 'super', label: 'Super Urgent' },
   ];
 
+const activeWindow = getActiveOrderWindow();
+
+console.log('Active order window:', {
+  start: new Date(
+    activeWindow.startTimestamp
+  ).toLocaleString(),
+  end: new Date(
+    activeWindow.endTimestamp
+  ).toLocaleString(),
+});
+
+console.log(
+  'Orders inside active window:',
+  history.filter(order =>
+    isActivePendingOrder(order)
+  ).map(order => ({
+    orderId: order.state?.orderId,
+    customerName: order.state?.customerName,
+    customerDue: order.state?.customerDue,
+    dueTimestamp: getOrderDueTimestamp(order),
+  }))
+);
   // Derive statistics
-  const activeOrders = history.filter(o => o && o.state && !o.state.isDelivered && !o.state.isDeleted);
+  const activeOrders = history.filter(isActivePendingOrder);
   const totalPendingCount = activeOrders.length;
 
   const todayStart = new Date();

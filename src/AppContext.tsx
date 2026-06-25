@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
 import { AppState, INITIAL_STATE, ViewType, OrderHistoryItem } from './types';
 import { getSubscription, syncPushNotifications, clearPushNotifications } from './lib/push';
+import { removeStalePendingOrders } from './utils/orderWindow';
 
 interface AppContextType {
   state: AppState;
@@ -105,18 +106,38 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   });
 
-  const [history, setHistory] = useState<OrderHistoryItem[]>(() => {
-    try {
-      const saved = localStorage.getItem('orderHistory');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        return Array.isArray(parsed) ? parsed : [];
-      }
-      return [];
-    } catch {
+ const [history, setHistory] = useState<OrderHistoryItem[]>(() => {
+  try {
+    const saved = localStorage.getItem('orderHistory');
+
+    if (!saved) {
       return [];
     }
-  });
+
+    const parsed = JSON.parse(saved);
+
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    const cleanedHistory =
+      removeStalePendingOrders(parsed);
+
+    localStorage.setItem(
+      'orderHistory',
+      JSON.stringify(cleanedHistory)
+    );
+
+    return cleanedHistory;
+  } catch (error) {
+    console.error(
+      'Failed to load order history:',
+      error
+    );
+
+    return [];
+  }
+});
 
   const [deletedOrderIds, setDeletedOrderIds] = useState<string[]>(() => {
     try {
