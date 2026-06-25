@@ -527,12 +527,14 @@ export function HistoryView() {
             isDelivered: newStatus
           })
         }).then(() => {
-          console.log("no-cors POST delivered fallback succeeded!");
-          updateSpecificHistoryItem(item.id, {
-            syncStatus: 'synced',
-            syncLastSuccess: Date.now(),
-            syncFailCount: 0,
-          });
+  console.log(
+    'no-cors POST sent, but server response could not be verified.'
+  );
+
+  updateSpecificHistoryItem(item.id, {
+    syncStatus: 'sent_unverified',
+    syncLastAttempt: Date.now(),
+  });
         }).catch(postErr => {
           console.error("POST delivered status fallback failed, queuing for offline:", postErr);
           addToOfflineQueue({
@@ -692,8 +694,11 @@ export function HistoryView() {
           const today = new Date();
           today.setHours(0, 0, 0, 0);
 
-          const startDate = new Date(today);
-          startDate.setDate(today.getDate() - 2);
+          const startDate = new Date(
+  today.getFullYear(),
+  today.getMonth() - 1,
+  1
+);
 
           const endDate = new Date(today);
           endDate.setDate(today.getDate() + 3);
@@ -747,9 +752,53 @@ export function HistoryView() {
               continue;
             }
 
-            const existingIdx = updatedHistory.findIndex(
-              h => h.state?.orderId === generatedOrderId || h.id === generatedOrderId
-            );
+            const existingIdx = updatedHistory.findIndex(h => {
+  const samePermanentId =
+    h.state?.orderId === generatedOrderId ||
+    h.id === generatedOrderId;
+
+  if (samePermanentId) {
+    return true;
+  }
+
+  const localOrderId = String(
+    h.state?.orderId || ''
+  );
+
+  const isTemporaryLocalOrder =
+    localOrderId.startsWith('SYNC-');
+
+  if (!isTemporaryLocalOrder) {
+    return false;
+  }
+
+  const sameName =
+    String(h.state?.customerName || '')
+      .trim()
+      .toLowerCase() ===
+    String(orderData.name || '')
+      .trim()
+      .toLowerCase();
+
+  const samePhone =
+    String(h.state?.customerPhone || '')
+      .replace(/\D/g, '') ===
+    String(orderData.phone || '')
+      .replace(/\D/g, '');
+
+  const localDue =
+    parseDueTimestamp(h.state?.customerDue);
+
+  const cloudDue =
+    parseDueTimestamp(orderData.due);
+
+  const sameDue =
+    localDue > 0 &&
+    cloudDue > 0 &&
+    localDue === cloudDue;
+
+  return sameName && samePhone && sameDue;
+});
 
             const dueTs = parseDueTimestamp(orderData.due);
 
@@ -803,49 +852,51 @@ export function HistoryView() {
               const localState = existingItem.state || {};
               const isUnsynced = localState.syncStatus !== 'synced';
 
-              const hasDiff = 
-                !!localState.isDelivered !== !!newState.isDelivered ||
-                String(localState.customerName || '') !== String(newState.customerName || '') ||
-                String(localState.customerPhone || '') !== String(newState.customerPhone || '') ||
-                String(localState.customerOrder || '') !== String(newState.customerOrder || '') ||
-                String(localState.customerTemplate || '') !== String(newState.customerTemplate || '') ||
-                String(localState.customerDue || '') !== String(newState.customerDue || '') ||
-                String(localState.orderLink || '') !== String(newState.orderLink || '');
+              const hasDiff =
+  String(localState.orderId || '') !== generatedOrderId ||
+  !!localState.isDelivered !== !!newState.isDelivered ||
+  String(localState.customerName || '') !== String(newState.customerName || '') ||
+  String(localState.customerPhone || '') !== String(newState.customerPhone || '') ||
+  String(localState.customerOrder || '') !== String(newState.customerOrder || '') ||
+  String(localState.customerTemplate || '') !== String(newState.customerTemplate || '') ||
+  String(localState.customerDue || '') !== String(newState.customerDue || '') ||
+  String(localState.orderLink || '') !== String(newState.orderLink || '');
 
-              if (hasDiff) {
-                if (!isUnsynced) {
-                  // If the item was recently toggled or edited locally (within 30 seconds),
-                  // we temporarily protect the local UI state from flickering to old values
-                  // while Google Sheets/script cache catches up. Otherwise, we accept the sheet's new data.
-                  const recentlyToggledOrEdited = localState.lastModifiedLocally && (currentNow - localState.lastModifiedLocally < 30000);
-                  if (!recentlyToggledOrEdited) {
-                    updatedHistory[existingIdx] = {
-                      ...existingItem,
-                      state: {
-                        ...localState,
-                        ...newState,
-                        syncStatus: 'synced'
-                      }
-                    };
-                    totalUpdCou++;
-                  }
-                } else {
-                  // If local is genuinely unsynced (offline), we preserve local data.
-                  // We do NOT call addToOfflineQueue here again because the offline queue already tracks
-                  // unsynced edits, preventing infinite loops/duplicate spam.
-                }
-              }
-            } else {
-              updatedHistory.push({
-                id: generatedOrderId,
-                timestamp: currentNow,
-                state: newState,
-                messages: []
-              });
-              totalNewCou++;
-            }
+if (hasDiff && !isUnsynced) {
+  const recentlyToggledOrEdited =
+    localState.lastModifiedLocally &&
+    currentNow - localState.lastModifiedLocally < 30000;
+
+  if (!recentlyToggledOrEdited) {
+    updatedHistory[existingIdx] = {
+      ...existingItem,
+      id: String(existingItem.id || '').startsWith('SYNC-')
+        ? generatedOrderId
+        : existingItem.id,
+      state: {
+        ...localState,
+        ...newState,
+        orderId: generatedOrderId,
+        syncStatus: 'synced'
+      }
+    };
+
+    totalUpdCou++;
+  }
+}
+} else {
+  updatedHistory.push({
+    id: generatedOrderId,
+    timestamp: currentNow,
+    state: newState,
+    messages: []
+  });
+
+  totalNewCou++;
+}
           }
         }
+
         return updatedHistory;
       });
 
@@ -1160,22 +1211,28 @@ export function HistoryView() {
               isDelivered: newStatus
             })
           }).then(() => {
-             console.log("no-cors POST delivered fallback succeeded!");
-             setRemoteResults((prev) =>
-              prev.map((item, idx) => (idx === index ? { 
-                ...item, 
-                syncStatus: 'synced',
-                syncLastSuccess: Date.now(),
-                syncFailCount: 0
-              } : item))
-            );
-            if (existingIdx !== -1) {
-               updateSpecificHistoryItem(history[existingIdx].id, {
-                 syncStatus: 'synced',
-                 syncLastSuccess: Date.now(),
-                 syncFailCount: 0
-               });
-            }
+  console.log(
+    'no-cors POST sent, but server response could not be verified.'
+  );
+
+  setRemoteResults((prev) =>
+    prev.map((item, idx) =>
+      idx === index
+        ? {
+            ...item,
+            syncStatus: 'sent_unverified',
+            syncLastAttempt: Date.now()
+          }
+        : item
+    )
+  );
+
+  if (existingIdx !== -1) {
+    updateSpecificHistoryItem(history[existingIdx].id, {
+      syncStatus: 'sent_unverified',
+      syncLastAttempt: Date.now()
+    });
+  }
           }).catch((postErr) => {
              console.error("POST delivered status fallback failed, queuing for offline:", postErr);
              addToOfflineQueue({
@@ -1235,23 +1292,29 @@ export function HistoryView() {
           isDelivered: newStatus
         })
       }).then(() => {
-         console.log("no-cors POST delivered fallback succeeded!");
-         setRemoteResults((prev) =>
-          prev.map((item, idx) => (idx === index ? { 
-            ...item, 
-            syncStatus: 'synced',
-            syncLastSuccess: Date.now(),
-            syncFailCount: 0
-          } : item))
-        );
-        if (existingIdx !== -1) {
-           updateSpecificHistoryItem(history[existingIdx].id, {
-             syncStatus: 'synced',
-             syncLastSuccess: Date.now(),
-             syncFailCount: 0
-           });
-        }
-      }).catch((postErr) => {
+  console.log(
+    'no-cors POST sent, but server response could not be verified.'
+  );
+
+  setRemoteResults((prev) =>
+    prev.map((item, idx) =>
+      idx === index
+        ? {
+            ...item,
+            syncStatus: 'sent_unverified',
+            syncLastAttempt: Date.now()
+          }
+        : item
+    )
+  );
+
+  if (existingIdx !== -1) {
+    updateSpecificHistoryItem(history[existingIdx].id, {
+      syncStatus: 'sent_unverified',
+      syncLastAttempt: Date.now()
+    });
+  }
+}).catch((postErr) => {
          console.error("POST delivered status fallback failed, queuing for offline:", postErr);
          addToOfflineQueue({
            action: 'update_delivered',
@@ -1854,6 +1917,12 @@ export function HistoryView() {
                             <div className="text-[9.5px] flex items-center">
                               {item.state.syncStatus === 'saved_locally' && <span className="text-gray-500 font-medium">Saved locally</span>}
                               {item.state.syncStatus === 'syncing' && <span className="text-blue-500 font-semibold animate-pulse flex items-center"><RefreshCcw className="w-2.5 h-2.5 mr-1 animate-spin" /> Syncing…</span>}
+                              {item.state.syncStatus === 'sent_unverified' && (
+  <span className="text-amber-600 font-semibold flex items-center">
+    <AlertCircle className="w-2.5 h-2.5 mr-1" />
+    Sent — awaiting verification
+  </span>
+)}
                               {item.state.syncStatus === 'synced' && <span className="text-emerald-600 font-bold flex items-center"><Check className="w-2.5 h-2.5 mr-1"/> Synced</span>}
                               {item.state.syncStatus === 'failed' && (
                                 <button 
@@ -2352,6 +2421,12 @@ export function HistoryView() {
                       <div className="w-full pt-2 mt-1.5 border-t border-dashed border-gray-100/80 flex items-start justify-between bg-gray-50/50 -mx-3 -mb-3 px-3 py-2 rounded-b-xl">
                         <div className="text-[9.5px] flex items-center">
                           {item.syncStatus === 'syncing' && <span className="text-blue-500 font-semibold animate-pulse flex items-center"><RefreshCcw className="w-2.5 h-2.5 mr-1 animate-spin" /> Syncing…</span>}
+                          {item.syncStatus === 'sent_unverified' && (
+  <span className="text-amber-600 font-semibold flex items-center">
+    <AlertCircle className="w-2.5 h-2.5 mr-1" />
+    Sent — awaiting verification
+  </span>
+)}
                           {item.syncStatus === 'synced' && <span className="text-emerald-600 font-bold flex items-center"><Check className="w-2.5 h-2.5 mr-1"/> Synced</span>}
                           {item.syncStatus === 'failed' && (
                             <button 
