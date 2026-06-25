@@ -31,7 +31,6 @@ export interface AppState {
   orderLink?: string;
   googleSheetLink?: string;
   orderId?: string;
-  price?: number;
   hasThreeHourChecked?: boolean;
   threeHourAlerted?: boolean;
   syncStatus?: 'saved_locally' | 'syncing' | 'synced' | 'failed';
@@ -45,7 +44,7 @@ export interface AppState {
   isDeleted?: boolean;
 }
 
-export type ViewType = 'home' | 'resume-type' | 'resume-form-fields' | 'general-form' | 'confirmation' | 'output' | 'history' | 'customer-info' | 'dashboard' | 'contacts-sync' | 'others';
+export type ViewType = 'home' | 'resume-type' | 'resume-form-fields' | 'general-form' | 'confirmation' | 'output' | 'history' | 'customer-info' | 'dashboard' | 'contacts-sync';
 
 export interface OrderHistoryItem {
   id: string;

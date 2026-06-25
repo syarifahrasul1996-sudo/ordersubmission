@@ -2,7 +2,7 @@ import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { useAppContext } from '../AppContext';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LabelList, CartesianGrid } from 'recharts';
 import { RefreshCcw, AlertCircle, Clock, X, ChevronDown } from 'lucide-react';
-import { parseDateStringToTimestamp } from '../utils';
+import { calculateDeadline, generateMessages, parseDateStringToTimestamp } from '../utils';
 import { AppState } from '../types';
 
 const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbw5KpBvJyFpIXmsHueg4XPSRkZ0mg6kxHqjMGp3WEs8Hx_JodvKSoKEg6RMsdH54iCa/exec';
@@ -17,10 +17,8 @@ const extractId = (input: string) => {
 
 const jsonpRequest = (url: URL, callbackName: string) => {
   return new Promise<any>((resolve, reject) => {
-    const cacheBustedUrl = new URL(url.toString());
-    cacheBustedUrl.searchParams.set('_nocache', String(Date.now()) + Math.random().toString(36).substring(2, 7));
     const script = document.createElement('script');
-    script.src = cacheBustedUrl.toString();
+    script.src = url.toString();
     script.async = true;
 
     const timeoutId = setTimeout(() => {
@@ -245,8 +243,8 @@ export function DashboardView() {
   };
 
   useEffect(() => {
-  // fetchDashboardOrders(filterYear);
-}, [filterYear, annualSheets, globalScriptUrl]);
+    fetchDashboardOrders(filterYear);
+  }, [filterYear, annualSheets, globalScriptUrl]);
 
   const stats = useMemo(() => {
     const orders = remoteOrders;
@@ -451,16 +449,6 @@ export function DashboardView() {
     else if (urgencyVal.includes('urgent')) urgency = 'urgent';
 
     const orderType = (order.order || order.jenisTempahan || 'Resume').trim();
-    let finalMainType = orderType;
-    let finalIsEditMode = false;
-
-    if (orderType === 'Edit Resume') {
-      finalMainType = 'Resume';
-      finalIsEditMode = true;
-    } else if (orderType === 'Resume') {
-      finalMainType = 'Resume';
-      finalIsEditMode = false;
-    }
     
     // Parse due date for state
     const { timestamp: dueTs } = parseDateStringToTimestamp(order.due || '', -1);
@@ -472,14 +460,14 @@ export function DashboardView() {
       customerOrder: order.order || order.jenisTempahan || '',
       customerJenis: order.jenis || order.urgency || '',
       customerDue: order.due || '',
-      mainType: finalMainType,
+      mainType: orderType,
       subType: order.pakej || '',
       urgency: urgency,
       dueTimestamp: dueTs === -1 ? Date.now() : dueTs,
       spreadsheetId: order.spreadsheetId || '',
       orderId: order.orderId || '',
       googleSheetLink: order.googleSheetLink || order.link || '',
-      isEditMode: finalIsEditMode,
+      isEditMode: true,
       isDueInvalid: isDueInvalid,
       dashboardFilterMonth: filterMonth,
       dashboardFilterYear: filterYear
@@ -715,7 +703,7 @@ export function DashboardView() {
                           dataKey="value"
                           label={{ fontSize: '10px', fill: '#636366', fontWeight: 'bold' }}
                         >
-                          {stats.customerTypes.map((_, index) => (
+                          {stats.customerTypes.map((entry, index) => (
                             <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                           ))}
                         </Pie>
@@ -756,7 +744,7 @@ export function DashboardView() {
                         dataKey="value"
                         label={{ fontSize: '10px', fill: '#636366', fontWeight: 'bold' }}
                       >
-                        {stats.typesChart.map((_, index) => (
+                        {stats.typesChart.map((entry, index) => (
                           <Cell key={`cell-${index}`} fill={COLORS[(index + 2) % COLORS.length]} />
                         ))}
                       </Pie>

@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { RefreshCcw, Save, Check, FileText, ExternalLink, Loader2, AlertCircle, ChevronDown } from 'lucide-react';
+import { RefreshCcw, Save, Check, FileText, ExternalLink, LogOut, Loader2, AlertCircle, ChevronDown } from 'lucide-react';
 import { useAppContext } from '../AppContext';
-import { formatPhoneUniversal, parseDateStringToTimestamp } from '../utils';
+import { calculateDeadline, formatPhoneUniversal, parseDateStringToTimestamp } from '../utils';
 import { Toast } from '../components/Toast';
 import { SetupHelper } from '../components/SetupHelper';
-import { googleSignIn, initAuth, getAccessToken } from '../utils/googleAuth';
+import { googleSignIn, initAuth, getAccessToken, logout } from '../utils/googleAuth';
 import { User } from 'firebase/auth';
 import { cn } from '../cn';
 
@@ -35,10 +35,7 @@ function jsonpRequest<T>(url: string, params: Record<string, string | number | b
 
     const script = document.createElement('script');
     const separator = url.indexOf('?') === -1 ? '?' : '&';
-    const queryParts = [
-      `callback=${callbackName}`,
-      `_nocache=${Date.now()}${Math.random().toString(36).substring(2, 7)}`
-    ];
+    const queryParts = [`callback=${callbackName}`];
     Object.entries(params).forEach(([key, value]) => {
       queryParts.push(`${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`);
     });
@@ -49,7 +46,7 @@ function jsonpRequest<T>(url: string, params: Record<string, string | number | b
     const timeoutId = setTimeout(() => {
       cleanup();
       reject(new Error('JSONP request timed out'));
-    }, 60000);
+    }, 30000);
 
     const cleanup = () => {
       clearTimeout(timeoutId);
@@ -71,7 +68,6 @@ function jsonpRequest<T>(url: string, params: Record<string, string | number | b
 export function CustomerInfoView() {
   const { appLanguage, state, setState, goHome, viewStack, updateOrderHistoryState, addToOfflineQueue, saveAsDraft: contextSaveAsDraft, deleteDraft, history, setHistory } = useAppContext();
   const isActive = viewStack[viewStack.length - 1] === 'customer-info';
-  const isSubmittingRef = useRef(false);
 
   const computeInitialValues = useCallback(() => {
     let initOrder = '';
@@ -241,6 +237,7 @@ export function CustomerInfoView() {
   const [isSaving, setIsSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [isInIframe, setIsInIframe] = useState(false);
   const [toastMsg, setToastMsg] = useState('');
   const [showToast, setShowToast] = useState(false);
   const [showSetup, setShowSetup] = useState(false);
@@ -319,13 +316,16 @@ export function CustomerInfoView() {
       };
 
       let templateContent = "";
+      let mode = "letter";
 
       if (order === "Surat") {
         const letterTemplate = await fetchDocContent(TEMPLATE_SOURCES.letter.docUrl);
         templateContent = letterTemplate || "";
+        mode = "letter";
       } else if (order === "Agreement" || (template && template.includes("PERJANJIAN"))) {
         const agreementTemplateSection = await fetchDocContent(TEMPLATE_SOURCES.agreement.docUrl);
         templateContent = agreementTemplateSection || "";
+        mode = "agreement";
       }
 
       // Perform standard placeholder replacements locally instead of using Gemini AI
@@ -468,6 +468,14 @@ Dokumen Dijana Secara Automatik`;
     setShowToast(true);
     setTimeout(() => setShowToast(false), 3000);
   };
+
+  useEffect(() => {
+    try {
+      setIsInIframe(window.self !== window.top);
+    } catch (e) {
+      setIsInIframe(true);
+    }
+  }, []);
 
   // Re-compute when navigating here or state changes
   useEffect(() => {
@@ -643,12 +651,6 @@ Dokumen Dijana Secara Automatik`;
       return;
     }
     
-    if (isSubmittingRef.current) {
-      console.log("Submission already in progress, ignoring duplicate trigger.");
-      return;
-    }
-    isSubmittingRef.current = true;
-    
     // Cleanup draft if it exists
     if (state.historyId) {
         deleteDraft(state.historyId);
@@ -793,13 +795,9 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
           localStorage.removeItem('customer_form_progress');
           setSaved(true);
           showToastMessage(appLanguage === 'ms' ? 'Luar Talian: Disimpan dalam Que' : 'Offline: Saved to Queue');
-          setTimeout(() => {
-            isSubmittingRef.current = false;
-            goHome();
-          }, 1800);
+          setTimeout(() => goHome(), 1800);
           return;
         } catch (e) {
-          isSubmittingRef.current = false;
           throw new Error('Failed to save to offline queue.');
         }
       }
@@ -913,7 +911,6 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
       return;
       
     } catch (err: any) {
-      isSubmittingRef.current = false;
       console.error(err);
       let errMsg = err.message || 'Error occurred while saving';
       if (errMsg.includes('Failed to fetch')) {

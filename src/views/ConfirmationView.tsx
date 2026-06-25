@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { Copy, Check } from 'lucide-react';
 import { useAppContext } from '../AppContext';
 import { calculateDeadline, generateMessages } from '../utils';

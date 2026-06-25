@@ -4,6 +4,7 @@ import {
   Users, 
   RefreshCw, 
   Search, 
+  AlertTriangle, 
   CheckSquare, 
   Square, 
   Loader2, 
@@ -135,10 +136,8 @@ export function ContactsSyncView() {
     // Helper JSONP request
     const jsonpRequestLocal = (url: URL, callbackName: string) => {
       return new Promise<any>((resolve, reject) => {
-        const cacheBustedUrl = new URL(url.toString());
-        cacheBustedUrl.searchParams.set('_nocache', String(Date.now()) + Math.random().toString(36).substring(2, 7));
         const script = document.createElement('script');
-        script.src = cacheBustedUrl.toString();
+        script.src = url.toString();
         script.async = true;
 
         const timeoutId = setTimeout(() => {
@@ -184,7 +183,7 @@ export function ContactsSyncView() {
           url.searchParams.append('year', sheet.year);
           url.searchParams.append('callback', callbackName);
 
-          setCloudFetchProgress(() => 
+          setCloudFetchProgress(prev => 
             appLanguage === 'ms' 
               ? `Memuat turun data tahun ${sheet.year}...` 
               : `Downloading data for year ${sheet.year}...`

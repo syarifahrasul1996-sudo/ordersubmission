@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { cn } from '../cn';
-import { Clock, Trash2, Calendar, AlertCircle, RefreshCcw, Save, Bell, Check, Search, Database, Phone, Settings, X } from 'lucide-react';
+import { Clock, Trash2, Calendar, AlertCircle, RefreshCcw, Save, Bell, Check, Search, Database, Phone, Settings, ChevronDown, ChevronUp, Link, X, ArrowRight, Zap } from 'lucide-react';
 import { useAppContext } from '../AppContext';
 import { formatPhoneUniversal, parseDateStringToTimestamp } from '../utils';
 
@@ -81,6 +81,7 @@ export function HistoryView() {
     state,
     history,
     setHistory,
+    clearHistory,
     deleteOrderFromHistory,
     restoreOrderFromHistory,
     permanentlyDeleteOrderFromHistory,
@@ -88,6 +89,7 @@ export function HistoryView() {
     drafts,
     deleteDraft,
     loadDraft,
+    pushView,
     appLanguage,
     updateSpecificHistoryItem,
     updateOrderHistoryState,
@@ -130,10 +132,8 @@ export function HistoryView() {
   const setDeliveryFilter = setHistoryDeliveryFilter;
   const pendingTimeFilter = historyPendingTimeFilter;
   const setPendingTimeFilter = setHistoryPendingTimeFilter;
-  const [activeTab, setActiveTab] = useState<'local' | 'drafts' | 'cloud' | 'trash'>('local');
+  const [activeTab, setActiveTab] = useState<'local' | 'drafts' | 'trash'>('local');
   const [searchQuery, setSearchQuery] = useState('');
-  const [cloudSearchQuery, setCloudSearchQuery] = useState('');
-  const searchMode = activeTab === 'cloud' ? 'cloud' : 'local';
   const [remoteResults, setRemoteResults] = useState<any[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState('');
@@ -266,7 +266,31 @@ export function HistoryView() {
     });
   }, [history, deliveryFilter, searchQuery, currentTime, pendingTimeFilter]);
 
+  useEffect(() => {
+    const trimmed = searchQuery.trim();
+    if (!trimmed || activeTab !== 'local') {
+      if (!trimmed && remoteResults.length > 0) {
+        setRemoteResults([]);
+      }
+      return;
+    }
 
+    const hasLocalMatches = localizedHistoryItems.length > 0;
+
+    if (hasLocalMatches) {
+      if (remoteResults.length > 0) {
+        setRemoteResults([]);
+      }
+      return;
+    }
+
+    // Debounce remote search by 750ms if no local matches
+    const delayDebounceFn = setTimeout(() => {
+      handleRemoteSearch();
+    }, 750);
+
+    return () => clearTimeout(delayDebounceFn);
+  }, [searchQuery, localizedHistoryItems.length, activeTab]);
 
 
   const [annualSheets, setAnnualSheets] = useState<{ year: string; spreadsheetId: string; scriptUrl: string }[]>(() => {
@@ -400,10 +424,8 @@ export function HistoryView() {
 
   const jsonpRequest = (url: URL, callbackName: string) => {
     return new Promise<any>((resolve, reject) => {
-      const cacheBustedUrl = new URL(url.toString());
-      cacheBustedUrl.searchParams.set('_nocache', String(Date.now()) + Math.random().toString(36).substring(2, 7));
       const script = document.createElement('script');
-      script.src = cacheBustedUrl.toString();
+      script.src = url.toString();
       script.async = true;
 
       const timeoutId = setTimeout(() => {
@@ -665,7 +687,7 @@ export function HistoryView() {
         const callbackName = 'jsonp_callback_sync_' + Math.round(100000 * Math.random()) + '_' + safeYear;
         const url = new URL(sUrl);
 
-        url.searchParams.append('action', 'get_dashboard_orders');
+        url.searchParams.append('action', 'sync_recent');
         url.searchParams.append('spreadsheetId', sId);
         url.searchParams.append('callback', callbackName);
 
@@ -926,6 +948,19 @@ export function HistoryView() {
     }
   };
 
+  const handleClearConfirm = () => {
+    setConfirmAction({
+      title: appLanguage === 'ms' ? 'Padam Semua Sejarah?' : 'Delete All History?',
+      message: appLanguage === 'ms'
+        ? 'Tindakan ini tidak boleh diundurkan. Semua rekod tempahan akan dipadam.'
+        : 'This action cannot be undone. All order records will be deleted.',
+      onConfirm: () => {
+        clearHistory();
+        setConfirmAction(null);
+      }
+    });
+  };
+
   const handleRemoteSearch = async () => {
     const activeConfigs = annualSheets.filter(s => s.spreadsheetId.trim() !== '');
 
@@ -940,7 +975,7 @@ export function HistoryView() {
       return;
     }
 
-    const q = cloudSearchQuery.trim();
+    const q = searchQuery.trim();
     if (!q) return;
 
     setIsSearching(true);
@@ -1050,8 +1085,251 @@ export function HistoryView() {
     }
   };
 
+  const handleLoadRemoteOrder = (orderData: any) => {
+    const generatedOrderId =
+      orderData.orderId ||
+      `SYNC-${orderData.name || 'UNKNOWN'}-${orderData.phone || ''}-${orderData.due || ''}`
+        .replace(/\s+/g, '-')
+        .replace(/[^a-zA-Z0-9-]/g, '');
+
+    // Check if we already have this in local history (by generatedOrderId or orderId) to avoid creating a duplicate card
+    const localMatch = history.find(item => 
+      item.id === generatedOrderId || 
+      (item.state?.orderId && item.state.orderId === generatedOrderId)
+    );
+
+    if (localMatch) {
+      loadOrder(localMatch);
+      return;
+    }
+
+    const dueTs = parseDueTimestamp(orderData.due);
+
+    const stateToApply = {
+      isDelivered: !!orderData.isDelivered,
+      spreadsheetId: orderData.spreadsheetId || state.spreadsheetId,
+      customerName: orderData.name,
+      customerPhone: orderData.phone,
+      customerOrder: orderData.order,
+      template: orderData.template,
+      customerTemplate: orderData.template,
+      customerBahasa: orderData.bahasa,
+      customerAddOn: orderData.addon,
+      customerJenis: orderData.jenis,
+      customerDue: orderData.due,
+      orderLink: orderData.link,
+      googleSheetLink: orderData.link,
+      orderId: generatedOrderId,
+      dueTimestamp: dueTs,
+      mainType:
+        orderData.order === 'Resume'
+          ? 'Resume'
+          : orderData.order === 'Surat'
+          ? 'Surat'
+          : orderData.order || 'Lain-lain',
+      subType: '',
+      customerInfo: ''
+    };
+
+    const mockHistoryItem = {
+      id: generatedOrderId,
+      timestamp: Date.now(),
+      state: stateToApply,
+      messages: []
+    };
+
+    loadOrder(mockHistoryItem);
+  };
+
+  const handleRemoteDeliveredToggle = async (
+    e: React.MouseEvent,
+    index: number,
+    orderData: any,
+    isRetry = false
+  ) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const spreadsheetId = orderData.spreadsheetId || state.spreadsheetId;
+    const scriptUrl = orderData.scriptUrl || getActiveScriptUrl(spreadsheetId);
+    const orderId = orderData.orderId;
+    const currentStatus = !!orderData.isDelivered;
+    const newStatus = isRetry ? currentStatus : !currentStatus;
+
+    if (!spreadsheetId || !orderId) {
+      setAlertMsg({ type: 'error', message: appLanguage === 'ms' ? 'Kekurangan Order ID atau Spreadsheet ID.' : 'Missing Order ID or Spreadsheet ID.' });
+      return;
+    }
+
+    // Instantly update local UI
+    const now = Date.now();
+    setRemoteResults((prev) =>
+      prev.map((item, idx) => (idx === index ? { 
+        ...item, 
+        isDelivered: newStatus,
+        syncStatus: 'syncing',
+        syncLastAttempt: now
+      } : item))
+    );
+
+    // If it exists in local history too, update there
+    const existingIdx = history.findIndex((h) => h.state?.orderId === orderId);
+    if (existingIdx !== -1) {
+      updateSpecificHistoryItem(history[existingIdx].id, {
+        isDelivered: newStatus,
+        syncStatus: 'syncing',
+        syncLastAttempt: now
+      });
+    }
+
+    try {
+      const callbackName = 'jsonp_callback_remote_delivered_' + Math.round(Math.random() * 100000);
+      const url = new URL(scriptUrl);
+
+      url.searchParams.append('action', 'update_delivered');
+      url.searchParams.append('spreadsheetId', spreadsheetId);
+      url.searchParams.append('orderId', orderId);
+      url.searchParams.append('isDelivered', String(newStatus));
+      url.searchParams.append('callback', callbackName);
+
+      const result = await jsonpRequest(url, callbackName);
+      if (result.status !== 'success') {
+        console.warn('Synced status check warning:', result.message || 'Update failed');
+          // Try POST fallback
+          console.log("Executing no-cors POST update_delivered fallback from remote...");
+          fetch(scriptUrl, {
+            method: 'POST',
+            mode: 'no-cors',
+            headers: {
+              'Content-Type': 'text/plain;charset=utf-8'
+            },
+            body: JSON.stringify({
+              action: 'update_delivered',
+              spreadsheetId: spreadsheetId,
+              orderId: orderId,
+              isDelivered: newStatus
+            })
+          }).then(() => {
+             console.log("no-cors POST delivered fallback succeeded!");
+             setRemoteResults((prev) =>
+              prev.map((item, idx) => (idx === index ? { 
+                ...item, 
+                syncStatus: 'synced',
+                syncLastSuccess: Date.now(),
+                syncFailCount: 0
+              } : item))
+            );
+            if (existingIdx !== -1) {
+               updateSpecificHistoryItem(history[existingIdx].id, {
+                 syncStatus: 'synced',
+                 syncLastSuccess: Date.now(),
+                 syncFailCount: 0
+               });
+            }
+          }).catch((postErr) => {
+             console.error("POST delivered status fallback failed, queuing for offline:", postErr);
+             addToOfflineQueue({
+               action: 'update_delivered',
+               spreadsheetId: spreadsheetId,
+               orderId: orderId,
+               isDelivered: newStatus
+             }, scriptUrl, existingIdx !== -1 ? history[existingIdx].id : undefined);
+
+             setRemoteResults((prev) =>
+              prev.map((item, idx) => (idx === index ? { 
+                ...item, 
+                syncStatus: 'failed',
+                syncFailCount: (item.syncFailCount || 0) + 1,
+                syncLastAttempt: Date.now()
+              } : item))
+            );
+            if (existingIdx !== -1) {
+              updateSpecificHistoryItem(history[existingIdx].id, {
+                syncStatus: 'failed',
+                syncFailCount: (history[existingIdx].state?.syncFailCount || 0) + 1,
+                syncLastAttempt: Date.now()
+              });
+            }
+          });
+      } else {
+         setRemoteResults((prev) =>
+          prev.map((item, idx) => (idx === index ? { 
+            ...item, 
+            syncStatus: 'synced',
+            syncLastSuccess: Date.now(),
+            syncFailCount: 0
+          } : item))
+        );
+        if (existingIdx !== -1) {
+           updateSpecificHistoryItem(history[existingIdx].id, {
+             syncStatus: 'synced',
+             syncLastSuccess: Date.now(),
+             syncFailCount: 0
+           });
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to sync delivered status update in background:', err);
+      // Try POST fallback
+      console.log("Executing no-cors POST update_delivered fallback from remote catch...");
+      fetch(scriptUrl, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: {
+          'Content-Type': 'text/plain;charset=utf-8'
+        },
+        body: JSON.stringify({
+          action: 'update_delivered',
+          spreadsheetId: spreadsheetId,
+          orderId: orderId,
+          isDelivered: newStatus
+        })
+      }).then(() => {
+         console.log("no-cors POST delivered fallback succeeded!");
+         setRemoteResults((prev) =>
+          prev.map((item, idx) => (idx === index ? { 
+            ...item, 
+            syncStatus: 'synced',
+            syncLastSuccess: Date.now(),
+            syncFailCount: 0
+          } : item))
+        );
+        if (existingIdx !== -1) {
+           updateSpecificHistoryItem(history[existingIdx].id, {
+             syncStatus: 'synced',
+             syncLastSuccess: Date.now(),
+             syncFailCount: 0
+           });
+        }
+      }).catch((postErr) => {
+         console.error("POST delivered status fallback failed, queuing for offline:", postErr);
+         addToOfflineQueue({
+           action: 'update_delivered',
+           spreadsheetId: spreadsheetId,
+           orderId: orderId,
+           isDelivered: newStatus
+         }, scriptUrl, existingIdx !== -1 ? history[existingIdx].id : undefined);
+
+         setRemoteResults((prev) =>
+          prev.map((item, idx) => (idx === index ? { 
+            ...item, 
+            syncStatus: 'failed',
+            syncFailCount: (item.syncFailCount || 0) + 1,
+            syncLastAttempt: Date.now()
+          } : item))
+        );
+        if (existingIdx !== -1) {
+          updateSpecificHistoryItem(history[existingIdx].id, {
+            syncStatus: 'failed',
+            syncFailCount: (history[existingIdx].state?.syncFailCount || 0) + 1,
+            syncLastAttempt: Date.now()
+          });
+        }
+      });
+    }
+  };
+
   return (
-    <>
     <div
       className="flex flex-col bg-background w-full min-h-screen pb-[calc(env(safe-area-inset-bottom)+8rem)] overscroll-y-contain"
       onTouchStart={onTouchStart}
@@ -1077,83 +1355,49 @@ export function HistoryView() {
       </div>
 
       <div className="p-4 sm:p-6 space-y-4">
-        {/* Separate Search Bar based on Search Mode */}
+        {/* Unified Search Bar */}
         <div className="flex gap-2 mb-2">
           <div className="relative flex-1 group">
             <input
               type="text"
-              value={searchMode === 'local' ? searchQuery : cloudSearchQuery}
-              onChange={(e) => {
-                if (searchMode === 'local') {
-                  setSearchQuery(e.target.value);
-                } else {
-                  setCloudSearchQuery(e.target.value);
-                }
-              }}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
-                  if (searchMode === 'cloud') {
-                    handleRemoteSearch();
-                  }
+                  handleRemoteSearch();
                 }
               }}
-              placeholder={
-                searchMode === 'local'
-                  ? (appLanguage === 'ms' ? 'Cari nama, Order ID, atau no. telefon...' : 'Search name, Order ID, or phone...')
-                  : (appLanguage === 'ms' ? 'Cari nama, Order ID, telefon di Cloud...' : 'Search name, Order ID, phone on Cloud...')
-              }
+              placeholder={appLanguage === 'ms' ? 'Cari nama, Order ID, atau no. telefon...' : 'Search name, Order ID, or phone...'}
               className="w-full h-11 bg-gray-100/80 dark:bg-zinc-900/50 rounded-xl pl-10 pr-10 font-bold text-text border border-transparent outline-none focus:bg-white dark:focus:bg-zinc-900 focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all text-[11px] sm:text-xs placeholder:text-gray-400 placeholder:font-medium"
             />
             <Search className="w-4 h-4 text-subtext/75 absolute left-3.5 top-3.5" />
-            {(searchMode === 'local' ? searchQuery : cloudSearchQuery) && (
+            {searchQuery && (
               <button
                 type="button"
-                onClick={() => {
-                  if (searchMode === 'local') {
-                    setSearchQuery('');
-                  } else {
-                    setCloudSearchQuery('');
-                    setRemoteResults([]);
-                    setSearchError('');
-                  }
-                }}
+                onClick={() => setSearchQuery('')}
                 className="absolute right-3.5 top-3 w-5 h-5 rounded-full bg-gray-200 dark:bg-zinc-800 hover:bg-gray-300 dark:hover:bg-zinc-700 text-subtext flex items-center justify-center transition-colors"
               >
                 <X className="w-3" />
               </button>
             )}
           </div>
-          {searchMode === 'cloud' ? (
-            <button
-              type="button"
-              onClick={handleRemoteSearch}
-              disabled={isSearching}
-              className="px-4 h-11 bg-primary text-white font-bold rounded-xl hover:bg-primary/90 active:scale-95 flex items-center justify-center gap-1.5 transition-all duration-200 shadow-sm text-xs"
-            >
-              <Search className="w-4 h-4" />
-              <span>{appLanguage === 'ms' ? 'Cari' : 'Search'}</span>
-            </button>
-          ) : (
-            <>
-              <button
-                type="button"
-                onClick={() => handleGlobalSync(false)}
-                disabled={refreshing}
-                className="w-11 h-11 bg-gray-100/80 dark:bg-zinc-900/50 text-subtext hover:bg-gray-200 dark:hover:bg-zinc-800 active:scale-95 flex items-center justify-center rounded-xl transition-all duration-200 shadow-sm"
-                title={appLanguage === 'ms' ? 'Segarkan Sejarah' : 'Refresh History'}
-              >
-                <RefreshCcw className={`w-4 h-4 ${refreshing ? 'animate-spin text-primary' : ''}`} />
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowDbSettings(!showDbSettings)}
-                className="w-11 h-11 bg-gray-100/80 dark:bg-zinc-900/50 text-subtext hover:bg-gray-200 dark:hover:bg-zinc-800 active:scale-95 flex items-center justify-center rounded-xl transition-all duration-200 shadow-sm"
-                title={appLanguage === 'ms' ? 'Tetapan Database Cloud' : 'Cloud Database Settings'}
-              >
-                <Settings className={`w-4 h-4 ${showDbSettings ? 'text-primary' : ''}`} />
-              </button>
-            </>
-          )}
+          <button
+            type="button"
+            onClick={() => handleGlobalSync(false)}
+            disabled={refreshing}
+            className="w-11 h-11 bg-gray-100/80 dark:bg-zinc-900/50 text-subtext hover:bg-gray-200 dark:hover:bg-zinc-800 active:scale-95 flex items-center justify-center rounded-xl transition-all duration-200 shadow-sm"
+            title={appLanguage === 'ms' ? 'Segarkan Sejarah' : 'Refresh History'}
+          >
+            <RefreshCcw className={`w-4 h-4 ${refreshing ? 'animate-spin text-primary' : ''}`} />
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowDbSettings(!showDbSettings)}
+            className="w-11 h-11 bg-gray-100/80 dark:bg-zinc-900/50 text-subtext hover:bg-gray-200 dark:hover:bg-zinc-800 active:scale-95 flex items-center justify-center rounded-xl transition-all duration-200 shadow-sm"
+            title={appLanguage === 'ms' ? 'Tetapan Database Cloud' : 'Cloud Database Settings'}
+          >
+            <Settings className={`w-4 h-4 ${showDbSettings ? 'text-primary' : ''}`} />
+          </button>
         </div>
 
         {/* Collapsible Annual Connection & Settings */}
@@ -1309,7 +1553,7 @@ export function HistoryView() {
         )}
 
         {/* Tab Segment Selector */}
-        <div className="flex bg-gray-100/80 p-1 rounded-xl shadow-sm mb-4">
+        <div className="flex bg-gray-100/80 p-1 rounded-xl shadow-sm mb-1">
           <button
             type="button"
             onClick={() => setActiveTab('local')}
@@ -1336,18 +1580,6 @@ export function HistoryView() {
           </button>
           <button
             type="button"
-            onClick={() => setActiveTab('cloud')}
-            className={`flex-1 text-center text-[10px] sm:text-xs font-bold py-2 px-1 rounded-lg transition-all duration-200 flex items-center justify-center space-x-1 ${
-              activeTab === 'cloud'
-                ? 'bg-white text-primary shadow-sm'
-                : 'text-subtext/70 hover:text-text hover:bg-white/40'
-            }`}
-          >
-            <Database className="w-3.5 h-3.5" />
-            <span className="truncate">{appLanguage === 'ms' ? 'Cloud' : 'Cloud'}</span>
-          </button>
-          <button
-            type="button"
             onClick={() => {
               setActiveTab('trash');
             }}
@@ -1358,7 +1590,7 @@ export function HistoryView() {
             }`}
           >
             <Trash2 className="w-3.5 h-3.5" />
-            <span className="truncate">{appLanguage === 'ms' ? 'Tong Sampah' : 'Trash'}</span>
+            <span className="truncate">{appLanguage === 'ms' ? 'Tong Sampah' : 'Trash Bin'}</span>
             {(() => {
               const deletedCount = history.filter(item => item?.state?.isDeleted).length;
               return deletedCount > 0 ? (
@@ -1369,40 +1601,9 @@ export function HistoryView() {
             })()}
           </button>
         </div>
-        
-        {/* Main Content Area */}
-        {activeTab === 'cloud' && (
-          <div className="space-y-4">
-             {searchError && (
-               <div className="p-3 bg-red-50 dark:bg-red-950/20 text-red-700 dark:text-red-400 rounded-xl text-xs font-semibold border border-red-100 dark:border-red-900/30 flex items-center space-x-2 animate-fade-in">
-                 <AlertCircle className="w-3.5 h-3.5 shrink-0 text-red-500" />
-                 <span>{searchError}</span>
-               </div>
-             )}
-             {isSearching && (
-               <div className="flex flex-col items-center justify-center py-16 text-subtext">
-                 <RefreshCcw className="w-7 h-7 mb-3 animate-spin text-primary opacity-80" />
-                 <p className="font-bold text-xs select-none animate-pulse">
-                   {appLanguage === 'ms' ? 'Sedang mencari di lembaran tahunan...' : 'Searching across annual sheets...'}
-                 </p>
-               </div>
-             )}
-             {!isSearching && remoteResults.length === 0 && !searchError && (
-               <div className="flex flex-col items-center justify-center py-20 text-subtext bg-surface border border-dashed border-gray-200 rounded-2xl animate-fade-in">
-                 <Database className="w-12 h-12 mb-3 opacity-30 animate-pulse text-primary" />
-                 <p className="font-bold text-xs text-center max-w-xs leading-relaxed">
-                   {appLanguage === 'ms'
-                     ? 'Sila masukkan kata kunci di atas dan ketik butang "Cari" untuk mencari rekod di Cloud Database'
-                     : 'Please enter a keyword above and click the "Search" button to find records in the Cloud Database'}
-                 </p>
-               </div>
-             )}
-          </div>
-        )}
-
         {activeTab === 'local' && (
-          <>
-                {history.filter(item => !item.state?.isDeleted).length === 0 ? (
+          <div className="space-y-4">
+            {history.filter(item => !item.state?.isDeleted).length === 0 ? (
               <div className="flex flex-col items-center justify-center py-20 text-subtext space-y-4">
                 <Clock className="w-16 h-16 opacity-50" />
                 <p className="font-bold">
@@ -1538,13 +1739,226 @@ export function HistoryView() {
               if (matchedItems.length === 0) {
                 if (searchQuery.trim() !== '') {
                   return (
-                    <div className="flex flex-col items-center justify-center py-16 text-subtext bg-surface border border-dashed border-gray-200 rounded-2xl animate-fade-in">
-                      <Clock className="w-12 h-12 mb-3 opacity-30" />
-                      <p className="font-bold text-xs font-semibold">
-                        {appLanguage === 'ms'
-                          ? 'Tiada padanan dijumpai di sejarah lokal'
-                          : 'No matching records found in local history'}
-                      </p>
+                    <div className="space-y-4">
+                      {/* Search Error */}
+                      {searchError && (
+                        <div className="p-3 bg-red-50 text-red-700 rounded-xl text-xs font-semibold border border-red-100 flex items-center space-x-2 animate-fade-in">
+                          <AlertCircle className="w-3.5 h-3.5 shrink-0 text-red-500" />
+                          <span>{searchError}</span>
+                        </div>
+                      )}
+
+                      {/* Searching indicator */}
+                      {isSearching && (
+                        <div className="flex flex-col items-center justify-center py-16 text-subtext">
+                          <RefreshCcw className="w-7 h-7 mb-3 animate-spin text-primary opacity-80" />
+                          <p className="font-bold text-xs select-none animate-pulse">
+                            {appLanguage === 'ms' ? 'Sedang mencari di lembaran tahunan...' : 'Searching across annual sheets...'}
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Search Results */}
+                      {!isSearching && remoteResults.length > 0 && (
+                        <div className="space-y-2.5 animate-fade-in-up">
+                          <div className="flex items-center justify-between pl-1">
+                            <p className="text-[10px] font-bold text-subtext uppercase tracking-widest">
+                              {appLanguage === 'ms' 
+                                ? `Hasil Carian Cloud (${remoteResults.length} Rekod)` 
+                                : `Cloud Search Results (${remoteResults.length} Records)`}
+                            </p>
+                            <button 
+                              type="button"
+                              onClick={() => {
+                                setRemoteResults([]);
+                                setSearchQuery('');
+                              }}
+                              className="text-[10px] font-bold text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 uppercase tracking-widest px-2 py-1 rounded transition-colors flex flex-shrink-0 items-center justify-center"
+                              id="btn-clear-search"
+                            >
+                              {appLanguage === 'ms' ? 'Padam Carian' : 'Clear Results'}
+                            </button>
+                          </div>
+
+                          {remoteResults.map((item, idx) => {
+                            const isDelivered = !!item.isDelivered;
+                            const orderId = item.orderId || item.generatedId || `SYNC-TMP-${idx}`;
+
+                            return (
+                              <div
+                                key={orderId + '-' + idx}
+                                onClick={() => handleLoadRemoteOrder(item)}
+                                className={`bg-surface border relative overflow-hidden ${
+                                  isDelivered
+                                    ? 'border-blue-100 bg-blue-50/5 hover:border-blue-200'
+                                    : 'border-gray-200/60 hover:border-gray-300 shadow-sm'
+                                } rounded-xl p-2.5 flex flex-col space-y-1 hover:bg-gray-50/65 cursor-pointer active:scale-[0.995] transition-all duration-200`}
+                              >
+                                {/* Left Accent Bar */}
+                                <div className={`absolute left-0 top-0 bottom-0 w-1 rounded-r ${isDelivered ? 'bg-blue-400' : 'bg-gray-300'}`} />
+
+                                <div className="pl-1.5">
+                                  <div className="flex justify-between items-start border-b border-gray-100/60 pb-1">
+                                    <div className="flex-1">
+                                      <div className="flex flex-wrap items-center gap-1 mb-0.5">
+                                        <div
+                                          className={`flex items-center ${
+                                            isDelivered
+                                              ? 'text-blue-500 font-bold'
+                                              : 'text-primary/75 font-semibold'
+                                          } text-[10px] sm:text-[10.5px] uppercase tracking-wider`}
+                                        >
+                                          {isDelivered ? (
+                                            <Check className="w-3 h-3 mr-1 text-blue-500" />
+                                          ) : (
+                                            <Calendar className="w-3 h-3 mr-1" />
+                                          )}
+                                          {item.due || (appLanguage === 'ms' ? 'Tiada Tarikh' : 'No Date')}
+
+                                          {isDelivered && (
+                                            <span className="ml-1 text-blue-500 lowercase">
+                                              ({appLanguage === 'ms' ? 'Dihantar' : 'Delivered'})
+                                            </span>
+                                          )}
+                                        </div>
+                                        <span className="px-2 py-0.5 rounded-full text-[10px] font-black tracking-wider bg-purple-100 text-purple-700">
+                                          <Database className="w-2.5 h-2.5 inline mr-0.5" />
+                                          {item.sheetName || 'Google Sheet'}
+                                        </span>
+                                      </div>
+
+                                      <p className="font-bold text-sm sm:text-[13.5px] leading-tight text-[#111827]">
+                                        {item.order}
+                                        {item.name ? ` - ${formatCustomerName(item.name)}` : ''}
+                                      </p>
+                                    </div>
+                                  </div>
+
+                                  <div className="flex flex-wrap gap-x-2.5 gap-y-0.5 text-xs mt-1 leading-normal">
+                                    <div className="w-full flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+                                      {[
+                                        item.template ? (
+                                          <span key="template" className="font-medium text-[#374151]">{item.template}</span>
+                                        ) : null,
+                                        item.bahasa ? (
+                                          <span key="bahasa" className="font-medium text-[#374151]">{item.bahasa}</span>
+                                        ) : null,
+                                        item.jenis ? (() => {
+                                          const val = String(item.jenis).toLowerCase();
+                                          let bColor = "text-gray-500 font-medium";
+                                          let displayVal = item.jenis;
+                                          if (val.includes('super')) { bColor = "text-super font-bold"; displayVal = "Super Urgent"; }
+                                          else if (val.includes('semi')) { bColor = "text-semi font-bold"; displayVal = "Semi Urgent"; }
+                                          else if (val.includes('normal') || val.includes('tak') || val.includes('not') || val.includes('tidak')) { bColor = "text-noturgent font-bold"; displayVal = appLanguage === 'ms' ? "Tak Urgent" : "Not Urgent"; }
+                                          else if (val.includes('urgent')) { bColor = "text-urgent font-bold"; displayVal = "Urgent"; }
+                                          return <span key="jenis" className={bColor}>{displayVal}</span>;
+                                        })() : null
+                                      ].filter(Boolean).map((part, index, array) => (
+                                        <React.Fragment key={index}>
+                                          {part}
+                                          {index < array.length - 1 && <span className="text-gray-300 font-bold mx-0.5">•</span>}
+                                        </React.Fragment>
+                                      ))}
+                                    </div>
+                                  </div>
+
+                                  <div className="flex flex-col gap-0.5 mt-1 text-[11.5px] text-subtext leading-snug">
+                                    {item.addon && (
+                                      <div className="truncate">
+                                        <span className="font-semibold text-gray-500">{(appLanguage === 'ms' ? 'Tambahan: ' : 'Add On: ')}</span>
+                                        <span className="text-gray-700 font-medium">{item.addon}</span>
+                                      </div>
+                                    )}
+                                    
+                                    {item.phone && (
+                                      <div className="flex items-center space-x-1.5 mt-0.5">
+                                        <span className="font-semibold text-gray-500">{appLanguage === 'ms' ? 'Tel:' : 'Phone:'}</span>
+                                        <a
+                                          href={`https://wa.me/${String(item.phone).replace(/\D/g, '').startsWith('0') ? '6' + String(item.phone).replace(/\D/g, '') : String(item.phone).replace(/\D/g, '')}`}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          onClick={(e) => e.stopPropagation()}
+                                          className="font-semibold text-blue-600 hover:underline hover:text-blue-700 bg-blue-50/50 px-1.5 py-0 rounded flex items-center space-x-1 inline-flex text-[10px]"
+                                          title={appLanguage === 'ms' ? 'Hubungi di WhatsApp' : 'Contact on WhatsApp'}
+                                        >
+                                          <Phone className="w-2.5 h-2.5 text-blue-500 shrink-0" />
+                                          <span className="select-all font-mono">
+                                            {formatDisplayPhone(item.phone)}
+                                          </span>
+                                        </a>
+                                      </div>
+                                    )}
+
+                                    {item.orderId && (
+                                      <div className="mt-0.5"><span className="font-semibold text-gray-500">ID:</span> <span className="font-mono text-[10.5px] font-semibold text-text/80 bg-gray-55 px-1 rounded">{item.orderId}</span></div>
+                                    )}
+
+                                    {item.link && (
+                                      <div className="w-full pt-1">
+                                        <span className="font-semibold text-gray-500">Link:</span>{' '}
+                                        <div className="flex flex-col gap-0.5">
+                                          {item.link
+                                            .split(/[\n,]+/)
+                                            .filter(Boolean)
+                                            .map((lnk: string, lIdx: number) => (
+                                              <a
+                                                key={lIdx}
+                                                href={lnk.trim()}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="text-blue-500 hover:underline font-medium truncate inline-block max-w-[200px] sm:max-w-[300px] text-[10.5px]"
+                                                onClick={(e) => e.stopPropagation()}
+                                                title={lnk.trim()}
+                                              >
+                                                {lnk.trim()}
+                                              </a>
+                                            ))}
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  <div className="w-full pt-1.5 mt-1 border-t border-gray-100/65 flex items-center justify-between">
+                                    <button
+                                      type="button"
+                                      onClick={(e) => handleRemoteDeliveredToggle(e, idx, item)}
+                                      className={`px-2 py-1 text-[10px] font-bold rounded-md flex items-center hover:scale-[1.02] active:scale-95 transition-all duration-200 shadow-xs ${
+                                        isDelivered
+                                          ? 'bg-blue-50 text-blue-600 border border-blue-200/60 hover:bg-blue-100'
+                                          : 'bg-white text-gray-400 border border-gray-150 hover:bg-gray-50 hover:text-gray-600'
+                                      }`}
+                                    >
+                                      <Check
+                                        className={`w-3 h-3 mr-1 ${
+                                          isDelivered ? 'text-blue-500' : 'text-gray-400'
+                                        }`}
+                                      />
+                                      {appLanguage === 'ms'
+                                        ? isDelivered
+                                          ? 'Dihantar'
+                                          : 'Belum Dihantar'
+                                        : isDelivered
+                                        ? 'Delivered'
+                                        : 'Not Delivered'}
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {!isSearching && remoteResults.length === 0 && !searchError && (
+                        <div className="flex flex-col items-center justify-center py-16 text-subtext bg-surface border border-dashed border-gray-200 rounded-2xl animate-fade-in">
+                          <Clock className="w-12 h-12 mb-3 opacity-30 animate-pulse" />
+                          <p className="font-bold text-sm text-center">
+                            {appLanguage === 'ms'
+                              ? 'Tiada tempahan ditemui di lokal atau cloud'
+                              : 'No matching orders found locally or in cloud'}
+                          </p>
+                        </div>
+                      )}
                     </div>
                   );
                 }
@@ -1668,16 +2082,10 @@ export function HistoryView() {
                             </div>
 
                             <p className="font-bold text-sm sm:text-[13.5px] leading-tight text-[#111827]">
-                              {(() => {
-                                const mType = item.state?.mainType;
-                                if (mType === 'Lain-lain') {
-                                  return item.state?.customDoc || 'Lain-lain';
-                                }
-                                if (mType === 'Resume') {
-                                  return item.state?.isEditMode ? 'Edit Resume' : 'Resume';
-                                }
-                                return mType;
-                              })()}
+                              {item.state?.mainType === 'Lain-lain'
+                                ? item.state?.customDoc
+                                : item.state?.mainType}{' '}
+                              {item.state?.isEditMode ? '(Edit)' : ''}
                               {item.state?.customerName
                                 ? ` - ${formatCustomerName(item.state.customerName)}`
                                 : ''}
@@ -1880,10 +2288,10 @@ export function HistoryView() {
             </div>
           );
         })()}
-                  </div>
-                )}
-          </>
-        )}
+      </div>
+    )}
+  </div>
+)}
 
 {activeTab === 'drafts' && (
       <div className="space-y-4">
@@ -2118,8 +2526,7 @@ export function HistoryView() {
         })()}
       </div>
     )}
-    </div>
-    </div>
+  </div>
 
   {confirmAction && createPortal(
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
@@ -2267,6 +2674,6 @@ export function HistoryView() {
     </div>,
     document.body
   )}
-  </>
+</div>
   );
 }

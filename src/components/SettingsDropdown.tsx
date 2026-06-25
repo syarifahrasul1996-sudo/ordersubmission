@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Wifi, WifiOff, Cloud, RefreshCw, Settings, Sun, Moon, Languages, Check, FileDown } from 'lucide-react';
+import { Wifi, WifiOff, Cloud, RefreshCw, Settings, Sun, Moon, Languages, Check, History, FileDown } from 'lucide-react';
 import { useAppContext } from '../AppContext';
 import { cn } from '../cn';
 
@@ -14,6 +14,7 @@ export function SettingsDropdown() {
     toggleLanguage,
     theme,
     toggleTheme,
+    viewStack,
     pushView
   } = useAppContext();
 
@@ -51,6 +52,7 @@ export function SettingsDropdown() {
   };
 
   const hasPending = queueSize > 0;
+  const currentView = viewStack[viewStack.length - 1];
 
   return (
     <div className="relative" ref={dropdownRef}>
