@@ -451,6 +451,16 @@ export function DashboardView() {
     else if (urgencyVal.includes('urgent')) urgency = 'urgent';
 
     const orderType = (order.order || order.jenisTempahan || 'Resume').trim();
+    let finalMainType = orderType;
+    let finalIsEditMode = false;
+
+    if (orderType === 'Edit Resume') {
+      finalMainType = 'Resume';
+      finalIsEditMode = true;
+    } else if (orderType === 'Resume') {
+      finalMainType = 'Resume';
+      finalIsEditMode = false;
+    }
     
     // Parse due date for state
     const { timestamp: dueTs } = parseDateStringToTimestamp(order.due || '', -1);
@@ -462,14 +472,14 @@ export function DashboardView() {
       customerOrder: order.order || order.jenisTempahan || '',
       customerJenis: order.jenis || order.urgency || '',
       customerDue: order.due || '',
-      mainType: orderType,
+      mainType: finalMainType,
       subType: order.pakej || '',
       urgency: urgency,
       dueTimestamp: dueTs === -1 ? Date.now() : dueTs,
       spreadsheetId: order.spreadsheetId || '',
       orderId: order.orderId || '',
       googleSheetLink: order.googleSheetLink || order.link || '',
-      isEditMode: true,
+      isEditMode: finalIsEditMode,
       isDueInvalid: isDueInvalid,
       dashboardFilterMonth: filterMonth,
       dashboardFilterYear: filterYear

@@ -1108,11 +1108,12 @@ export function HistoryView() {
       orderId: generatedOrderId,
       dueTimestamp: dueTs,
       mainType:
-        orderData.order === 'Resume'
+        orderData.order === 'Resume' || orderData.order === 'Edit Resume'
           ? 'Resume'
           : orderData.order === 'Surat'
           ? 'Surat'
           : orderData.order || 'Lain-lain',
+      isEditMode: orderData.order === 'Edit Resume',
       subType: '',
       customerInfo: ''
     };
@@ -2141,10 +2142,16 @@ export function HistoryView() {
                             </div>
 
                             <p className="font-bold text-sm sm:text-[13.5px] leading-tight text-[#111827]">
-                              {item.state?.mainType === 'Lain-lain'
-                                ? item.state?.customDoc
-                                : item.state?.mainType}{' '}
-                              {item.state?.isEditMode ? '(Edit)' : ''}
+                              {(() => {
+                                const mType = item.state?.mainType;
+                                if (mType === 'Lain-lain') {
+                                  return item.state?.customDoc || 'Lain-lain';
+                                }
+                                if (mType === 'Resume') {
+                                  return item.state?.isEditMode ? 'Edit Resume' : 'Resume';
+                                }
+                                return mType;
+                              })()}
                               {item.state?.customerName
                                 ? ` - ${formatCustomerName(item.state.customerName)}`
                                 : ''}
