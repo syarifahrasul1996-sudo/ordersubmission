@@ -1009,6 +1009,29 @@ export function HistoryView() {
         })
       );
 
+      allMatchedOrders.sort((a, b) => {
+        const parseTimeFromId = (id: string) => {
+           if (!id) return 0;
+           const match = id.match(/ORD-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})/);
+           if (match) {
+             return new Date(
+               parseInt(match[1]), parseInt(match[2])-1, parseInt(match[3]),
+               parseInt(match[4]), parseInt(match[5]), parseInt(match[6])
+             ).getTime();
+           }
+           return 0;
+        };
+
+        const timeA = parseTimeFromId(a.orderId || '') || parseDateStringToTimestamp(a.due || '', 0).timestamp;
+        const timeB = parseTimeFromId(b.orderId || '') || parseDateStringToTimestamp(b.due || '', 0).timestamp;
+
+        if (timeA !== timeB) {
+          return timeB - timeA;
+        }
+
+        return (b.orderId || '').localeCompare(a.orderId || '');
+      });
+
       setRemoteResults(allMatchedOrders);
 
       if (allMatchedOrders.length === 0) {
