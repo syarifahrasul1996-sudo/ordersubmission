@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
 import { AppState, INITIAL_STATE, ViewType, OrderHistoryItem } from './types';
 import { getSubscription, syncPushNotifications, clearPushNotifications } from './lib/push';
-import { removeStalePendingOrders } from './utils/orderWindow';
+
 
 interface AppContextType {
   state: AppState;
@@ -116,19 +116,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     const parsed = JSON.parse(saved);
 
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-
-    const cleanedHistory =
-      removeStalePendingOrders(parsed);
-
-    localStorage.setItem(
-      'orderHistory',
-      JSON.stringify(cleanedHistory)
-    );
-
-    return cleanedHistory;
+    return Array.isArray(parsed) ? parsed : [];
   } catch (error) {
     console.error(
       'Failed to load order history:',
@@ -289,7 +277,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
             const timeUntilDue = dueTimestamp - now;
 
             // 1. Check 3 hours logic: 3 hours before due time
-            if (timeUntilDue <= THREE_HOURS && !hasThreeHourChecked) {
+            if (
+  timeUntilDue > 0 &&
+  timeUntilDue <= THREE_HOURS &&
+  !hasThreeHourChecked
+) {
               newState.hasThreeHourChecked = true;
               itemUpdated = true;
 
