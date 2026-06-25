@@ -6,3 +6,9 @@ coverage/
 *.log
 .env*
 !.env.example
+dist/
+vapid-keys.json
+scheduled-pushes.json
+*.tmp
+
+runtime-data/
