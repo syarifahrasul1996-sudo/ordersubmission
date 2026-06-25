@@ -134,9 +134,17 @@ export function HistoryView() {
   const setPendingTimeFilter = setHistoryPendingTimeFilter;
   const [activeTab, setActiveTab] = useState<'local' | 'drafts' | 'trash'>('local');
   const [searchQuery, setSearchQuery] = useState('');
+  const [cloudSearchQuery, setCloudSearchQuery] = useState('');
+  const [searchMode, setSearchMode] = useState<'local' | 'cloud'>('local');
   const [remoteResults, setRemoteResults] = useState<any[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState('');
+
+  useEffect(() => {
+    if (activeTab !== 'local' && searchMode === 'cloud') {
+      setSearchMode('local');
+    }
+  }, [activeTab, searchMode]);
   const [showDbSettings, setShowDbSettings] = useState(false);
   const [globalScriptUrl, setGlobalScriptUrl] = useState<string>(() => {
     return localStorage.getItem('db_global_script_url') || GOOGLE_SCRIPT_URL;
@@ -266,31 +274,7 @@ export function HistoryView() {
     });
   }, [history, deliveryFilter, searchQuery, currentTime, pendingTimeFilter]);
 
-  useEffect(() => {
-    const trimmed = searchQuery.trim();
-    if (!trimmed || activeTab !== 'local') {
-      if (!trimmed && remoteResults.length > 0) {
-        setRemoteResults([]);
-      }
-      return;
-    }
 
-    const hasLocalMatches = localizedHistoryItems.length > 0;
-
-    if (hasLocalMatches) {
-      if (remoteResults.length > 0) {
-        setRemoteResults([]);
-      }
-      return;
-    }
-
-    // Debounce remote search by 750ms if no local matches
-    const delayDebounceFn = setTimeout(() => {
-      handleRemoteSearch();
-    }, 750);
-
-    return () => clearTimeout(delayDebounceFn);
-  }, [searchQuery, localizedHistoryItems.length, activeTab]);
 
 
   const [annualSheets, setAnnualSheets] = useState<{ year: string; spreadsheetId: string; scriptUrl: string }[]>(() => {
@@ -977,7 +961,7 @@ export function HistoryView() {
       return;
     }
 
-    const q = searchQuery.trim();
+    const q = cloudSearchQuery.trim();
     if (!q) return;
 
     setIsSearching(true);
@@ -1357,49 +1341,83 @@ export function HistoryView() {
       </div>
 
       <div className="p-4 sm:p-6 space-y-4">
-        {/* Unified Search Bar */}
+        {/* Separate Search Bar based on Search Mode */}
         <div className="flex gap-2 mb-2">
           <div className="relative flex-1 group">
             <input
               type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  handleRemoteSearch();
+              value={searchMode === 'local' ? searchQuery : cloudSearchQuery}
+              onChange={(e) => {
+                if (searchMode === 'local') {
+                  setSearchQuery(e.target.value);
+                } else {
+                  setCloudSearchQuery(e.target.value);
                 }
               }}
-              placeholder={appLanguage === 'ms' ? 'Cari nama, Order ID, atau no. telefon...' : 'Search name, Order ID, or phone...'}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  if (searchMode === 'cloud') {
+                    handleRemoteSearch();
+                  }
+                }
+              }}
+              placeholder={
+                searchMode === 'local'
+                  ? (appLanguage === 'ms' ? 'Cari nama, Order ID, atau no. telefon...' : 'Search name, Order ID, or phone...')
+                  : (appLanguage === 'ms' ? 'Cari nama, Order ID, telefon di Cloud...' : 'Search name, Order ID, phone on Cloud...')
+              }
               className="w-full h-11 bg-gray-100/80 dark:bg-zinc-900/50 rounded-xl pl-10 pr-10 font-bold text-text border border-transparent outline-none focus:bg-white dark:focus:bg-zinc-900 focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all text-[11px] sm:text-xs placeholder:text-gray-400 placeholder:font-medium"
             />
             <Search className="w-4 h-4 text-subtext/75 absolute left-3.5 top-3.5" />
-            {searchQuery && (
+            {(searchMode === 'local' ? searchQuery : cloudSearchQuery) && (
               <button
                 type="button"
-                onClick={() => setSearchQuery('')}
+                onClick={() => {
+                  if (searchMode === 'local') {
+                    setSearchQuery('');
+                  } else {
+                    setCloudSearchQuery('');
+                    setRemoteResults([]);
+                    setSearchError('');
+                  }
+                }}
                 className="absolute right-3.5 top-3 w-5 h-5 rounded-full bg-gray-200 dark:bg-zinc-800 hover:bg-gray-300 dark:hover:bg-zinc-700 text-subtext flex items-center justify-center transition-colors"
               >
                 <X className="w-3" />
               </button>
             )}
           </div>
-          <button
-            type="button"
-            onClick={() => handleGlobalSync(false)}
-            disabled={refreshing}
-            className="w-11 h-11 bg-gray-100/80 dark:bg-zinc-900/50 text-subtext hover:bg-gray-200 dark:hover:bg-zinc-800 active:scale-95 flex items-center justify-center rounded-xl transition-all duration-200 shadow-sm"
-            title={appLanguage === 'ms' ? 'Segarkan Sejarah' : 'Refresh History'}
-          >
-            <RefreshCcw className={`w-4 h-4 ${refreshing ? 'animate-spin text-primary' : ''}`} />
-          </button>
-          <button
-            type="button"
-            onClick={() => setShowDbSettings(!showDbSettings)}
-            className="w-11 h-11 bg-gray-100/80 dark:bg-zinc-900/50 text-subtext hover:bg-gray-200 dark:hover:bg-zinc-800 active:scale-95 flex items-center justify-center rounded-xl transition-all duration-200 shadow-sm"
-            title={appLanguage === 'ms' ? 'Tetapan Database Cloud' : 'Cloud Database Settings'}
-          >
-            <Settings className={`w-4 h-4 ${showDbSettings ? 'text-primary' : ''}`} />
-          </button>
+          {searchMode === 'cloud' ? (
+            <button
+              type="button"
+              onClick={handleRemoteSearch}
+              disabled={isSearching}
+              className="px-4 h-11 bg-primary text-white font-bold rounded-xl hover:bg-primary/90 active:scale-95 flex items-center justify-center gap-1.5 transition-all duration-200 shadow-sm text-xs"
+            >
+              <Search className="w-4 h-4" />
+              <span>{appLanguage === 'ms' ? 'Cari' : 'Search'}</span>
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={() => handleGlobalSync(false)}
+                disabled={refreshing}
+                className="w-11 h-11 bg-gray-100/80 dark:bg-zinc-900/50 text-subtext hover:bg-gray-200 dark:hover:bg-zinc-800 active:scale-95 flex items-center justify-center rounded-xl transition-all duration-200 shadow-sm"
+                title={appLanguage === 'ms' ? 'Segarkan Sejarah' : 'Refresh History'}
+              >
+                <RefreshCcw className={`w-4 h-4 ${refreshing ? 'animate-spin text-primary' : ''}`} />
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowDbSettings(!showDbSettings)}
+                className="w-11 h-11 bg-gray-100/80 dark:bg-zinc-900/50 text-subtext hover:bg-gray-200 dark:hover:bg-zinc-800 active:scale-95 flex items-center justify-center rounded-xl transition-all duration-200 shadow-sm"
+                title={appLanguage === 'ms' ? 'Tetapan Database Cloud' : 'Cloud Database Settings'}
+              >
+                <Settings className={`w-4 h-4 ${showDbSettings ? 'text-primary' : ''}`} />
+              </button>
+            </>
+          )}
         </div>
 
         {/* Collapsible Annual Connection & Settings */}
@@ -1605,7 +1623,259 @@ export function HistoryView() {
         </div>
         {activeTab === 'local' && (
           <div className="space-y-4">
-            {history.filter(item => !item.state?.isDeleted).length === 0 ? (
+            {/* Search Mode Toggle (only for local/sejarah tab) */}
+            <div className="flex bg-gray-100 p-1 rounded-xl max-w-sm mb-1">
+              <button
+                type="button"
+                onClick={() => setSearchMode('local')}
+                className={`flex-1 py-1.5 px-3 text-[11px] font-black rounded-lg transition-all flex items-center justify-center space-x-1 ${
+                  searchMode === 'local'
+                    ? 'bg-white dark:bg-zinc-800 text-primary shadow-sm font-bold'
+                    : 'text-subtext/70 hover:text-text hover:bg-white/40'
+                }`}
+              >
+                <Clock className="w-3.5 h-3.5" />
+                <span className="truncate">{appLanguage === 'ms' ? 'Sejarah Lokal' : 'Local History'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setSearchMode('cloud')}
+                className={`flex-1 py-1.5 px-3 text-[11px] font-black rounded-lg transition-all flex items-center justify-center space-x-1 ${
+                  searchMode === 'cloud'
+                    ? 'bg-white dark:bg-zinc-800 text-primary shadow-sm font-bold'
+                    : 'text-subtext/70 hover:text-text hover:bg-white/40'
+                }`}
+              >
+                <Database className="w-3.5 h-3.5" />
+                <span className="truncate">{appLanguage === 'ms' ? 'Database Cloud' : 'Cloud Database'}</span>
+              </button>
+            </div>
+
+            {searchMode === 'cloud' ? (
+              <div className="space-y-4">
+                {/* Search Error */}
+                {searchError && (
+                  <div className="p-3 bg-red-50 dark:bg-red-950/20 text-red-700 dark:text-red-400 rounded-xl text-xs font-semibold border border-red-100 dark:border-red-900/30 flex items-center space-x-2 animate-fade-in">
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0 text-red-500" />
+                    <span>{searchError}</span>
+                  </div>
+                )}
+
+                {/* Searching indicator */}
+                {isSearching && (
+                  <div className="flex flex-col items-center justify-center py-16 text-subtext">
+                    <RefreshCcw className="w-7 h-7 mb-3 animate-spin text-primary opacity-80" />
+                    <p className="font-bold text-xs select-none animate-pulse">
+                      {appLanguage === 'ms' ? 'Sedang mencari di lembaran tahunan...' : 'Searching across annual sheets...'}
+                    </p>
+                  </div>
+                )}
+
+                {/* Search Results */}
+                {!isSearching && remoteResults.length > 0 && (
+                  <div className="space-y-2.5 animate-fade-in-up">
+                    <div className="flex items-center justify-between pl-1">
+                      <p className="text-[10px] font-bold text-subtext uppercase tracking-widest">
+                        {appLanguage === 'ms' 
+                          ? `Hasil Carian Cloud (${remoteResults.length} Rekod)` 
+                          : `Cloud Search Results (${remoteResults.length} Records)`}
+                      </p>
+                      <button 
+                        type="button"
+                        onClick={() => {
+                          setRemoteResults([]);
+                          setCloudSearchQuery('');
+                        }}
+                        className="text-[10px] font-bold text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 uppercase tracking-widest px-2.5 py-1 rounded transition-colors flex flex-shrink-0 items-center justify-center"
+                        id="btn-clear-search"
+                      >
+                        {appLanguage === 'ms' ? 'Padam Carian' : 'Clear Results'}
+                      </button>
+                    </div>
+
+                    {remoteResults.map((item, idx) => {
+                      const isDelivered = !!item.isDelivered;
+                      const orderId = item.orderId || item.generatedId || `SYNC-TMP-${idx}`;
+
+                      return (
+                        <div
+                          key={orderId + '-' + idx}
+                          onClick={() => handleLoadRemoteOrder(item)}
+                          className={`bg-surface border relative overflow-hidden ${
+                            isDelivered
+                              ? 'border-blue-100 bg-blue-50/5 hover:border-blue-200'
+                              : 'border-gray-200/60 hover:border-gray-300 shadow-sm'
+                          } rounded-xl p-2.5 flex flex-col space-y-1 hover:bg-gray-50/65 cursor-pointer active:scale-[0.995] transition-all duration-200`}
+                        >
+                          {/* Left Accent Bar */}
+                          <div className={`absolute left-0 top-0 bottom-0 w-1 rounded-r ${isDelivered ? 'bg-blue-400' : 'bg-gray-300'}`} />
+
+                          <div className="pl-1.5">
+                            <div className="flex justify-between items-start border-b border-gray-100/60 pb-1">
+                              <div className="flex-1">
+                                <div className="flex flex-wrap items-center gap-1 mb-0.5">
+                                  <div
+                                    className={`flex items-center ${
+                                      isDelivered
+                                        ? 'text-blue-500 font-bold'
+                                        : 'text-primary/75 font-semibold'
+                                    } text-[10px] sm:text-[10.5px] uppercase tracking-wider`}
+                                  >
+                                    {isDelivered ? (
+                                      <Check className="w-3 h-3 mr-1 text-blue-500" />
+                                    ) : (
+                                      <Calendar className="w-3 h-3 mr-1" />
+                                    )}
+                                    {item.due || (appLanguage === 'ms' ? 'Tiada Tarikh' : 'No Date')}
+
+                                    {isDelivered && (
+                                      <span className="ml-1 text-blue-500 lowercase">
+                                        ({appLanguage === 'ms' ? 'Dihantar' : 'Delivered'})
+                                      </span>
+                                    )}
+                                  </div>
+                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-black tracking-wider bg-purple-100 text-purple-700">
+                                    <Database className="w-2.5 h-2.5 inline mr-0.5" />
+                                    {item.sheetName || 'Google Sheet'}
+                                  </span>
+                                </div>
+
+                                <p className="font-bold text-sm sm:text-[13.5px] leading-tight text-[#111827]">
+                                  {item.order}
+                                  {item.name ? ` - ${formatCustomerName(item.name)}` : ''}
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="flex flex-wrap gap-x-2.5 gap-y-0.5 text-xs mt-1 leading-normal">
+                              <div className="w-full flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+                                {[
+                                  item.template ? (
+                                    <span key="template" className="font-medium text-[#374151]">{item.template}</span>
+                                  ) : null,
+                                  item.bahasa ? (
+                                    <span key="bahasa" className="font-medium text-[#374151]">{item.bahasa}</span>
+                                  ) : null,
+                                  item.jenis ? (() => {
+                                    const val = String(item.jenis).toLowerCase();
+                                    let bColor = "text-gray-500 font-medium";
+                                    let displayVal = item.jenis;
+                                    if (val.includes('super')) { bColor = "text-super font-bold"; displayVal = "Super Urgent"; }
+                                    else if (val.includes('semi')) { bColor = "text-semi font-bold"; displayVal = "Semi Urgent"; }
+                                    else if (val.includes('normal') || val.includes('tak') || val.includes('not') || val.includes('tidak')) { bColor = "text-noturgent font-bold"; displayVal = appLanguage === 'ms' ? "Tak Urgent" : "Not Urgent"; }
+                                    else if (val.includes('urgent')) { bColor = "text-urgent font-bold"; displayVal = "Urgent"; }
+                                    return <span key="jenis" className={bColor}>{displayVal}</span>;
+                                  })() : null
+                                ].filter(Boolean).map((part, index, array) => (
+                                  <React.Fragment key={index}>
+                                    {part}
+                                    {index < array.length - 1 && <span className="text-gray-300 font-bold mx-0.5">•</span>}
+                                  </React.Fragment>
+                                ))}
+                              </div>
+                            </div>
+
+                            <div className="flex flex-col gap-0.5 mt-1 text-[11.5px] text-subtext leading-snug">
+                              {item.addon && (
+                                <div className="truncate">
+                                  <span className="font-semibold text-gray-500">{(appLanguage === 'ms' ? 'Tambahan: ' : 'Add On: ')}</span>
+                                  <span className="text-gray-700 font-medium">{item.addon}</span>
+                                </div>
+                              )}
+                              
+                              {item.phone && (
+                                <div className="flex items-center space-x-1.5 mt-0.5">
+                                  <span className="font-semibold text-gray-500">{appLanguage === 'ms' ? 'Tel:' : 'Phone:'}</span>
+                                  <a
+                                    href={`https://wa.me/${String(item.phone).replace(/\D/g, '').startsWith('0') ? '6' + String(item.phone).replace(/\D/g, '') : String(item.phone).replace(/\D/g, '')}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="font-semibold text-blue-600 hover:underline hover:text-blue-700 bg-blue-50/50 px-1.5 py-0 rounded flex items-center space-x-1 inline-flex text-[10px]"
+                                    title={appLanguage === 'ms' ? 'Hubungi di WhatsApp' : 'Contact on WhatsApp'}
+                                  >
+                                    <Phone className="w-2.5 h-2.5 text-blue-500 shrink-0" />
+                                    <span className="select-all font-mono">
+                                      {formatDisplayPhone(item.phone)}
+                                    </span>
+                                  </a>
+                                </div>
+                              )}
+
+                              {item.orderId && (
+                                <div className="mt-0.5"><span className="font-semibold text-gray-500">ID:</span> <span className="font-mono text-[10.5px] font-semibold text-text/80 bg-gray-55 px-1 rounded">{item.orderId}</span></div>
+                              )}
+
+                              {item.link && (
+                                <div className="w-full pt-1">
+                                  <span className="font-semibold text-gray-500">Link:</span>{' '}
+                                  <div className="flex flex-col gap-0.5">
+                                    {item.link
+                                      .split(/[\n,]+/)
+                                      .filter(Boolean)
+                                      .map((lnk: string, lIdx: number) => (
+                                        <a
+                                          key={lIdx}
+                                          href={lnk.trim()}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="text-blue-500 hover:underline font-medium truncate inline-block max-w-[200px] sm:max-w-[300px] text-[10.5px]"
+                                          onClick={(e) => e.stopPropagation()}
+                                          title={lnk.trim()}
+                                        >
+                                          {lnk.trim()}
+                                        </a>
+                                      ))}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="w-full pt-1.5 mt-1 border-t border-gray-100/65 flex items-center justify-between">
+                              <button
+                                type="button"
+                                onClick={(e) => handleRemoteDeliveredToggle(e, idx, item)}
+                                className={`px-2 py-1 text-[10px] font-bold rounded-md flex items-center hover:scale-[1.02] active:scale-[0.95] transition-all duration-200 shadow-xs ${
+                                  isDelivered
+                                    ? 'bg-blue-50 text-blue-600 border border-blue-200/60 hover:bg-blue-100'
+                                    : 'bg-white text-gray-400 border border-gray-150 hover:bg-gray-50 hover:text-gray-600'
+                                }`}
+                              >
+                                <Check
+                                  className={`w-3 h-3 mr-1 ${
+                                    isDelivered ? 'text-blue-500' : 'text-gray-400'
+                                  }`}
+                                />
+                                {appLanguage === 'ms'
+                                  ? isDelivered
+                                    ? 'Dihantar'
+                                    : 'Belum Dihantar'
+                                  : isDelivered
+                                  ? 'Delivered'
+                                  : 'Not Delivered'}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {!isSearching && remoteResults.length === 0 && !searchError && (
+                  <div className="flex flex-col items-center justify-center py-20 text-subtext bg-surface border border-dashed border-gray-200 rounded-2xl animate-fade-in">
+                    <Database className="w-12 h-12 mb-3 opacity-30 animate-pulse text-primary" />
+                    <p className="font-bold text-xs text-center max-w-xs leading-relaxed">
+                      {appLanguage === 'ms'
+                        ? 'Sila masukkan kata kunci di atas dan ketik butang "Cari" untuk mencari rekod di Cloud Database'
+                        : 'Please enter a keyword above and click the "Search" button to find records in the Cloud Database'}
+                    </p>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <>
+                {history.filter(item => !item.state?.isDeleted).length === 0 ? (
               <div className="flex flex-col items-center justify-center py-20 text-subtext space-y-4">
                 <Clock className="w-16 h-16 opacity-50" />
                 <p className="font-bold">
@@ -1741,226 +2011,13 @@ export function HistoryView() {
               if (matchedItems.length === 0) {
                 if (searchQuery.trim() !== '') {
                   return (
-                    <div className="space-y-4">
-                      {/* Search Error */}
-                      {searchError && (
-                        <div className="p-3 bg-red-50 text-red-700 rounded-xl text-xs font-semibold border border-red-100 flex items-center space-x-2 animate-fade-in">
-                          <AlertCircle className="w-3.5 h-3.5 shrink-0 text-red-500" />
-                          <span>{searchError}</span>
-                        </div>
-                      )}
-
-                      {/* Searching indicator */}
-                      {isSearching && (
-                        <div className="flex flex-col items-center justify-center py-16 text-subtext">
-                          <RefreshCcw className="w-7 h-7 mb-3 animate-spin text-primary opacity-80" />
-                          <p className="font-bold text-xs select-none animate-pulse">
-                            {appLanguage === 'ms' ? 'Sedang mencari di lembaran tahunan...' : 'Searching across annual sheets...'}
-                          </p>
-                        </div>
-                      )}
-
-                      {/* Search Results */}
-                      {!isSearching && remoteResults.length > 0 && (
-                        <div className="space-y-2.5 animate-fade-in-up">
-                          <div className="flex items-center justify-between pl-1">
-                            <p className="text-[10px] font-bold text-subtext uppercase tracking-widest">
-                              {appLanguage === 'ms' 
-                                ? `Hasil Carian Cloud (${remoteResults.length} Rekod)` 
-                                : `Cloud Search Results (${remoteResults.length} Records)`}
-                            </p>
-                            <button 
-                              type="button"
-                              onClick={() => {
-                                setRemoteResults([]);
-                                setSearchQuery('');
-                              }}
-                              className="text-[10px] font-bold text-red-500 hover:text-red-700 bg-red-50 hover:bg-red-100 uppercase tracking-widest px-2 py-1 rounded transition-colors flex flex-shrink-0 items-center justify-center"
-                              id="btn-clear-search"
-                            >
-                              {appLanguage === 'ms' ? 'Padam Carian' : 'Clear Results'}
-                            </button>
-                          </div>
-
-                          {remoteResults.map((item, idx) => {
-                            const isDelivered = !!item.isDelivered;
-                            const orderId = item.orderId || item.generatedId || `SYNC-TMP-${idx}`;
-
-                            return (
-                              <div
-                                key={orderId + '-' + idx}
-                                onClick={() => handleLoadRemoteOrder(item)}
-                                className={`bg-surface border relative overflow-hidden ${
-                                  isDelivered
-                                    ? 'border-blue-100 bg-blue-50/5 hover:border-blue-200'
-                                    : 'border-gray-200/60 hover:border-gray-300 shadow-sm'
-                                } rounded-xl p-2.5 flex flex-col space-y-1 hover:bg-gray-50/65 cursor-pointer active:scale-[0.995] transition-all duration-200`}
-                              >
-                                {/* Left Accent Bar */}
-                                <div className={`absolute left-0 top-0 bottom-0 w-1 rounded-r ${isDelivered ? 'bg-blue-400' : 'bg-gray-300'}`} />
-
-                                <div className="pl-1.5">
-                                  <div className="flex justify-between items-start border-b border-gray-100/60 pb-1">
-                                    <div className="flex-1">
-                                      <div className="flex flex-wrap items-center gap-1 mb-0.5">
-                                        <div
-                                          className={`flex items-center ${
-                                            isDelivered
-                                              ? 'text-blue-500 font-bold'
-                                              : 'text-primary/75 font-semibold'
-                                          } text-[10px] sm:text-[10.5px] uppercase tracking-wider`}
-                                        >
-                                          {isDelivered ? (
-                                            <Check className="w-3 h-3 mr-1 text-blue-500" />
-                                          ) : (
-                                            <Calendar className="w-3 h-3 mr-1" />
-                                          )}
-                                          {item.due || (appLanguage === 'ms' ? 'Tiada Tarikh' : 'No Date')}
-
-                                          {isDelivered && (
-                                            <span className="ml-1 text-blue-500 lowercase">
-                                              ({appLanguage === 'ms' ? 'Dihantar' : 'Delivered'})
-                                            </span>
-                                          )}
-                                        </div>
-                                        <span className="px-2 py-0.5 rounded-full text-[10px] font-black tracking-wider bg-purple-100 text-purple-700">
-                                          <Database className="w-2.5 h-2.5 inline mr-0.5" />
-                                          {item.sheetName || 'Google Sheet'}
-                                        </span>
-                                      </div>
-
-                                      <p className="font-bold text-sm sm:text-[13.5px] leading-tight text-[#111827]">
-                                        {item.order}
-                                        {item.name ? ` - ${formatCustomerName(item.name)}` : ''}
-                                      </p>
-                                    </div>
-                                  </div>
-
-                                  <div className="flex flex-wrap gap-x-2.5 gap-y-0.5 text-xs mt-1 leading-normal">
-                                    <div className="w-full flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
-                                      {[
-                                        item.template ? (
-                                          <span key="template" className="font-medium text-[#374151]">{item.template}</span>
-                                        ) : null,
-                                        item.bahasa ? (
-                                          <span key="bahasa" className="font-medium text-[#374151]">{item.bahasa}</span>
-                                        ) : null,
-                                        item.jenis ? (() => {
-                                          const val = String(item.jenis).toLowerCase();
-                                          let bColor = "text-gray-500 font-medium";
-                                          let displayVal = item.jenis;
-                                          if (val.includes('super')) { bColor = "text-super font-bold"; displayVal = "Super Urgent"; }
-                                          else if (val.includes('semi')) { bColor = "text-semi font-bold"; displayVal = "Semi Urgent"; }
-                                          else if (val.includes('normal') || val.includes('tak') || val.includes('not') || val.includes('tidak')) { bColor = "text-noturgent font-bold"; displayVal = appLanguage === 'ms' ? "Tak Urgent" : "Not Urgent"; }
-                                          else if (val.includes('urgent')) { bColor = "text-urgent font-bold"; displayVal = "Urgent"; }
-                                          return <span key="jenis" className={bColor}>{displayVal}</span>;
-                                        })() : null
-                                      ].filter(Boolean).map((part, index, array) => (
-                                        <React.Fragment key={index}>
-                                          {part}
-                                          {index < array.length - 1 && <span className="text-gray-300 font-bold mx-0.5">•</span>}
-                                        </React.Fragment>
-                                      ))}
-                                    </div>
-                                  </div>
-
-                                  <div className="flex flex-col gap-0.5 mt-1 text-[11.5px] text-subtext leading-snug">
-                                    {item.addon && (
-                                      <div className="truncate">
-                                        <span className="font-semibold text-gray-500">{(appLanguage === 'ms' ? 'Tambahan: ' : 'Add On: ')}</span>
-                                        <span className="text-gray-700 font-medium">{item.addon}</span>
-                                      </div>
-                                    )}
-                                    
-                                    {item.phone && (
-                                      <div className="flex items-center space-x-1.5 mt-0.5">
-                                        <span className="font-semibold text-gray-500">{appLanguage === 'ms' ? 'Tel:' : 'Phone:'}</span>
-                                        <a
-                                          href={`https://wa.me/${String(item.phone).replace(/\D/g, '').startsWith('0') ? '6' + String(item.phone).replace(/\D/g, '') : String(item.phone).replace(/\D/g, '')}`}
-                                          target="_blank"
-                                          rel="noopener noreferrer"
-                                          onClick={(e) => e.stopPropagation()}
-                                          className="font-semibold text-blue-600 hover:underline hover:text-blue-700 bg-blue-50/50 px-1.5 py-0 rounded flex items-center space-x-1 inline-flex text-[10px]"
-                                          title={appLanguage === 'ms' ? 'Hubungi di WhatsApp' : 'Contact on WhatsApp'}
-                                        >
-                                          <Phone className="w-2.5 h-2.5 text-blue-500 shrink-0" />
-                                          <span className="select-all font-mono">
-                                            {formatDisplayPhone(item.phone)}
-                                          </span>
-                                        </a>
-                                      </div>
-                                    )}
-
-                                    {item.orderId && (
-                                      <div className="mt-0.5"><span className="font-semibold text-gray-500">ID:</span> <span className="font-mono text-[10.5px] font-semibold text-text/80 bg-gray-55 px-1 rounded">{item.orderId}</span></div>
-                                    )}
-
-                                    {item.link && (
-                                      <div className="w-full pt-1">
-                                        <span className="font-semibold text-gray-500">Link:</span>{' '}
-                                        <div className="flex flex-col gap-0.5">
-                                          {item.link
-                                            .split(/[\n,]+/)
-                                            .filter(Boolean)
-                                            .map((lnk: string, lIdx: number) => (
-                                              <a
-                                                key={lIdx}
-                                                href={lnk.trim()}
-                                                target="_blank"
-                                                rel="noopener noreferrer"
-                                                className="text-blue-500 hover:underline font-medium truncate inline-block max-w-[200px] sm:max-w-[300px] text-[10.5px]"
-                                                onClick={(e) => e.stopPropagation()}
-                                                title={lnk.trim()}
-                                              >
-                                                {lnk.trim()}
-                                              </a>
-                                            ))}
-                                        </div>
-                                      </div>
-                                    )}
-                                  </div>
-
-                                  <div className="w-full pt-1.5 mt-1 border-t border-gray-100/65 flex items-center justify-between">
-                                    <button
-                                      type="button"
-                                      onClick={(e) => handleRemoteDeliveredToggle(e, idx, item)}
-                                      className={`px-2 py-1 text-[10px] font-bold rounded-md flex items-center hover:scale-[1.02] active:scale-95 transition-all duration-200 shadow-xs ${
-                                        isDelivered
-                                          ? 'bg-blue-50 text-blue-600 border border-blue-200/60 hover:bg-blue-100'
-                                          : 'bg-white text-gray-400 border border-gray-150 hover:bg-gray-50 hover:text-gray-600'
-                                      }`}
-                                    >
-                                      <Check
-                                        className={`w-3 h-3 mr-1 ${
-                                          isDelivered ? 'text-blue-500' : 'text-gray-400'
-                                        }`}
-                                      />
-                                      {appLanguage === 'ms'
-                                        ? isDelivered
-                                          ? 'Dihantar'
-                                          : 'Belum Dihantar'
-                                        : isDelivered
-                                        ? 'Delivered'
-                                        : 'Not Delivered'}
-                                    </button>
-                                  </div>
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-
-                      {!isSearching && remoteResults.length === 0 && !searchError && (
-                        <div className="flex flex-col items-center justify-center py-16 text-subtext bg-surface border border-dashed border-gray-200 rounded-2xl animate-fade-in">
-                          <Clock className="w-12 h-12 mb-3 opacity-30 animate-pulse" />
-                          <p className="font-bold text-sm text-center">
-                            {appLanguage === 'ms'
-                              ? 'Tiada tempahan ditemui di lokal atau cloud'
-                              : 'No matching orders found locally or in cloud'}
-                          </p>
-                        </div>
-                      )}
+                    <div className="flex flex-col items-center justify-center py-16 text-subtext bg-surface border border-dashed border-gray-200 rounded-2xl animate-fade-in">
+                      <Clock className="w-12 h-12 mb-3 opacity-30" />
+                      <p className="font-bold text-xs font-semibold">
+                        {appLanguage === 'ms'
+                          ? 'Tiada padanan dijumpai di sejarah lokal'
+                          : 'No matching records found in local history'}
+                      </p>
                     </div>
                   );
                 }
@@ -2290,10 +2347,12 @@ export function HistoryView() {
             </div>
           );
         })()}
-      </div>
-    )}
-  </div>
-)}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
 
 {activeTab === 'drafts' && (
       <div className="space-y-4">
