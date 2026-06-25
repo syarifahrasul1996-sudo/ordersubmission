@@ -2,7 +2,7 @@ import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { useAppContext } from '../AppContext';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LabelList, CartesianGrid } from 'recharts';
 import { RefreshCcw, AlertCircle, Clock, X, ChevronDown } from 'lucide-react';
-import { calculateDeadline, generateMessages, parseDateStringToTimestamp } from '../utils';
+import { parseDateStringToTimestamp } from '../utils';
 import { AppState } from '../types';
 
 const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbw5KpBvJyFpIXmsHueg4XPSRkZ0mg6kxHqjMGp3WEs8Hx_JodvKSoKEg6RMsdH54iCa/exec';
@@ -245,8 +245,8 @@ export function DashboardView() {
   };
 
   useEffect(() => {
-    fetchDashboardOrders(filterYear);
-  }, [filterYear, annualSheets, globalScriptUrl]);
+  // fetchDashboardOrders(filterYear);
+}, [filterYear, annualSheets, globalScriptUrl]);
 
   const stats = useMemo(() => {
     const orders = remoteOrders;
@@ -715,7 +715,7 @@ export function DashboardView() {
                           dataKey="value"
                           label={{ fontSize: '10px', fill: '#636366', fontWeight: 'bold' }}
                         >
-                          {stats.customerTypes.map((entry, index) => (
+                          {stats.customerTypes.map((_, index) => (
                             <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                           ))}
                         </Pie>
@@ -756,7 +756,7 @@ export function DashboardView() {
                         dataKey="value"
                         label={{ fontSize: '10px', fill: '#636366', fontWeight: 'bold' }}
                       >
-                        {stats.typesChart.map((entry, index) => (
+                        {stats.typesChart.map((_, index) => (
                           <Cell key={`cell-${index}`} fill={COLORS[(index + 2) % COLORS.length]} />
                         ))}
                       </Pie>

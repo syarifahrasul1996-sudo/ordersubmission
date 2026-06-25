@@ -17,7 +17,7 @@ window.addEventListener('error', (event) => {
   }
 }, true);
 
-window.onerror = function (message, source, lineno, colno, error) {
+window.onerror = function (message, _source, _lineno, _colno, _error) {
   if (
     message === 'Script error.' ||
     (message && typeof message === 'string' && (message.includes('Script error') || message.includes('Unexpected token')))
@@ -41,7 +41,5 @@ window.addEventListener('unhandledrejection', (event) => {
 });
 
 createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
+  <App />
 );

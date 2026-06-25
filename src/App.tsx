@@ -1,4 +1,4 @@
-import React, { useState, Suspense, lazy } from 'react';
+import React, { useState, Suspense } from 'react';
 import { AppProvider, useAppContext } from './AppContext';
 import { Header } from './components/Header';
 import { ViewSection } from './components/ViewSection';

@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { cn } from '../cn';
-import { Clock, Trash2, Calendar, AlertCircle, RefreshCcw, Save, Bell, Check, Search, Database, Phone, Settings, ChevronDown, ChevronUp, Link, X, ArrowRight, Zap } from 'lucide-react';
+import { Clock, Trash2, Calendar, AlertCircle, RefreshCcw, Save, Bell, Check, Search, Database, Phone, Settings, X } from 'lucide-react';
 import { useAppContext } from '../AppContext';
 import { formatPhoneUniversal, parseDateStringToTimestamp } from '../utils';
 
@@ -81,7 +81,6 @@ export function HistoryView() {
     state,
     history,
     setHistory,
-    clearHistory,
     deleteOrderFromHistory,
     restoreOrderFromHistory,
     permanentlyDeleteOrderFromHistory,
@@ -89,7 +88,6 @@ export function HistoryView() {
     drafts,
     deleteDraft,
     loadDraft,
-    pushView,
     appLanguage,
     updateSpecificHistoryItem,
     updateOrderHistoryState,
@@ -928,19 +926,6 @@ export function HistoryView() {
     }
   };
 
-  const handleClearConfirm = () => {
-    setConfirmAction({
-      title: appLanguage === 'ms' ? 'Padam Semua Sejarah?' : 'Delete All History?',
-      message: appLanguage === 'ms'
-        ? 'Tindakan ini tidak boleh diundurkan. Semua rekod tempahan akan dipadam.'
-        : 'This action cannot be undone. All order records will be deleted.',
-      onConfirm: () => {
-        clearHistory();
-        setConfirmAction(null);
-      }
-    });
-  };
-
   const handleRemoteSearch = async () => {
     const activeConfigs = annualSheets.filter(s => s.spreadsheetId.trim() !== '');
 
@@ -1062,251 +1047,6 @@ export function HistoryView() {
       setSearchError(appLanguage === 'ms' ? 'Carian gagal: ' + String(err) : 'Search failed: ' + String(err));
     } finally {
       setIsSearching(false);
-    }
-  };
-
-  const handleLoadRemoteOrder = (orderData: any) => {
-    const generatedOrderId =
-      orderData.orderId ||
-      `SYNC-${orderData.name || 'UNKNOWN'}-${orderData.phone || ''}-${orderData.due || ''}`
-        .replace(/\s+/g, '-')
-        .replace(/[^a-zA-Z0-9-]/g, '');
-
-    // Check if we already have this in local history (by generatedOrderId or orderId) to avoid creating a duplicate card
-    const localMatch = history.find(item => 
-      item.id === generatedOrderId || 
-      (item.state?.orderId && item.state.orderId === generatedOrderId)
-    );
-
-    if (localMatch) {
-      loadOrder(localMatch);
-      return;
-    }
-
-    const dueTs = parseDueTimestamp(orderData.due);
-
-    const stateToApply = {
-      isDelivered: !!orderData.isDelivered,
-      spreadsheetId: orderData.spreadsheetId || state.spreadsheetId,
-      customerName: orderData.name,
-      customerPhone: orderData.phone,
-      customerOrder: orderData.order,
-      template: orderData.template,
-      customerTemplate: orderData.template,
-      customerBahasa: orderData.bahasa,
-      customerAddOn: orderData.addon,
-      customerJenis: orderData.jenis,
-      customerDue: orderData.due,
-      orderLink: orderData.link,
-      googleSheetLink: orderData.link,
-      orderId: generatedOrderId,
-      dueTimestamp: dueTs,
-      mainType:
-        orderData.order === 'Resume' || orderData.order === 'Edit Resume'
-          ? 'Resume'
-          : orderData.order === 'Surat'
-          ? 'Surat'
-          : orderData.order || 'Lain-lain',
-      isEditMode: orderData.order === 'Edit Resume',
-      subType: '',
-      customerInfo: ''
-    };
-
-    const mockHistoryItem = {
-      id: generatedOrderId,
-      timestamp: Date.now(),
-      state: stateToApply,
-      messages: []
-    };
-
-    loadOrder(mockHistoryItem);
-  };
-
-  const handleRemoteDeliveredToggle = async (
-    e: React.MouseEvent,
-    index: number,
-    orderData: any,
-    isRetry = false
-  ) => {
-    e.preventDefault();
-    e.stopPropagation();
-
-    const spreadsheetId = orderData.spreadsheetId || state.spreadsheetId;
-    const scriptUrl = orderData.scriptUrl || getActiveScriptUrl(spreadsheetId);
-    const orderId = orderData.orderId;
-    const currentStatus = !!orderData.isDelivered;
-    const newStatus = isRetry ? currentStatus : !currentStatus;
-
-    if (!spreadsheetId || !orderId) {
-      setAlertMsg({ type: 'error', message: appLanguage === 'ms' ? 'Kekurangan Order ID atau Spreadsheet ID.' : 'Missing Order ID or Spreadsheet ID.' });
-      return;
-    }
-
-    // Instantly update local UI
-    const now = Date.now();
-    setRemoteResults((prev) =>
-      prev.map((item, idx) => (idx === index ? { 
-        ...item, 
-        isDelivered: newStatus,
-        syncStatus: 'syncing',
-        syncLastAttempt: now
-      } : item))
-    );
-
-    // If it exists in local history too, update there
-    const existingIdx = history.findIndex((h) => h.state?.orderId === orderId);
-    if (existingIdx !== -1) {
-      updateSpecificHistoryItem(history[existingIdx].id, {
-        isDelivered: newStatus,
-        syncStatus: 'syncing',
-        syncLastAttempt: now
-      });
-    }
-
-    try {
-      const callbackName = 'jsonp_callback_remote_delivered_' + Math.round(Math.random() * 100000);
-      const url = new URL(scriptUrl);
-
-      url.searchParams.append('action', 'update_delivered');
-      url.searchParams.append('spreadsheetId', spreadsheetId);
-      url.searchParams.append('orderId', orderId);
-      url.searchParams.append('isDelivered', String(newStatus));
-      url.searchParams.append('callback', callbackName);
-
-      const result = await jsonpRequest(url, callbackName);
-      if (result.status !== 'success') {
-        console.warn('Synced status check warning:', result.message || 'Update failed');
-          // Try POST fallback
-          console.log("Executing no-cors POST update_delivered fallback from remote...");
-          fetch(scriptUrl, {
-            method: 'POST',
-            mode: 'no-cors',
-            headers: {
-              'Content-Type': 'text/plain;charset=utf-8'
-            },
-            body: JSON.stringify({
-              action: 'update_delivered',
-              spreadsheetId: spreadsheetId,
-              orderId: orderId,
-              isDelivered: newStatus
-            })
-          }).then(() => {
-             console.log("no-cors POST delivered fallback succeeded!");
-             setRemoteResults((prev) =>
-              prev.map((item, idx) => (idx === index ? { 
-                ...item, 
-                syncStatus: 'synced',
-                syncLastSuccess: Date.now(),
-                syncFailCount: 0
-              } : item))
-            );
-            if (existingIdx !== -1) {
-               updateSpecificHistoryItem(history[existingIdx].id, {
-                 syncStatus: 'synced',
-                 syncLastSuccess: Date.now(),
-                 syncFailCount: 0
-               });
-            }
-          }).catch((postErr) => {
-             console.error("POST delivered status fallback failed, queuing for offline:", postErr);
-             addToOfflineQueue({
-               action: 'update_delivered',
-               spreadsheetId: spreadsheetId,
-               orderId: orderId,
-               isDelivered: newStatus
-             }, scriptUrl, existingIdx !== -1 ? history[existingIdx].id : undefined);
-
-             setRemoteResults((prev) =>
-              prev.map((item, idx) => (idx === index ? { 
-                ...item, 
-                syncStatus: 'failed',
-                syncFailCount: (item.syncFailCount || 0) + 1,
-                syncLastAttempt: Date.now()
-              } : item))
-            );
-            if (existingIdx !== -1) {
-              updateSpecificHistoryItem(history[existingIdx].id, {
-                syncStatus: 'failed',
-                syncFailCount: (history[existingIdx].state?.syncFailCount || 0) + 1,
-                syncLastAttempt: Date.now()
-              });
-            }
-          });
-      } else {
-         setRemoteResults((prev) =>
-          prev.map((item, idx) => (idx === index ? { 
-            ...item, 
-            syncStatus: 'synced',
-            syncLastSuccess: Date.now(),
-            syncFailCount: 0
-          } : item))
-        );
-        if (existingIdx !== -1) {
-           updateSpecificHistoryItem(history[existingIdx].id, {
-             syncStatus: 'synced',
-             syncLastSuccess: Date.now(),
-             syncFailCount: 0
-           });
-        }
-      }
-    } catch (err) {
-      console.warn('Failed to sync delivered status update in background:', err);
-      // Try POST fallback
-      console.log("Executing no-cors POST update_delivered fallback from remote catch...");
-      fetch(scriptUrl, {
-        method: 'POST',
-        mode: 'no-cors',
-        headers: {
-          'Content-Type': 'text/plain;charset=utf-8'
-        },
-        body: JSON.stringify({
-          action: 'update_delivered',
-          spreadsheetId: spreadsheetId,
-          orderId: orderId,
-          isDelivered: newStatus
-        })
-      }).then(() => {
-         console.log("no-cors POST delivered fallback succeeded!");
-         setRemoteResults((prev) =>
-          prev.map((item, idx) => (idx === index ? { 
-            ...item, 
-            syncStatus: 'synced',
-            syncLastSuccess: Date.now(),
-            syncFailCount: 0
-          } : item))
-        );
-        if (existingIdx !== -1) {
-           updateSpecificHistoryItem(history[existingIdx].id, {
-             syncStatus: 'synced',
-             syncLastSuccess: Date.now(),
-             syncFailCount: 0
-           });
-        }
-      }).catch((postErr) => {
-         console.error("POST delivered status fallback failed, queuing for offline:", postErr);
-         addToOfflineQueue({
-           action: 'update_delivered',
-           spreadsheetId: spreadsheetId,
-           orderId: orderId,
-           isDelivered: newStatus
-         }, scriptUrl, existingIdx !== -1 ? history[existingIdx].id : undefined);
-
-         setRemoteResults((prev) =>
-          prev.map((item, idx) => (idx === index ? { 
-            ...item, 
-            syncStatus: 'failed',
-            syncFailCount: (item.syncFailCount || 0) + 1,
-            syncLastAttempt: Date.now()
-          } : item))
-        );
-        if (existingIdx !== -1) {
-          updateSpecificHistoryItem(history[existingIdx].id, {
-            syncStatus: 'failed',
-            syncFailCount: (history[existingIdx].state?.syncFailCount || 0) + 1,
-            syncLastAttempt: Date.now()
-          });
-        }
-      });
     }
   };
 

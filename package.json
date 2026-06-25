@@ -45,6 +45,7 @@
     "@types/pg": "^8.20.0",
     "@types/web-push": "^3.6.4",
     "drizzle-kit": "^0.31.10",
-    "glob": "^13.0.6"
+    "glob": "^13.0.6",
+    "puppeteer": "^25.2.1"
   }
 }

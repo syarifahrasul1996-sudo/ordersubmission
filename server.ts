@@ -72,7 +72,7 @@ async function startServer() {
   loadScheduledOrders();
 
   // API to get public VAPID key for subscription
-  app.get("/api/vapid-public-key", (req, res) => {
+  app.get("/api/vapid-public-key", (_req, res) => {
     res.json({ publicKey: vapidKeys.publicKey });
   });
 
@@ -166,7 +166,7 @@ async function startServer() {
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
-    app.get('*', (req, res) => {
+    app.get('*', (_req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }

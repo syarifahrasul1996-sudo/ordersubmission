@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { RefreshCcw, Save, Check, FileText, ExternalLink, LogOut, Loader2, AlertCircle, ChevronDown } from 'lucide-react';
+import { RefreshCcw, Save, Check, FileText, ExternalLink, Loader2, AlertCircle, ChevronDown } from 'lucide-react';
 import { useAppContext } from '../AppContext';
-import { calculateDeadline, formatPhoneUniversal, parseDateStringToTimestamp } from '../utils';
+import { formatPhoneUniversal, parseDateStringToTimestamp } from '../utils';
 import { Toast } from '../components/Toast';
 import { SetupHelper } from '../components/SetupHelper';
-import { googleSignIn, initAuth, getAccessToken, logout } from '../utils/googleAuth';
+import { googleSignIn, initAuth, getAccessToken } from '../utils/googleAuth';
 import { User } from 'firebase/auth';
 import { cn } from '../cn';
 
@@ -69,7 +69,7 @@ function jsonpRequest<T>(url: string, params: Record<string, string | number | b
 }
 
 export function CustomerInfoView() {
-  const { appLanguage, state, setState, goHome, viewStack, updateOrderHistoryState, updateSpecificHistoryItem, addToOfflineQueue, saveAsDraft: contextSaveAsDraft, deleteDraft, history, setHistory } = useAppContext();
+  const { appLanguage, state, setState, goHome, viewStack, updateOrderHistoryState, addToOfflineQueue, saveAsDraft: contextSaveAsDraft, deleteDraft, history, setHistory } = useAppContext();
   const isActive = viewStack[viewStack.length - 1] === 'customer-info';
   const isSubmittingRef = useRef(false);
 
@@ -241,7 +241,6 @@ export function CustomerInfoView() {
   const [isSaving, setIsSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
-  const [isInIframe, setIsInIframe] = useState(false);
   const [toastMsg, setToastMsg] = useState('');
   const [showToast, setShowToast] = useState(false);
   const [showSetup, setShowSetup] = useState(false);
@@ -320,16 +319,13 @@ export function CustomerInfoView() {
       };
 
       let templateContent = "";
-      let mode = "letter";
 
       if (order === "Surat") {
         const letterTemplate = await fetchDocContent(TEMPLATE_SOURCES.letter.docUrl);
         templateContent = letterTemplate || "";
-        mode = "letter";
       } else if (order === "Agreement" || (template && template.includes("PERJANJIAN"))) {
         const agreementTemplateSection = await fetchDocContent(TEMPLATE_SOURCES.agreement.docUrl);
         templateContent = agreementTemplateSection || "";
-        mode = "agreement";
       }
 
       // Perform standard placeholder replacements locally instead of using Gemini AI
@@ -472,14 +468,6 @@ Dokumen Dijana Secara Automatik`;
     setShowToast(true);
     setTimeout(() => setShowToast(false), 3000);
   };
-
-  useEffect(() => {
-    try {
-      setIsInIframe(window.self !== window.top);
-    } catch (e) {
-      setIsInIframe(true);
-    }
-  }, []);
 
   // Re-compute when navigating here or state changes
   useEffect(() => {

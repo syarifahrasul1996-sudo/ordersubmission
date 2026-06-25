@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { CheckCircle2 } from 'lucide-react';
 import { useAppContext } from '../AppContext';
 import { cn } from '../cn';
@@ -6,7 +6,6 @@ import { UrgencyGrid } from '../components/UrgencyGrid';
 
 export function ResumeFormFieldsView() {
   const { state, setState, appLanguage } = useAppContext();
-  const [customAddon, setCustomAddon] = useState('');
 
   const isMulti = (state.resumeLangs || []).length > 1;
 

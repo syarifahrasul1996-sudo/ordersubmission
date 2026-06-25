@@ -4,7 +4,6 @@ import {
   Users, 
   RefreshCw, 
   Search, 
-  AlertTriangle, 
   CheckSquare, 
   Square, 
   Loader2, 
@@ -185,7 +184,7 @@ export function ContactsSyncView() {
           url.searchParams.append('year', sheet.year);
           url.searchParams.append('callback', callbackName);
 
-          setCloudFetchProgress(prev => 
+          setCloudFetchProgress(() => 
             appLanguage === 'ms' 
               ? `Memuat turun data tahun ${sheet.year}...` 
               : `Downloading data for year ${sheet.year}...`
