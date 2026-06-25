@@ -380,16 +380,33 @@ function syncRecentOrders(e) {
 
       var values = sheet.getRange(2, 1, lastRow - 1, 11).getValues();
 
-      values.forEach(function(rowData) {
+      values.forEach(function(rowData, rowIndex) {
         var dueDate = parseDueDate(rowData[8]);
+
+        var currentOrderId = String(rowData[10] || "").trim();
+
+if (!currentOrderId || currentOrderId.indexOf("SYNC-") === 0) {
+  currentOrderId = generateAppsScriptOrderId();
+
+  var actualRow = rowIndex + 2;
+
+  sheet
+    .getRange(actualRow, 11)
+    .setValue(currentOrderId);
+
+  rowData[10] = currentOrderId;
+}
 
         if (!dueDate) return;
 
         var today = new Date();
         today.setHours(0, 0, 0, 0);
 
-        var startDate = new Date(today);
-        startDate.setDate(today.getDate() - 2);
+        var startDate = new Date(
+  today.getFullYear(),
+  today.getMonth() - 1,
+  1
+);
 
         var endDate = new Date(today);
         endDate.setDate(today.getDate() + 3);
@@ -555,9 +572,18 @@ function findRowByOrderId(sheet, orderId, optionalContent) {
 }
 
 function generateAppsScriptOrderId() {
-  var now = new Date();
-  var pad = function(n) { return String(n).padStart(2, "0"); };
-  return "ORD-" + now.getFullYear() + pad(now.getMonth() + 1) + pad(now.getDate()) + "-" + pad(now.getHours()) + pad(now.getMinutes()) + pad(now.getSeconds());
+  var timestamp = Utilities.formatDate(
+    new Date(),
+    Session.getScriptTimeZone(),
+    "yyyyMMdd-HHmmss"
+  );
+
+  var uniquePart = Utilities
+    .getUuid()
+    .slice(0, 8)
+    .toUpperCase();
+
+  return "ORD-" + timestamp + "-" + uniquePart;
 }
 
 function findRowByFallbackKey(sheet, name, phone, due, orderType) {
@@ -648,7 +674,7 @@ function getCurrentAndNextMonthSheetNames() {
 
   var names = [];
 
-  for (var offset = 0; offset <= 1; offset++) {
+  for (var offset = -1; offset <= 1; offset++) {
     var date = new Date(now.getFullYear(), now.getMonth() + offset, 1);
 
     names.push(monthNamesEn[date.getMonth()] + " " + date.getFullYear());
