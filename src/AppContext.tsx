@@ -48,6 +48,9 @@ interface AppContextType {
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export function AppProvider({ children }: { children: ReactNode }) {
+  console.log("AppProvider initializing...");
+  const [user, setUser] = useState<User | null>(null);
+
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     try {
       const saved = localStorage.getItem('appTheme') as 'light' | 'dark';
@@ -86,7 +89,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return INITIAL_STATE;
     }
   });
-  
+
   const [viewStack, setViewStack] = useState<ViewType[]>(() => {
     try {
       const saved = localStorage.getItem('viewStack');
@@ -128,10 +131,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   });
 
-  useEffect(() => {
-    localStorage.setItem('deletedOrderIds', JSON.stringify(deletedOrderIds));
-  }, [deletedOrderIds]);
-
   const [drafts, setDrafts] = useState<OrderHistoryItem[]>(() => {
     try {
       const saved = localStorage.getItem('orderDrafts');
@@ -146,6 +145,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   });
 
   useEffect(() => {
+    localStorage.setItem('deletedOrderIds', JSON.stringify(deletedOrderIds));
+  }, [deletedOrderIds]);
+
+  useEffect(() => {
     localStorage.setItem('appState', JSON.stringify(state));
   }, [state]);
 
@@ -156,10 +159,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     localStorage.setItem('generatedMessages', JSON.stringify(generatedMessages));
   }, [generatedMessages]);
-
-  useEffect(() => {
-    localStorage.setItem('orderHistory', JSON.stringify(history));
-  }, [history]);
 
   useEffect(() => {
     localStorage.setItem('orderDrafts', JSON.stringify(drafts));
@@ -590,10 +589,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     
     setHistory(prev => {
       const exists = prev.find(item => item.id === currentId);
-      if (exists) {
-        return prev.map(item => item.id === currentId ? newItem : item);
-      }
-      return [newItem, ...prev];
+      const nextHistory = exists ? prev.map(item => item.id === currentId ? newItem : item) : [newItem, ...prev];
+      localStorage.setItem('orderHistory', JSON.stringify(nextHistory));
+      return nextHistory;
     });
     
     setState(finalState);
@@ -606,8 +604,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (finalState.historyId) {
        setHistory(prev => {
          const exists = prev.some(item => item.id === finalState.historyId);
+         let nextHistory;
          if (exists) {
-           return prev.map(item => {
+           nextHistory = prev.map(item => {
              if (item.id === finalState.historyId) {
                const updatedItem = { ...item, state: finalState };
                syncPushNotifications(updatedItem, appLanguage).catch(console.warn);
@@ -615,29 +614,35 @@ export function AppProvider({ children }: { children: ReactNode }) {
              }
              return item;
            });
+         } else {
+           const newItem: OrderHistoryItem = {
+             id: finalState.historyId as string,
+             timestamp: finalState.timestamp || Date.now(),
+             state: finalState,
+             messages: []
+           };
+           syncPushNotifications(newItem, appLanguage).catch(console.warn);
+           nextHistory = [newItem, ...prev];
          }
-         
-         const newItem: OrderHistoryItem = {
-           id: finalState.historyId as string,
-           timestamp: finalState.timestamp || Date.now(),
-           state: finalState,
-           messages: []
-         };
-         syncPushNotifications(newItem, appLanguage).catch(console.warn);
-         return [newItem, ...prev];
+         localStorage.setItem('orderHistory', JSON.stringify(nextHistory));
+         return nextHistory;
        });
     }
   };
 
   const updateSpecificHistoryItem = (id: string, updates: Partial<AppState>) => {
-    setHistory(prev => prev.map(item => {
-      if (item.id === id) {
-        const updatedItem = { ...item, state: { ...item.state, ...updates, lastModifiedLocally: Date.now() } };
-        syncPushNotifications(updatedItem, appLanguage).catch(console.warn);
-        return updatedItem;
-      }
-      return item;
-    }));
+    setHistory(prev => {
+      const nextHistory = prev.map(item => {
+        if (item.id === id) {
+          const updatedItem = { ...item, state: { ...item.state, ...updates, lastModifiedLocally: Date.now() } };
+          syncPushNotifications(updatedItem, appLanguage).catch(console.warn);
+          return updatedItem;
+        }
+        return item;
+      });
+      localStorage.setItem('orderHistory', JSON.stringify(nextHistory));
+      return nextHistory;
+    });
   };
 
   const deleteOrderFromHistory = (id: string) => {
