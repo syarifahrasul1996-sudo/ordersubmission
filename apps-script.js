@@ -1,78 +1,281 @@
-/**
- * Google Apps Script backend for the Order Submission web app.
- *
- * Deploy as a Web App:
- *   Execute as: Me
- *   Who has access: Anyone
- *
- * The web app uses JSONP for readable cross-origin responses, with POST
- * compatibility for older clients and external integrations. Keep this file as
- * setup helper imports this exact file.
- */
-
-var ORDER_HEADERS = [
-  "Done",
-  "Nama",
-  "Phone Number",
-  "Order",
-  "Template",
-  "Bahasa",
-  "Add On",
-  "Jenis",
-  "Due",
-  "Link",
-  "Order ID",
-  "Price"
-];
-
-function doGet(e) {
-  return routeRequest(getRequestParameters(e), true);
-}
-
 function doPost(e) {
-  var data;
+  var lock = LockService.getScriptLock();
+
   try {
-    if (!e || !e.postData || !e.postData.contents) {
+    lock.waitLock(10000);
+
+    if (!e.postData || !e.postData.contents) {
       return jsonResponse("error", "Missing POST body");
     }
-    data = JSON.parse(e.postData.contents);
-  } catch (error) {
-    return jsonResponse("error", "Invalid JSON body: " + error.toString());
-  }
 
-  return routeRequest(data || {}, false);
+    var data = JSON.parse(e.postData.contents);
+    var action = data.action || "update_order";
+    var spreadsheetId = data.spreadsheetId;
+
+    if (data.rowData && data.rowData[0] === "test_diagnostic_connection") {
+      return jsonResponse("success", "Diagnostic connection successful");
+    }
+
+    if (!spreadsheetId) {
+      return jsonResponse("error", "Missing spreadsheetId");
+    }
+
+    var ss = SpreadsheetApp.openById(spreadsheetId);
+    var sheets = ss.getSheets();
+
+    if (action === "delete_order") {
+      var orderId = data.orderId;
+      if (!orderId) {
+        return jsonResponse("error", "Missing orderId");
+      }
+      var deleted = false;
+      for (var s = 0; s < sheets.length; s++) {
+        var sheet = sheets[s];
+        var row = findRowByOrderId(sheet, orderId);
+        if (row) {
+          sheet.deleteRow(row);
+          deleted = true;
+          break;
+        }
+      }
+      return jsonResponse("success", "Deleted order " + orderId, { deleted: deleted });
+    }
+
+    if (action === "update_delivered") {
+      var orderId = data.orderId;
+      var isDelivered = data.isDelivered === true || data.isDelivered === "true" || data.isDelivered === 1 || data.isDelivered === "1";
+      if (!orderId) {
+        return jsonResponse("error", "Missing orderId");
+      }
+      var updated = false;
+      for (var s = 0; s < sheets.length; s++) {
+        var sheet = sheets[s];
+        var row = findRowByOrderId(sheet, orderId);
+        if (row) {
+          sheet.getRange(row, 1).setValue(isDelivered);
+          updated = true;
+          break;
+        }
+      }
+      return jsonResponse("success", "Updated delivered status for " + orderId, { updated: updated, isDelivered: isDelivered });
+    }
+
+    if (action === "update_order") {
+      var rowData = data.rowData;
+      if (!rowData || !Array.isArray(rowData)) {
+        return jsonResponse("error", "Missing or invalid rowData");
+      }
+      if (rowData.length < 11) {
+        return jsonResponse("error", "rowData must contain at least 11 columns");
+      }
+
+      var orderId = String(rowData[10] || "").trim();
+      var oldOrderId = String(data.oldOrderId || "").trim();
+
+      var foundRow = null;
+      var foundSheet = null;
+
+      // 1. Try finding by orderId
+      if (orderId && orderId.indexOf("SYNC-") !== 0) {
+        for (var s = 0; s < sheets.length; s++) {
+          var sheet = sheets[s];
+          var row = findRowByOrderId(sheet, orderId);
+          if (row) {
+            foundRow = row;
+            foundSheet = sheet;
+            break;
+          }
+        }
+      }
+
+      // 2. Try oldOrderId
+      if (!foundRow && oldOrderId) {
+        for (var s = 0; s < sheets.length; s++) {
+          var sheet = sheets[s];
+          var row = findRowByOrderId(sheet, oldOrderId);
+          if (row) {
+            foundRow = row;
+            foundSheet = sheet;
+            break;
+          }
+        }
+      }
+
+      // 3. Try fallback key
+      if (!foundRow) {
+        var name = rowData[1];
+        var phone = rowData[2];
+        var order = rowData[3];
+        var due = rowData[8];
+        for (var s = 0; s < sheets.length; s++) {
+          var sheet = sheets[s];
+          var row = findRowByFallbackKey(sheet, name, phone, due, order);
+          if (row) {
+            foundRow = row;
+            foundSheet = sheet;
+            break;
+          }
+        }
+      }
+
+      var finalOrderId = orderId;
+      var isUpgraded = false;
+
+      if (foundRow && foundSheet) {
+        var currentCellId = String(foundSheet.getRange(foundRow, 11).getValue() || "").trim();
+        if (!currentCellId || currentCellId.indexOf("SYNC-") === 0) {
+          if (orderId && orderId.indexOf("SYNC-") !== 0) {
+            finalOrderId = orderId;
+          } else {
+            finalOrderId = generateAppsScriptOrderId();
+          }
+          isUpgraded = true;
+        } else {
+          finalOrderId = currentCellId;
+        }
+        rowData[10] = finalOrderId;
+      } else {
+        if (!finalOrderId || finalOrderId.indexOf("SYNC-") === 0) {
+          finalOrderId = generateAppsScriptOrderId();
+          isUpgraded = true;
+        }
+        rowData[10] = finalOrderId;
+      }
+
+      rowData[0] = normalizeCheckboxValue(rowData[0]);
+      rowData[2] = formatPhoneForSheet(rowData[2]);
+
+      // Determine correct sheet name
+      var due = rowData[8];
+      var targetDate = new Date();
+      if (due) {
+        var parsedDObj = parseDueDate(due);
+        if (parsedDObj) {
+          targetDate = parsedDObj;
+        }
+      }
+      var monthNamesEn = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+      var targetSheetEn = monthNamesEn[targetDate.getMonth()] + " " + targetDate.getFullYear();
+      var targetSheet = ss.getSheetByName(targetSheetEn);
+      if (!targetSheet) {
+        var monthNamesMs = ["Januari", "Februari", "Mac", "April", "Mei", "Jun", "Julai", "Ogos", "September", "Oktober", "November", "Disember"];
+        var targetSheetMs = monthNamesMs[targetDate.getMonth()] + " " + targetDate.getFullYear();
+        targetSheet = ss.getSheetByName(targetSheetMs);
+      }
+      if (!targetSheet) {
+        targetSheet = ss.insertSheet(targetSheetEn);
+      }
+      ensureSheetSetup(targetSheet);
+
+      if (foundRow && foundSheet) {
+        if (foundSheet.getName() !== targetSheet.getName()) {
+          // Move sheets because the due date changes!
+          foundSheet.deleteRow(foundRow);
+          targetSheet.appendRow(rowData);
+          var newRow = targetSheet.getLastRow();
+          applyRowTemplate(targetSheet, newRow);
+        } else {
+          foundSheet.getRange(foundRow, 1, 1, rowData.length).setValues([rowData]);
+          applyRowTemplate(foundSheet, foundRow);
+        }
+      } else {
+        targetSheet.appendRow(rowData);
+        var newRow = targetSheet.getLastRow();
+        applyRowTemplate(targetSheet, newRow);
+      }
+
+      return jsonResponse("success", "Successfully updated/created order", {
+        orderId: finalOrderId,
+        isUpgraded: isUpgraded
+      });
+    }
+
+    return jsonResponse("error", "Unknown action: " + action);
+
+  } catch (error) {
+    return jsonResponse("error", error.toString());
+  } finally {
+    try {
+      lock.releaseLock();
+    } catch (err) {}
+  }
 }
 
-function routeRequest(params, allowJsonp) {
-  var action = String(params.action || "").trim();
-  var callback = allowJsonp ? params.callback : "";
+function doGet(e) {
+  var action = e.parameter.action;
+
+  if (action === "sync_recent") {
+    return syncRecentOrders(e);
+  }
+
+  if (action === "get_link") {
+    return getOrderLink(e);
+  }
+
+  if (action === "update_delivered") {
+    return updateDeliveredStatus(e);
+  }
+
+  if (action === "search_database") {
+    return searchDatabase(e);
+  }
+
+  if (action === "get_dashboard_orders") {
+    return getDashboardOrders(e);
+  }
+
+  if (action === "delete_order") {
+    return deleteOrder(e);
+  }
+
+  if (action === "update_order") {
+    return updateOrder(e);
+  }
+
+  return ContentService
+    .createTextOutput("OK")
+    .setMimeType(ContentService.MimeType.TEXT);
+}
+
+function deleteOrder(e) {
+  var spreadsheetId = e.parameter.spreadsheetId;
+  var orderId = e.parameter.orderId;
+  var callback = e.parameter.callback;
 
   try {
-    if (action === "sync_recent") return syncRecentOrders(params, callback);
-    if (action === "get_dashboard_orders") return getDashboardOrders(params, callback);
-    if (action === "get_link") return getOrderLink(params, callback);
-    if (action === "update_delivered") return withWriteLock(function() {
-      return updateDeliveredStatus(params, callback);
-    }, callback);
-    if (action === "search_database") return searchDatabase(params, callback);
-    if (action === "delete_order") return withWriteLock(function() {
-      return deleteOrder(params, callback);
-    }, callback);
-    if (action === "update_order") return withWriteLock(function() {
-      return updateOrder(params, callback);
-    }, callback);
+    if (!spreadsheetId) {
+      return jsonOrJsonp(callback, {
+        status: "error",
+        message: "Missing spreadsheetId"
+      });
+    }
 
-    // Backward-compatible POST format used by older clients.
-    if (Array.isArray(params.rowData)) {
-      return withWriteLock(function() {
-        return upsertRowData(params, callback);
-      }, callback);
+    if (!orderId) {
+      return jsonOrJsonp(callback, {
+        status: "error",
+        message: "Missing orderId"
+      });
+    }
+
+    var ss = SpreadsheetApp.openById(spreadsheetId);
+    var sheets = ss.getSheets();
+    var deleted = false;
+
+    for (var s = 0; s < sheets.length; s++) {
+      var sheet = sheets[s];
+      var row = findRowByOrderId(sheet, orderId);
+      if (row) {
+        sheet.deleteRow(row);
+        deleted = true;
+        break;
+      }
     }
 
     return jsonOrJsonp(callback, {
       status: "success",
-      message: "Order Submission Apps Script is running"
+      deleted: deleted
     });
+
   } catch (error) {
     return jsonOrJsonp(callback, {
       status: "error",
@@ -81,516 +284,834 @@ function routeRequest(params, allowJsonp) {
   }
 }
 
-function getRequestParameters(e) {
-  var result = {};
-  if (!e || !e.parameter) return result;
-  Object.keys(e.parameter).forEach(function(key) {
-    result[key] = e.parameter[key];
-  });
-  return result;
-}
+function getDashboardOrders(e) {
+  var spreadsheetId = e.parameter.spreadsheetId;
+  var callback = e.parameter.callback;
 
-function withWriteLock(callback, outputCallback) {
-  var lock = LockService.getScriptLock();
-  var hasLock = false;
   try {
-    lock.waitLock(10000);
-    hasLock = true;
-    return callback();
+    if (!spreadsheetId) {
+      return jsonOrJsonp(callback, {
+        status: "error",
+        message: "Missing spreadsheetId"
+      });
+    }
+
+    var ss = SpreadsheetApp.openById(spreadsheetId);
+    var sheets = ss.getSheets();
+    var orders = [];
+
+    sheets.forEach(function(sheet) {
+      var lastRow = sheet.getLastRow();
+      if (lastRow < 2) return;
+
+      var lastCol = Math.max(sheet.getLastColumn(), 11);
+      var values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+
+      values.forEach(function(rowData) {
+        var name = String(rowData[1] || "").trim();
+        if (!name) return;
+
+        var orderId = String(rowData[10] || "").trim();
+        var dueValue = rowData[8];
+
+        var dueDate = (Object.prototype.toString.call(dueValue) === "[object Date]")
+          ? dueValue
+          : parseDueDate(dueValue);
+
+        var dueTimestamp = (dueDate && !isNaN(dueDate.getTime()))
+          ? dueDate.getTime()
+          : 0;
+
+        orders.push({
+          isDelivered: rowData[0] === true || String(rowData[0]).toLowerCase() === "true",
+          name: String(rowData[1] || ""),
+          phone: String(rowData[2] || ""),
+          order: String(rowData[3] || ""),
+          template: String(rowData[4] || ""),
+          bahasa: String(rowData[5] || ""),
+          addon: String(rowData[6] || ""),
+          jenis: String(rowData[7] || ""),
+          due: formatDateValue(rowData[8]),
+          dueTimestamp: dueTimestamp,
+          link: String(rowData[9] || ""),
+          orderId: orderId,
+          sheetName: sheet.getName()
+        });
+      });
+    });
+
+    return jsonOrJsonp(callback, {
+      status: "success",
+      orders: orders
+    });
+
   } catch (error) {
-    return errorOutput(outputCallback, error.toString());
-  } finally {
-    if (hasLock) {
-      try { lock.releaseLock(); } catch (ignored) {}
-    }
+    return jsonOrJsonp(callback, {
+      status: "error",
+      message: error.toString()
+    });
   }
 }
 
-function upsertRowData(params, callback) {
-  var spreadsheetId = String(params.spreadsheetId || "").trim();
-  var rowData = Array.isArray(params.rowData) ? params.rowData.slice(0, ORDER_HEADERS.length) : null;
+function syncRecentOrders(e) {
+  var spreadsheetId = e.parameter.spreadsheetId;
+  var callback = e.parameter.callback;
 
-  if (rowData && rowData[0] === "test_diagnostic_connection") {
+  try {
+    if (!spreadsheetId) {
+      return jsonOrJsonp(callback, {
+        status: "error",
+        message: "Missing spreadsheetId"
+      });
+    }
+
+    var ss = SpreadsheetApp.openById(spreadsheetId);
+    var sheets = ss.getSheets();
+
+    var targetSheets = getCurrentAndNextMonthSheetNames();
+    var recentOrders = [];
+
+    sheets.forEach(function(sheet) {
+      if (targetSheets.indexOf(sheet.getName()) === -1) return;
+
+      var lastRow = sheet.getLastRow();
+
+      if (lastRow < 2) return;
+
+      var values = sheet.getRange(2, 1, lastRow - 1, 11).getValues();
+
+      values.forEach(function(rowData) {
+        var dueDate = parseDueDate(rowData[8]);
+
+        if (!dueDate) return;
+
+        var today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        var startDate = new Date(today);
+        startDate.setDate(today.getDate() - 2);
+
+        var endDate = new Date(today);
+        endDate.setDate(today.getDate() + 3);
+        endDate.setHours(23, 59, 59, 999);
+
+        if (dueDate < startDate || dueDate > endDate) return;
+
+        recentOrders.push({
+          isDelivered: rowData[0] === true || String(rowData[0]).toLowerCase() === "true",
+          name: rowData[1] || "",
+          phone: rowData[2] || "",
+          order: rowData[3] || "",
+          template: rowData[4] || "",
+          bahasa: rowData[5] || "",
+          addon: rowData[6] || "",
+          jenis: rowData[7] || "",
+          due: formatDateValue(rowData[8]),
+          link: String(rowData[9] || ""),
+          orderId: String(rowData[10] || "")
+        });
+      });
+    });
+
     return jsonOrJsonp(callback, {
       status: "success",
-      message: "Diagnostic connection successful"
+      orders: recentOrders
     });
-  }
-  if (!spreadsheetId) return errorOutput(callback, "Missing spreadsheetId");
-  if (!rowData) return errorOutput(callback, "Missing or invalid rowData");
-  if (rowData.length < 11) return errorOutput(callback, "rowData must contain at least 11 columns");
 
-  while (rowData.length < ORDER_HEADERS.length) rowData.push("");
-  rowData[0] = normalizeCheckboxValue(rowData[0]);
-  rowData[11] = normalizePrice(rowData[11]);
-
-  var orderId = String(rowData[10] || "").trim();
-  if (!orderId) return errorOutput(callback, "Missing Order ID in column K");
-
-  var ss = SpreadsheetApp.openById(spreadsheetId);
-  var sheet = findOrCreateTargetSheet(ss, params, rowData[8]);
-  ensureSheetSetup(sheet);
-
-  var existing = findOrderAcrossSheets(ss, orderId);
-  if (existing) {
-    var existingDone = existing.sheet.getRange(existing.row, 1).getValue();
-    if (normalizeCheckboxValue(existingDone)) rowData[0] = true;
-
-    if (existing.sheet.getSheetId() !== sheet.getSheetId()) {
-      existing.sheet.deleteRow(existing.row);
-      appendOrderRow(sheet, rowData);
-    } else {
-      writeOrderRow(sheet, existing.row, rowData);
-    }
-
+  } catch (error) {
     return jsonOrJsonp(callback, {
-      status: "success",
-      message: "Updated order " + orderId,
-      orderId: orderId
+      status: "error",
+      message: error.toString()
     });
   }
-
-  appendOrderRow(sheet, rowData);
-  return jsonOrJsonp(callback, {
-    status: "success",
-    message: "Created order " + orderId,
-    orderId: orderId
-  });
 }
 
-function updateOrder(params, callback) {
-  var spreadsheetId = String(params.spreadsheetId || "").trim();
-  if (!spreadsheetId) return errorOutput(callback, "Missing spreadsheetId");
+function getOrderLink(e) {
+  var spreadsheetId = e.parameter.spreadsheetId;
+  var orderId = e.parameter.orderId;
+  var callback = e.parameter.callback;
 
-  var orderId = String(params.orderId || "").trim();
-  var oldOrderId = String(params.oldOrderId || "").trim();
-  if (!orderId) return errorOutput(callback, "Missing orderId");
-
-  var rowData = Array.isArray(params.rowData)
-    ? params.rowData.slice(0, ORDER_HEADERS.length)
-    : [
-        normalizeCheckboxValue(params.isDelivered),
-        params.name || "",
-        params.phone || "",
-        params.order || "",
-        params.template || "",
-        params.bahasa || "",
-        params.addon || "",
-        params.jenis || "",
-        params.due || "",
-        params.link || "",
-        orderId,
-        normalizePrice(params.price)
-      ];
-
-  while (rowData.length < ORDER_HEADERS.length) rowData.push("");
-  rowData[0] = normalizeCheckboxValue(rowData[0]);
-  rowData[10] = orderId;
-  rowData[11] = normalizePrice(rowData[11]);
-
-  var ss = SpreadsheetApp.openById(spreadsheetId);
-  var targetSheet = findOrCreateTargetSheet(ss, params, rowData[8]);
-  ensureSheetSetup(targetSheet);
-
-  var existing = findOrderAcrossSheets(ss, orderId);
-  if (!existing && oldOrderId) existing = findOrderAcrossSheets(ss, oldOrderId);
-
-  if (existing) {
-    if (existing.sheet.getSheetId() !== targetSheet.getSheetId()) {
-      existing.sheet.deleteRow(existing.row);
-      appendOrderRow(targetSheet, rowData);
-    } else {
-      writeOrderRow(targetSheet, existing.row, rowData);
+  try {
+    if (!spreadsheetId) {
+      return jsonOrJsonp(callback, {
+        status: "error",
+        message: "Missing spreadsheetId"
+      });
     }
-  } else {
-    appendOrderRow(targetSheet, rowData);
-  }
 
-  return jsonOrJsonp(callback, {
-    status: "success",
-    message: existing ? "Updated order " + orderId : "Created order " + orderId,
-    orderId: orderId,
-    isUpgraded: !!oldOrderId && oldOrderId !== orderId
-  });
-}
+    if (!orderId) {
+      return jsonOrJsonp(callback, {
+        status: "error",
+        message: "Missing orderId"
+      });
+    }
 
-function updateDeliveredStatus(params, callback) {
-  var spreadsheetId = String(params.spreadsheetId || "").trim();
-  var orderId = String(params.orderId || "").trim();
-  if (!spreadsheetId) return errorOutput(callback, "Missing spreadsheetId");
-  if (!orderId) return errorOutput(callback, "Missing orderId");
+    var ss = SpreadsheetApp.openById(spreadsheetId);
+    var sheets = ss.getSheets();
 
-  var ss = SpreadsheetApp.openById(spreadsheetId);
-  var found = findOrderAcrossSheets(ss, orderId);
-  if (!found) return errorOutput(callback, "Order ID not found");
+    var foundLink = "";
 
-  var isDelivered = normalizeCheckboxValue(params.isDelivered);
-  found.sheet.getRange(found.row, 1).insertCheckboxes().setValue(isDelivered);
+    for (var i = 0; i < sheets.length; i++) {
+      var row = findRowByOrderId(sheets[i], orderId);
 
-  return jsonOrJsonp(callback, {
-    status: "success",
-    orderId: orderId,
-    isDelivered: isDelivered
-  });
-}
-
-function deleteOrder(params, callback) {
-  var spreadsheetId = String(params.spreadsheetId || "").trim();
-  var orderId = String(params.orderId || "").trim();
-  if (!spreadsheetId) return errorOutput(callback, "Missing spreadsheetId");
-  if (!orderId) return errorOutput(callback, "Missing orderId");
-
-  var ss = SpreadsheetApp.openById(spreadsheetId);
-  var found = findOrderAcrossSheets(ss, orderId);
-  if (found) found.sheet.deleteRow(found.row);
-
-  return jsonOrJsonp(callback, {
-    status: "success",
-    deleted: !!found,
-    orderId: orderId
-  });
-}
-
-function getOrderLink(params, callback) {
-  var spreadsheetId = String(params.spreadsheetId || "").trim();
-  var orderId = String(params.orderId || "").trim();
-  if (!spreadsheetId) return errorOutput(callback, "Missing spreadsheetId");
-  if (!orderId) return errorOutput(callback, "Missing orderId");
-
-  var ss = SpreadsheetApp.openById(spreadsheetId);
-  var found = findOrderAcrossSheets(ss, orderId);
-
-  return jsonOrJsonp(callback, {
-    status: "success",
-    link: found ? String(found.sheet.getRange(found.row, 10).getValue() || "") : ""
-  });
-}
-
-function syncRecentOrders(params, callback) {
-  var spreadsheetId = String(params.spreadsheetId || "").trim();
-  if (!spreadsheetId) return errorOutput(callback, "Missing spreadsheetId");
-
-  var ss = SpreadsheetApp.openById(spreadsheetId);
-  var targetNames = getRelevantMonthSheetNames();
-  var range = getActiveDateRange();
-  var recentOrders = [];
-
-  ss.getSheets().forEach(function(sheet) {
-    if (targetNames.indexOf(sheet.getName()) === -1) return;
-    collectRows(sheet, function(rowData) {
-      var dueDate = parseDueDate(rowData[8]);
-      if (!dueDate || dueDate.getTime() < range.start.getTime() || dueDate.getTime() > range.end.getTime()) return;
-      recentOrders.push(rowToOrder(rowData, sheet.getName()));
-    });
-  });
-
-  return jsonOrJsonp(callback, {
-    status: "success",
-    orders: recentOrders
-  });
-}
-
-function getDashboardOrders(params, callback) {
-  var spreadsheetId = String(params.spreadsheetId || "").trim();
-  var requestedYear = String(params.year || "").trim();
-  if (!spreadsheetId) return errorOutput(callback, "Missing spreadsheetId");
-
-  var ss = SpreadsheetApp.openById(spreadsheetId);
-  var orders = [];
-
-  ss.getSheets().forEach(function(sheet) {
-    if (requestedYear && requestedYear !== "all" && sheet.getName().indexOf(requestedYear) === -1) return;
-    collectRows(sheet, function(rowData) {
-      orders.push(rowToOrder(rowData, sheet.getName()));
-    });
-  });
-
-  return jsonOrJsonp(callback, {
-    status: "success",
-    orders: orders
-  });
-}
-
-function searchDatabase(params, callback) {
-  var spreadsheetId = String(params.spreadsheetId || "").trim();
-  var query = String(params.query || "").toLowerCase().trim();
-  if (!spreadsheetId) return errorOutput(callback, "Missing spreadsheetId");
-  if (!query) return jsonOrJsonp(callback, { status: "success", orders: [] });
-
-  var ss = SpreadsheetApp.openById(spreadsheetId);
-  var matchingOrders = [];
-
-  ss.getSheets().forEach(function(sheet) {
-    collectRows(sheet, function(rowData) {
-      var name = String(rowData[1] || "").toLowerCase();
-      var phone = String(rowData[2] || "").toLowerCase();
-      var orderId = String(rowData[10] || "").toLowerCase();
-      if (name.indexOf(query) !== -1 || phone.indexOf(query) !== -1 || orderId.indexOf(query) !== -1) {
-        matchingOrders.push(rowToOrder(rowData, sheet.getName()));
+      if (row) {
+        foundLink = String(sheets[i].getRange(row, 10).getValue() || "");
+        break;
       }
+    }
+
+    return jsonOrJsonp(callback, {
+      status: "success",
+      link: foundLink
     });
-  });
 
-  return jsonOrJsonp(callback, {
-    status: "success",
-    orders: matchingOrders
-  });
+  } catch (error) {
+    return jsonOrJsonp(callback, {
+      status: "error",
+      message: error.toString()
+    });
+  }
 }
 
-function collectRows(sheet, visitor) {
-  var lastRow = sheet.getLastRow();
-  if (lastRow < 2) return;
+function ensureSheetSetup(sheet) {
+  var headers = [
+    "Done",
+    "Nama",
+    "Phone Number",
+    "Order",
+    "Template",
+    "Bahasa",
+    "Add On",
+    "Jenis",
+    "Due",
+    "Link",
+    "Order ID"
+  ];
 
-  var values = sheet.getRange(2, 1, lastRow - 1, ORDER_HEADERS.length).getValues();
-  values.forEach(function(rowData) {
-    var hasContent = rowData.some(function(value) { return String(value || "").trim() !== ""; });
-    if (!hasContent) return;
-    visitor(rowData);
-  });
-}
+  if (sheet.getLastRow() < 1) {
+    sheet.appendRow(headers);
+  } else {
+    var existingHeaders = sheet.getRange(1, 1, 1, headers.length).getValues()[0];
+    var isHeaderMissing = existingHeaders.join("").trim() === "";
 
-function rowToOrder(rowData, sheetName) {
-  return {
-    isDelivered: normalizeCheckboxValue(rowData[0]),
-    name: rowData[1] || "",
-    phone: rowData[2] || "",
-    order: rowData[3] || "",
-    template: rowData[4] || "",
-    bahasa: rowData[5] || "",
-    addon: rowData[6] || "",
-    jenis: rowData[7] || "",
-    due: formatDateValue(rowData[8]),
-    link: String(rowData[9] || ""),
-    orderId: String(rowData[10] || ""),
-    price: normalizePrice(rowData[11]),
-    sheetName: sheetName
-  };
-}
-
-function findOrCreateTargetSheet(ss, params, dueValue) {
-  var suppliedEn = String(params.sheetNameEn || params.sheetName || "").trim();
-  var suppliedMs = String(params.sheetNameMs || "").trim();
-  var generated = getMonthSheetNames(parseDueDate(dueValue) || new Date());
-
-  var candidates = [suppliedEn, suppliedMs, generated.en, generated.ms].filter(function(name, index, all) {
-    return name && all.indexOf(name) === index;
-  });
-
-  for (var i = 0; i < candidates.length; i++) {
-    var existing = ss.getSheetByName(candidates[i]);
-    if (existing) return existing;
+    if (isHeaderMissing) {
+      sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    }
   }
 
-  return ss.insertSheet(candidates[0] || generated.en || "Orders");
-}
-
-function findOrderAcrossSheets(ss, orderId, optionalContent) {
-  var sheets = ss.getSheets();
-  for (var i = 0; i < sheets.length; i++) {
-    var row = findRowByOrderId(sheets[i], orderId, optionalContent);
-    if (row) return { sheet: sheets[i], row: row };
+  if (sheet.getLastRow() < 2) {
+    sheet.appendRow(["", "", "", "", "", "", "", "", "", "", ""]);
   }
-  return null;
+
+  sheet.getRange(2, 1).insertCheckboxes();
+  sheet.setFrozenRows(1);
 }
 
 function findRowByOrderId(sheet, orderId, optionalContent) {
   var lastRow = sheet.getLastRow();
   if (lastRow < 2) return null;
 
-  var values = sheet.getRange(2, 1, lastRow - 1, ORDER_HEADERS.length).getValues();
-  var cleanId = String(orderId || "").trim();
+  var range = sheet.getRange(2, 1, lastRow - 1, 11);
+  var values = range.getValues();
 
+  // 1. Try exact ID match in column K (index 10)
   for (var i = 0; i < values.length; i++) {
-    if (String(values[i][10] || "").trim() === cleanId) return i + 2;
+    if (String(values[i][10] || "").trim() === String(orderId).trim()) {
+      return i + 2;
+    }
   }
 
-  if (cleanId.indexOf("SYNC-") === 0) {
+  // 2. If ID starts with SYNC- and we didn't find it, try matching by content
+  // SYNC-Name-Phone-Due
+  if (String(orderId).indexOf("SYNC-") === 0) {
     for (var j = 0; j < values.length; j++) {
       var row = values[j];
-      var generated = ("SYNC-" + (row[1] || "UNKNOWN") + "-" + (row[2] || "") + "-" + formatDateValue(row[8]))
+      // Compare Name (col 2), Phone (col 3), Due (col 9, index 8)
+      var dueStr = formatDateValue(row[8]);
+      var generatedForThisRow = ("SYNC-" + (row[1] || "UNKNOWN") + "-" + (row[2] || "") + "-" + dueStr)
         .replace(/\s+/g, "-")
         .replace(/[^a-zA-Z0-9-]/g, "");
-      if (generated === cleanId) return j + 2;
+      
+      if (generatedForThisRow === orderId) {
+        return j + 2;
+      }
     }
   }
 
+  // 3. Last resort: if optionalContent is provided, try matching by that
   if (optionalContent && optionalContent.name) {
-    for (var k = 0; k < values.length; k++) {
-      var candidate = values[k];
-      if (
-        String(candidate[1] || "").trim() === String(optionalContent.name || "").trim() &&
-        String(candidate[2] || "").trim() === String(optionalContent.phone || "").trim() &&
-        formatDateValue(candidate[8]) === String(optionalContent.due || "").trim()
-      ) return k + 2;
-    }
+     for (var k = 0; k < values.length; k++) {
+       var r = values[k];
+       var rDueStr = formatDateValue(r[8]);
+       if (String(r[1]).trim() === String(optionalContent.name).trim() && 
+           String(r[2]).trim() === String(optionalContent.phone || "").trim() &&
+           rDueStr === String(optionalContent.due || "").trim()) {
+         return k + 2;
+       }
+     }
   }
 
   return null;
 }
 
-function ensureSheetSetup(sheet) {
-  if (sheet.getLastRow() < 1) {
-    sheet.getRange(1, 1, 1, ORDER_HEADERS.length).setValues([ORDER_HEADERS]);
-  } else {
-    var current = sheet.getRange(1, 1, 1, ORDER_HEADERS.length).getValues()[0];
-    for (var i = 0; i < ORDER_HEADERS.length; i++) {
-      if (!String(current[i] || "").trim()) current[i] = ORDER_HEADERS[i];
+function generateAppsScriptOrderId() {
+  var now = new Date();
+  var pad = function(n) { return String(n).padStart(2, "0"); };
+  return "ORD-" + now.getFullYear() + pad(now.getMonth() + 1) + pad(now.getDate()) + "-" + pad(now.getHours()) + pad(now.getMinutes()) + pad(now.getSeconds());
+}
+
+function findRowByFallbackKey(sheet, name, phone, due, orderType) {
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return null;
+
+  var range = sheet.getRange(2, 1, lastRow - 1, 11);
+  var values = range.getValues();
+
+  var norm = function(val) {
+    return String(val || "").trim().toLowerCase().replace(/[^a-zA-Z0-9]/g, "");
+  };
+
+  var normPhone = function(val) {
+    return String(val || "").trim().replace(/[^0-9]/g, "");
+  };
+
+  var normDue = function(val) {
+    if (Object.prototype.toString.call(val) === "[object Date]") {
+      return formatDateValue(val);
     }
-    sheet.getRange(1, 1, 1, ORDER_HEADERS.length).setValues([current]);
+    return String(val || "").trim().toLowerCase();
+  };
+
+  var targetName = norm(name);
+  var targetPhone = normPhone(phone);
+  var targetDue = normDue(due);
+  var targetOrder = norm(orderType);
+
+  for (var i = 0; i < values.length; i++) {
+    var r = values[i];
+    var rowName = norm(r[1]);
+    var rowPhone = normPhone(r[2]);
+    var rowOrder = norm(r[3]);
+    var rowDue = normDue(r[8]);
+
+    if (rowName === targetName && 
+        rowPhone === targetPhone && 
+        rowDue === targetDue && 
+        rowOrder === targetOrder) {
+      return i + 2;
+    }
   }
-
-  sheet.setFrozenRows(1);
-  sheet.getRange(1, 1, 1, ORDER_HEADERS.length).setFontWeight("bold");
-  sheet.getRange("A2:A").insertCheckboxes();
-  sheet.getRange("L2:L").setNumberFormat("0.00");
-}
-
-function appendOrderRow(sheet, rowData) {
-  var targetRow = Math.max(sheet.getLastRow() + 1, 2);
-  writeOrderRow(sheet, targetRow, rowData);
-}
-
-function writeOrderRow(sheet, row, rowData) {
-  ensureSheetSetup(sheet);
-  sheet.getRange(row, 1, 1, ORDER_HEADERS.length).setValues([rowData]);
-  applyRowTemplate(sheet, row);
+  return null;
 }
 
 function applyRowTemplate(sheet, targetRow) {
-  var templateRow = sheet.getLastRow() >= 2 ? 2 : targetRow;
-  if (templateRow !== targetRow && sheet.getLastColumn() >= ORDER_HEADERS.length) {
-    sheet.getRange(templateRow, 1, 1, ORDER_HEADERS.length).copyTo(
-      sheet.getRange(targetRow, 1, 1, ORDER_HEADERS.length),
-      SpreadsheetApp.CopyPasteType.PASTE_FORMAT,
-      false
-    );
+  var lastCol = Math.max(sheet.getLastColumn(), 11);
+
+  if (targetRow === 2) {
+    sheet.getRange(targetRow, 1).insertCheckboxes();
+    return;
   }
+
+  sheet.getRange(2, 1, 1, lastCol).copyTo(
+    sheet.getRange(targetRow, 1, 1, lastCol),
+    SpreadsheetApp.CopyPasteType.PASTE_FORMAT,
+    false
+  );
+
+  sheet.getRange(2, 1, 1, lastCol).copyTo(
+    sheet.getRange(targetRow, 1, 1, lastCol),
+    SpreadsheetApp.CopyPasteType.PASTE_DATA_VALIDATION,
+    false
+  );
+
   sheet.getRange(targetRow, 1).insertCheckboxes();
-  sheet.getRange(targetRow, 12).setNumberFormat("0.00");
 }
 
 function normalizeCheckboxValue(value) {
-  var text = String(value).toLowerCase().trim();
-  return value === true || text === "true" || text === "1" || text === "yes";
+  if (value === true || String(value).toUpperCase() === "TRUE") return true;
+  if (value === false || String(value).toUpperCase() === "FALSE") return false;
+  return false;
 }
 
-function normalizePrice(value) {
-  if (value === null || value === undefined || String(value).trim() === "") return "";
-  var text = String(value).replace(/^RM\s*/i, "").replace(/\s+/g, "");
-  if (text.indexOf(",") !== -1 && text.indexOf(".") !== -1) {
-    text = text.replace(/,/g, "");
-  } else if (text.indexOf(",") !== -1) {
-    var parts = text.split(",");
-    text = parts.length === 2 && parts[1].length <= 2 ? parts[0] + "." + parts[1] : parts.join("");
-  }
-  var number = Number(text);
-  return isFinite(number) && number >= 0 ? number : "";
-}
+function getCurrentAndNextMonthSheetNames() {
+  var now = new Date();
 
-function parseDueDate(value) {
-  if (Object.prototype.toString.call(value) === "[object Date]") {
-    return isNaN(value.getTime()) ? null : value;
-  }
+  var monthNamesEn = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December"
+  ];
 
-  var text = String(value || "").trim().replace(/\s+at\s+/i, " ").replace(/\s+/g, " ");
-  if (!text) return null;
+  var monthNamesMs = [
+    "Januari", "Februari", "Mac", "April", "Mei", "Jun",
+    "Julai", "Ogos", "September", "Oktober", "November", "Disember"
+  ];
 
-  var dmy = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2})(?::(\d{1,2}))?(?::(\d{1,2}))?\s*(AM|PM)?)?$/i);
-  if (dmy) return buildValidatedDate(dmy[3], dmy[2], dmy[1], dmy[4], dmy[5], dmy[6], dmy[7]);
-
-  var ymd = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T](\d{1,2})(?::(\d{1,2}))?(?::(\d{1,2}))?\s*(AM|PM)?)?$/i);
-  if (ymd) return buildValidatedDate(ymd[1], ymd[2], ymd[3], ymd[4], ymd[5], ymd[6], ymd[7]);
-
-  var direct = new Date(text);
-  return isNaN(direct.getTime()) ? null : direct;
-}
-
-function buildValidatedDate(yearValue, monthValue, dayValue, hourValue, minuteValue, secondValue, markerValue) {
-  var year = Number(yearValue);
-  var month = Number(monthValue) - 1;
-  var day = Number(dayValue);
-  var hour = Number(hourValue || 0);
-  var minute = Number(minuteValue || 0);
-  var second = Number(secondValue || 0);
-  var marker = String(markerValue || "").toUpperCase();
-
-  if (marker) {
-    if (hour < 1 || hour > 12) return null;
-    if (marker === "PM" && hour < 12) hour += 12;
-    if (marker === "AM" && hour === 12) hour = 0;
-  }
-  if (hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59) return null;
-
-  var date = new Date(year, month, day, hour, minute, second, 0);
-  if (
-    date.getFullYear() !== year || date.getMonth() !== month || date.getDate() !== day ||
-    date.getHours() !== hour || date.getMinutes() !== minute || date.getSeconds() !== second
-  ) return null;
-  return date;
-}
-
-function formatDateValue(value) {
-  if (Object.prototype.toString.call(value) === "[object Date]" && !isNaN(value.getTime())) {
-    return Utilities.formatDate(value, Session.getScriptTimeZone(), "dd/MM/yyyy h:mm a");
-  }
-  return String(value || "").trim();
-}
-
-function getActiveDateRange() {
-  var today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  var start = new Date(today);
-  start.setDate(today.getDate() - 2);
-
-  var end = new Date(today);
-  end.setDate(today.getDate() + 3);
-  end.setHours(23, 59, 59, 999);
-
-  return { start: start, end: end };
-}
-
-function getRelevantMonthSheetNames() {
-  var range = getActiveDateRange();
-  var cursor = new Date(range.start.getFullYear(), range.start.getMonth(), 1);
-  var finalMonth = new Date(range.end.getFullYear(), range.end.getMonth(), 1);
   var names = [];
 
-  while (cursor.getTime() <= finalMonth.getTime()) {
-    var pair = getMonthSheetNames(cursor);
-    if (names.indexOf(pair.en) === -1) names.push(pair.en);
-    if (names.indexOf(pair.ms) === -1) names.push(pair.ms);
-    cursor.setMonth(cursor.getMonth() + 1);
+  for (var offset = 0; offset <= 1; offset++) {
+    var date = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+
+    names.push(monthNamesEn[date.getMonth()] + " " + date.getFullYear());
+    names.push(monthNamesMs[date.getMonth()] + " " + date.getFullYear());
   }
+
   return names;
 }
 
-function getMonthSheetNames(date) {
-  var monthNamesEn = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-  var monthNamesMs = ["Januari", "Februari", "Mac", "April", "Mei", "Jun", "Julai", "Ogos", "September", "Oktober", "November", "Disember"];
-  return {
-    en: monthNamesEn[date.getMonth()] + " " + date.getFullYear(),
-    ms: monthNamesMs[date.getMonth()] + " " + date.getFullYear()
-  };
-}
+function formatDateValue(value) {
+  if (Object.prototype.toString.call(value) === "[object Date]") {
+    return Utilities.formatDate(
+      value,
+      Session.getScriptTimeZone(),
+      "yyyy-MM-dd"
+    );
+  }
 
-function errorOutput(callback, message) {
-  return jsonOrJsonp(callback, { status: "error", message: message });
+  return value || "";
 }
 
 function jsonResponse(status, message, extra) {
-  var obj = { status: status, message: message };
+  var obj = {
+    status: status,
+    message: message
+  };
+
   if (extra) {
-    Object.keys(extra).forEach(function(key) { obj[key] = extra[key]; });
+    Object.keys(extra).forEach(function(key) {
+      obj[key] = extra[key];
+    });
   }
-  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
+
+  return ContentService
+    .createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON);
 }
 
 function jsonOrJsonp(callback, obj) {
   var output = JSON.stringify(obj);
-  var safeCallback = String(callback || "").trim();
-  if (safeCallback && /^[A-Za-z_$][0-9A-Za-z_$]*$/.test(safeCallback)) {
-    return ContentService.createTextOutput(safeCallback + "(" + output + ")").setMimeType(ContentService.MimeType.JAVASCRIPT);
+
+  if (callback) {
+    return ContentService
+      .createTextOutput(callback + "(" + output + ")")
+      .setMimeType(ContentService.MimeType.JAVASCRIPT);
   }
-  return ContentService.createTextOutput(output).setMimeType(ContentService.MimeType.JSON);
+
+  return ContentService
+    .createTextOutput(output)
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function parseDueDate(value) {
+  if (Object.prototype.toString.call(value) === "[object Date]") {
+    return value;
+  }
+
+  var text = String(value || "")
+    .replace(/\u00A0/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+    
+  if (!text) return null;
+
+  var match = text.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s*at\s*(\d{1,2}):(\d{2})\s*(am|pm))?/i);
+  if (!match) return null;
+
+  var day = Number(match[1]);
+  var month = Number(match[2]) - 1;
+  var year = Number(match[3]);
+
+  var hour = match[4] ? Number(match[4]) : 0;
+  var minute = match[5] ? Number(match[5]) : 0;
+  var ampm = match[6] ? match[6].toLowerCase() : "";
+
+  if (ampm === "pm" && hour < 12) hour += 12;
+  if (ampm === "am" && hour === 12) hour = 0;
+
+  return new Date(year, month, day, hour, minute);
+}
+
+function updateDeliveredStatus(e) {
+  var spreadsheetId = e.parameter.spreadsheetId;
+  var orderId = e.parameter.orderId;
+  var isDelivered = e.parameter.isDelivered === "true";
+  var callback = e.parameter.callback;
+
+  try {
+    if (!spreadsheetId) {
+      return jsonOrJsonp(callback, {
+        status: "error",
+        message: "Missing spreadsheetId"
+      });
+    }
+
+    if (!orderId) {
+      return jsonOrJsonp(callback, {
+        status: "error",
+        message: "Missing orderId"
+      });
+    }
+
+    var ss = SpreadsheetApp.openById(spreadsheetId);
+    var sheets = ss.getSheets();
+
+    for (var i = 0; i < sheets.length; i++) {
+      var row = findRowByOrderId(sheets[i], orderId);
+
+      if (row) {
+        sheets[i].getRange(row, 1).setValue(isDelivered);
+
+        return jsonOrJsonp(callback, {
+          status: "success",
+          orderId: orderId,
+          isDelivered: isDelivered
+        });
+      }
+    }
+
+    return jsonOrJsonp(callback, {
+      status: "error",
+      message: "Order ID not found"
+    });
+
+  } catch (error) {
+    return jsonOrJsonp(callback, {
+      status: "error",
+      message: error.toString()
+    });
+  }
+}
+
+function searchDatabase(e) {
+  var spreadsheetId = e.parameter.spreadsheetId;
+  var query = e.parameter.query;
+  var callback = e.parameter.callback;
+
+  try {
+    if (!spreadsheetId) {
+      return jsonOrJsonp(callback, {
+        status: "error",
+        message: "Missing spreadsheetId"
+      });
+    }
+
+    if (!query) {
+      return jsonOrJsonp(callback, {
+        status: "success",
+        orders: []
+      });
+    }
+
+    var cleanQuery = String(query).toLowerCase().trim();
+    if (!cleanQuery) {
+      return jsonOrJsonp(callback, {
+        status: "success",
+        orders: []
+      });
+    }
+
+    var ss = SpreadsheetApp.openById(spreadsheetId);
+    var sheets = ss.getSheets();
+    var matchingOrders = [];
+
+    sheets.forEach(function(sheet) {
+      var lastRow = sheet.getLastRow();
+      if (lastRow < 2) return;
+
+      var lastCol = sheet.getLastColumn();
+      if (lastCol < 11) {
+        lastCol = 11;
+      }
+
+      var values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+
+      values.forEach(function(rowData) {
+        var nameVal = String(rowData[1] || "").toLowerCase();
+        var phoneVal = String(rowData[2] || "").toLowerCase();
+        var orderIdVal = String(rowData[10] || "").toLowerCase();
+
+        if (nameVal.indexOf(cleanQuery) !== -1 ||
+            phoneVal.indexOf(cleanQuery) !== -1 ||
+            orderIdVal.indexOf(cleanQuery) !== -1) {
+          
+          matchingOrders.push({
+            isDelivered: rowData[0] === true || String(rowData[0]).toLowerCase() === "true",
+            name: rowData[1] || "",
+            phone: rowData[2] || "",
+            order: rowData[3] || "",
+            template: rowData[4] || "",
+            bahasa: rowData[5] || "",
+            addon: rowData[6] || "",
+            jenis: rowData[7] || "",
+            due: formatDateValue(rowData[8]),
+            link: String(rowData[9] || ""),
+            orderId: String(rowData[10] || ""),
+            sheetName: sheet.getName()
+          });
+        }
+      });
+    });
+
+    return jsonOrJsonp(callback, {
+      status: "success",
+      orders: matchingOrders
+    });
+
+  } catch (error) {
+    return jsonOrJsonp(callback, {
+      status: "error",
+      message: error.toString()
+    });
+  }
+}
+
+function updateOrder(e) {
+  var spreadsheetId = e.parameter.spreadsheetId;
+  var orderId = e.parameter.orderId;
+  var callback = e.parameter.callback;
+
+  try {
+    if (!spreadsheetId) {
+      return jsonOrJsonp(callback, {
+        status: "error",
+        message: "Missing spreadsheetId"
+      });
+    }
+
+    var ss = SpreadsheetApp.openById(spreadsheetId);
+    var sheets = ss.getSheets();
+    var updated = false;
+
+    var isDelivered = e.parameter.isDelivered === "true" || e.parameter.done === "true" || e.parameter.isDelivered === true || e.parameter.isDelivered === "1";
+    var name = e.parameter.name || e.parameter.customerName || "";
+    var phone = e.parameter.phone || e.parameter.customerPhone || "";
+    var order = e.parameter.order || e.parameter.customerOrder || "";
+    var template = e.parameter.template || e.parameter.customerTemplate || "";
+    var bahasa = e.parameter.bahasa || e.parameter.customerBahasa || "";
+    var addon = e.parameter.addon || e.parameter.customerAddOn || "";
+    var jenis = e.parameter.jenis || e.parameter.customerJenis || "";
+    var due = e.parameter.due || e.parameter.customerDue || "";
+    var link = e.parameter.link || e.parameter.googleSheetLink || e.parameter.orderLink || "";
+
+    var foundRow = null;
+    var foundSheet = null;
+
+    // A. Match by exact orderId first (if real, non-empty, and not a SYNC- placeholder)
+    var isRealOrderId = orderId && String(orderId).trim() !== "" && String(orderId).indexOf("SYNC-") !== 0;
+    if (isRealOrderId) {
+      for (var s = 0; s < sheets.length; s++) {
+        var sheet = sheets[s];
+        var row = findRowByOrderId(sheet, orderId);
+        if (row) {
+          foundRow = row;
+          foundSheet = sheet;
+          break;
+        }
+      }
+    }
+
+    // A2. Match by oldOrderId if provided
+    var oldOrderId = e.parameter.oldOrderId || "";
+    if (!foundRow && oldOrderId && String(oldOrderId).trim() !== "") {
+      for (var s = 0; s < sheets.length; s++) {
+        var sheet = sheets[s];
+        var row = findRowByOrderId(sheet, oldOrderId);
+        if (row) {
+          foundRow = row;
+          foundSheet = sheet;
+          break;
+        }
+      }
+    }
+
+    // B. If not found, try fallback key: customer name + phone + due date + order type
+    if (!foundRow) {
+      for (var s = 0; s < sheets.length; s++) {
+        var sheet = sheets[s];
+        var row = findRowByFallbackKey(sheet, name, phone, due, order);
+        if (row) {
+          foundRow = row;
+          foundSheet = sheet;
+          break;
+        }
+      }
+    }
+
+    // C. Also if ID is SYNC-... try the specialized SYNC ID finder on findRowByOrderId
+    if (!foundRow && orderId && String(orderId).indexOf("SYNC-") === 0) {
+      for (var s = 0; s < sheets.length; s++) {
+        var sheet = sheets[s];
+        var row = findRowByOrderId(sheet, orderId);
+        if (row) {
+          foundRow = row;
+          foundSheet = sheet;
+          break;
+        }
+      }
+    }
+
+    // D. Assign/upgrade permanent Order ID
+    var finalOrderId = orderId;
+    var isUpgraded = false;
+
+    if (foundRow && foundSheet) {
+      var currentCellId = String(foundSheet.getRange(foundRow, 11).getValue() || "").trim();
+      if (!currentCellId || currentCellId.indexOf("SYNC-") === 0) {
+        // Upgrade to a permanent order ID! If incoming orderId is already a real permanent ID, use it. Otherwise, generate a new one.
+        if (orderId && String(orderId).trim() !== "" && String(orderId).indexOf("SYNC-") !== 0) {
+          finalOrderId = orderId;
+        } else {
+          finalOrderId = generateAppsScriptOrderId();
+        }
+        isUpgraded = true;
+      } else {
+        finalOrderId = currentCellId;
+      }
+    } else {
+      if (!finalOrderId || String(finalOrderId).trim() === "" || String(finalOrderId).indexOf("SYNC-") === 0) {
+        finalOrderId = generateAppsScriptOrderId();
+        isUpgraded = true;
+      }
+    }
+
+    var rowData = [
+      isDelivered,
+      name,
+      formatPhoneForSheet(phone),
+      order,
+      template,
+      bahasa,
+      addon,
+      jenis,
+      due,
+      link,
+      finalOrderId
+    ];
+
+    var targetDate = new Date();
+    if (due) {
+      var parsedDObj = parseDueDate(due);
+      if (parsedDObj) {
+        targetDate = parsedDObj;
+      }
+    }
+    var monthNamesEn = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+    var targetSheetEn = monthNamesEn[targetDate.getMonth()] + " " + targetDate.getFullYear();
+    
+    var targetSheet = ss.getSheetByName(targetSheetEn);
+    if (!targetSheet) {
+      var monthNamesMs = ["Januari", "Februari", "Mac", "April", "Mei", "Jun", "Julai", "Ogos", "September", "Oktober", "November", "Disember"];
+      var targetSheetMs = monthNamesMs[targetDate.getMonth()] + " " + targetDate.getFullYear();
+      targetSheet = ss.getSheetByName(targetSheetMs);
+    }
+    if (!targetSheet) {
+      targetSheet = ss.insertSheet(targetSheetEn);
+    }
+    ensureSheetSetup(targetSheet);
+
+    if (foundRow && foundSheet) {
+      if (foundSheet.getName() !== targetSheet.getName()) {
+        foundSheet.deleteRow(foundRow);
+        targetSheet.appendRow(rowData);
+        var newRow = targetSheet.getLastRow();
+        applyRowTemplate(targetSheet, newRow);
+      } else {
+        foundSheet.getRange(foundRow, 1, 1, rowData.length).setValues([rowData]);
+        applyRowTemplate(foundSheet, foundRow);
+      }
+      updated = true;
+    } else {
+      targetSheet.appendRow(rowData);
+      var newRow = targetSheet.getLastRow();
+      applyRowTemplate(targetSheet, newRow);
+      updated = true;
+    }
+
+    return jsonOrJsonp(callback, {
+      status: "success",
+      updated: updated,
+      orderId: finalOrderId,
+      isUpgraded: isUpgraded
+    });
+
+  } catch (error) {
+    return jsonOrJsonp(callback, {
+      status: "error",
+      message: error.toString()
+    });
+  }
+}
+
+function formatPhoneForSheet(phone) {
+  var original = String(phone || "").trim();
+  var digits = original.replace(/\D/g, "");
+
+  if (!digits) return "";
+
+  var countryCode = "";
+  var local = "";
+
+  // Malaysia
+  if (digits.indexOf("60") === 0) {
+    countryCode = "60";
+    local = digits.substring(2);
+  }
+  // Singapore
+  else if (digits.indexOf("65") === 0) {
+    countryCode = "65";
+    local = digits.substring(2);
+  }
+  // Indonesia
+  else if (digits.indexOf("62") === 0) {
+    countryCode = "62";
+    local = digits.substring(2);
+  }
+  // Brunei
+  else if (digits.indexOf("673") === 0) {
+    countryCode = "673";
+    local = digits.substring(3);
+  }
+  // Thailand
+  else if (digits.indexOf("66") === 0) {
+    countryCode = "66";
+    local = digits.substring(2);
+  }
+  // Local Malaysian number
+  else if (digits.indexOf("0") === 0) {
+    countryCode = "60";
+    local = digits.substring(1);
+  }
+  // Unknown country: keep first 2 digits as country code
+  else {
+    countryCode = digits.substring(0, 2);
+    local = digits.substring(2);
+  }
+
+  // Malaysian style: 60 12-906 6817
+  if (countryCode === "60" && local.length >= 8) {
+    return (
+      countryCode +
+      " " +
+      local.substring(0, 2) +
+      "-" +
+      local.substring(2, 5) +
+      " " +
+      local.substring(5)
+    );
+  }
+
+  // Singapore style: 65 8057 4517
+  if (countryCode === "65" && local.length === 8) {
+    return (
+      countryCode +
+      " " +
+      local.substring(0, 4) +
+      " " +
+      local.substring(4)
+    );
+  }
+
+  // General fallback: country code + grouped local number
+  var groupedLocal = local.replace(/(\d{3})(?=\d)/g, "$1 ").trim();
+
+  return (countryCode + " " + groupedLocal).trim();
 }
