@@ -574,23 +574,26 @@ Dokumen Dijana Secara Automatik`;
 
   const syncStateAndSave = (isDraftSave = false) => {
     // Sync state one last time before saving
-    setState(prev => ({
-      ...prev,
-      customerName: name,
-      customerPhone: phone,
-      customerOrder: order,
-      customerTemplate: template,
-      customerBahasa: bahasa,
-      customerAddOn: addOn,
-      customerJenis: jenis,
-      customerDue: due,
-      dueTimestamp: dueTimestamp,
-      customerInfo: info,
-      orderLink: link,
-      googleSheetLink: link,
-      orderId: orderId,
-      price: price ? parseFloat(price) : undefined,
-    }));
+    setState(prev => {
+      console.log("price state before save:", price);
+      return {
+        ...prev,
+        customerName: name,
+        customerPhone: phone,
+        customerOrder: order,
+        customerTemplate: template,
+        customerBahasa: bahasa,
+        customerAddOn: addOn,
+        customerJenis: jenis,
+        customerDue: due,
+        dueTimestamp: dueTimestamp,
+        customerInfo: info,
+        orderLink: link,
+        googleSheetLink: link,
+        orderId: orderId,
+        price: price || undefined,
+      };
+    });
     
     if (isDraftSave) {
         // Only save draft if it's a transient draft, NOT a completed order in local history or remote search result
@@ -741,6 +744,7 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
     const finalFormattedTemplate = template.trim().toUpperCase();
 
     // Save the new values to global state + history with syncing status
+    console.log("price state before save:", price);
     updateOrderHistoryState({
       customerName: finalFormattedName,
       customerPhone: formattedPhone,
@@ -757,7 +761,7 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
       hasNotified: false,
       orderId: finalOrderId,
       historyId: finalOrderId,
-      price: price ? parseFloat(price) : undefined,
+      price: price || undefined,
       spreadsheetId: resolvedSpreadsheetId,
       scriptUrl: resolvedWebhookUrl,
       syncStatus: 'syncing',
@@ -1279,8 +1283,7 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
         <div className="space-y-1">
           <label className="text-xs font-black text-gray-400 ml-1 uppercase tracking-widest">{appLanguage === 'ms' ? 'Harga (RM)' : 'Price (RM)'}</label>
           <input 
-            type="number"
-            step="0.01"
+            type="text"
             value={price}
             onChange={(e) => setPrice(e.target.value)}
             placeholder={appLanguage === 'ms' ? 'Contoh: 50.00' : 'Example: 50.00'}

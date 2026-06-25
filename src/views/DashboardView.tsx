@@ -310,7 +310,7 @@ export function DashboardView() {
         // Income calculation
         const orderId = order.orderId;
         const localPrice = orderId ? historyPrices.get(orderId) : undefined;
-        const remotePrice = parseFloat(order.price || order.harga); // in case backend is updated in future
+        const remotePrice = Math.round(parseFloat(order.price || order.harga) * 100) / 100; // in case backend is updated in future
         
         if (!isNaN(remotePrice)) {
           totalIncome += remotePrice;
