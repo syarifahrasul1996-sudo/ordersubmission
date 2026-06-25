@@ -35,7 +35,10 @@ function jsonpRequest<T>(url: string, params: Record<string, string | number | b
 
     const script = document.createElement('script');
     const separator = url.indexOf('?') === -1 ? '?' : '&';
-    const queryParts = [`callback=${callbackName}`];
+    const queryParts = [
+      `callback=${callbackName}`,
+      `_nocache=${Date.now()}${Math.random().toString(36).substring(2, 7)}`
+    ];
     Object.entries(params).forEach(([key, value]) => {
       queryParts.push(`${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`);
     });
@@ -46,7 +49,7 @@ function jsonpRequest<T>(url: string, params: Record<string, string | number | b
     const timeoutId = setTimeout(() => {
       cleanup();
       reject(new Error('JSONP request timed out'));
-    }, 15000);
+    }, 60000);
 
     const cleanup = () => {
       clearTimeout(timeoutId);
@@ -66,8 +69,9 @@ function jsonpRequest<T>(url: string, params: Record<string, string | number | b
 }
 
 export function CustomerInfoView() {
-  const { appLanguage, state, setState, goHome, viewStack, updateOrderHistoryState, addToOfflineQueue, saveAsDraft: contextSaveAsDraft, deleteDraft, history, setHistory } = useAppContext();
+  const { appLanguage, state, setState, goHome, viewStack, updateOrderHistoryState, updateSpecificHistoryItem, addToOfflineQueue, saveAsDraft: contextSaveAsDraft, deleteDraft, history, setHistory } = useAppContext();
   const isActive = viewStack[viewStack.length - 1] === 'customer-info';
+  const isSubmittingRef = useRef(false);
 
   const computeInitialValues = useCallback(() => {
     let initOrder = '';
@@ -651,6 +655,12 @@ Dokumen Dijana Secara Automatik`;
       return;
     }
     
+    if (isSubmittingRef.current) {
+      console.log("Submission already in progress, ignoring duplicate trigger.");
+      return;
+    }
+    isSubmittingRef.current = true;
+    
     // Cleanup draft if it exists
     if (state.historyId) {
         deleteDraft(state.historyId);
@@ -719,24 +729,6 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
   finalOrderId = generateOrderId();
   setOrderId(finalOrderId);
   console.log("Pre-upgraded ID client-side:", oldIdToSend, "->", finalOrderId);
-
-  // 1. Rename existing history item in local memory (so updateOrderHistoryState updates it instead of duplicating)
-  setHistory(prev => {
-    return prev.map(item => {
-      if (item.id === state.historyId || item.id === oldIdToSend || (item.state && item.state.orderId === oldIdToSend)) {
-        return {
-          ...item,
-          id: finalOrderId,
-          state: {
-            ...item.state,
-            orderId: finalOrderId,
-            historyId: finalOrderId,
-          }
-        };
-      }
-      return item;
-    });
-  });
 }
 
     // Format name and template correctly
@@ -813,9 +805,13 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
           localStorage.removeItem('customer_form_progress');
           setSaved(true);
           showToastMessage(appLanguage === 'ms' ? 'Luar Talian: Disimpan dalam Que' : 'Offline: Saved to Queue');
-          setTimeout(() => goHome(), 1800);
+          setTimeout(() => {
+            isSubmittingRef.current = false;
+            goHome();
+          }, 1800);
           return;
         } catch (e) {
+          isSubmittingRef.current = false;
           throw new Error('Failed to save to offline queue.');
         }
       }
@@ -929,6 +925,7 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
       return;
       
     } catch (err: any) {
+      isSubmittingRef.current = false;
       console.error(err);
       let errMsg = err.message || 'Error occurred while saving';
       if (errMsg.includes('Failed to fetch')) {

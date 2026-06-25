@@ -5,18 +5,17 @@ import { ViewSection } from './components/ViewSection';
 import { Toast } from './components/Toast';
 import { FloatingControls } from './components/FloatingControls';
 
-// Dynamically import views for code splitting
-const HomeView = lazy(() => import('./views/HomeView').then(m => ({ default: m.HomeView })));
-const ResumeTypeView = lazy(() => import('./views/ResumeTypeView').then(m => ({ default: m.ResumeTypeView })));
-const ResumeFormFieldsView = lazy(() => import('./views/ResumeFormFieldsView').then(m => ({ default: m.ResumeFormFieldsView })));
-const GeneralFormView = lazy(() => import('./views/GeneralFormView').then(m => ({ default: m.GeneralFormView })));
-const ConfirmationView = lazy(() => import('./views/ConfirmationView').then(m => ({ default: m.ConfirmationView })));
-const OutputView = lazy(() => import('./views/OutputView').then(m => ({ default: m.OutputView })));
-const HistoryView = lazy(() => import('./views/HistoryView').then(m => ({ default: m.HistoryView })));
-const CustomerInfoView = lazy(() => import('./views/CustomerInfoView').then(m => ({ default: m.CustomerInfoView })));
-const DashboardView = lazy(() => import('./views/DashboardView').then(m => ({ default: m.DashboardView })));
-const ContactsSyncView = lazy(() => import('./views/ContactsSyncView').then(m => ({ default: m.ContactsSyncView })));
-const OthersView = lazy(() => import('./views/OthersView').then(m => ({ default: m.OthersView })));
+import { HomeView } from './views/HomeView';
+import { ResumeTypeView } from './views/ResumeTypeView';
+import { ResumeFormFieldsView } from './views/ResumeFormFieldsView';
+import { GeneralFormView } from './views/GeneralFormView';
+import { ConfirmationView } from './views/ConfirmationView';
+import { OutputView } from './views/OutputView';
+import { HistoryView } from './views/HistoryView';
+import { CustomerInfoView } from './views/CustomerInfoView';
+import { DashboardView } from './views/DashboardView';
+import { ContactsSyncView } from './views/ContactsSyncView';
+import { OthersView } from './views/OthersView';
 
 import { BottomNavigation } from './components/BottomNavigation';
 
@@ -57,7 +56,7 @@ function AppContent() {
           <Header />
           
           <main className="flex-1 overflow-y-auto overflow-x-hidden relative flex justify-center">
-            <div className="w-full max-w-4xl h-full relative">
+            <div className="w-full max-w-4xl min-h-full relative">
               <Suspense fallback={<div className="p-4 text-center">Loading...</div>}>
                 <ViewSection id="view-home" active={currentView === 'home'}>
                   <HomeView />

@@ -424,8 +424,10 @@ export function HistoryView() {
 
   const jsonpRequest = (url: URL, callbackName: string) => {
     return new Promise<any>((resolve, reject) => {
+      const cacheBustedUrl = new URL(url.toString());
+      cacheBustedUrl.searchParams.set('_nocache', String(Date.now()) + Math.random().toString(36).substring(2, 7));
       const script = document.createElement('script');
-      script.src = url.toString();
+      script.src = cacheBustedUrl.toString();
       script.async = true;
 
       const timeoutId = setTimeout(() => {
@@ -687,7 +689,7 @@ export function HistoryView() {
         const callbackName = 'jsonp_callback_sync_' + Math.round(100000 * Math.random()) + '_' + safeYear;
         const url = new URL(sUrl);
 
-        url.searchParams.append('action', 'sync_recent');
+        url.searchParams.append('action', 'get_dashboard_orders');
         url.searchParams.append('spreadsheetId', sId);
         url.searchParams.append('callback', callbackName);
 

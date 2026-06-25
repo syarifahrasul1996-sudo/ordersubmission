@@ -49,7 +49,6 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export function AppProvider({ children }: { children: ReactNode }) {
   console.log("AppProvider initializing...");
-  const [user, setUser] = useState<User | null>(null);
 
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     try {
@@ -215,8 +214,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     const jsonpRequest = (url: URL, callbackName: string): Promise<any> => {
       return new Promise((resolve, reject) => {
+        const cacheBustedUrl = new URL(url.toString());
+        cacheBustedUrl.searchParams.set('_nocache', String(Date.now()) + Math.random().toString(36).substring(2, 7));
         const script = document.createElement('script');
-        script.src = url.toString();
+        script.src = cacheBustedUrl.toString();
         script.async = true;
 
         const timeout = setTimeout(() => {
@@ -603,12 +604,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setState(finalState);
     if (finalState.historyId) {
        setHistory(prev => {
-         const exists = prev.some(item => item.id === finalState.historyId);
+         const oldId = state.historyId;
+         const newId = finalState.historyId;
+         
+         // Find the item by newId OR oldId
+         const itemToUpdate = prev.find(item => item.id === newId || (oldId && item.id === oldId));
+         
          let nextHistory;
-         if (exists) {
+         if (itemToUpdate) {
            nextHistory = prev.map(item => {
-             if (item.id === finalState.historyId) {
-               const updatedItem = { ...item, state: finalState };
+             if (item.id === itemToUpdate.id) {
+               const updatedItem = { ...item, id: newId as string, state: finalState };
                syncPushNotifications(updatedItem, appLanguage).catch(console.warn);
                return updatedItem;
              }

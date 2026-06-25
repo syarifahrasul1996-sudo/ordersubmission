@@ -17,8 +17,10 @@ const extractId = (input: string) => {
 
 const jsonpRequest = (url: URL, callbackName: string) => {
   return new Promise<any>((resolve, reject) => {
+    const cacheBustedUrl = new URL(url.toString());
+    cacheBustedUrl.searchParams.set('_nocache', String(Date.now()) + Math.random().toString(36).substring(2, 7));
     const script = document.createElement('script');
-    script.src = url.toString();
+    script.src = cacheBustedUrl.toString();
     script.async = true;
 
     const timeoutId = setTimeout(() => {

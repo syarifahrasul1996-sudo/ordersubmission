@@ -68,7 +68,7 @@ export function ResumeFormFieldsView() {
   }, [isMulti, state.resumeLangs, state.softcopyLang, state.clLangs, setState]);
 
   return (
-    <div className="flex flex-col p-4 sm:p-5 space-y-4 pb-[calc(env(safe-area-inset-bottom)+5rem)]">
+    <div className="flex flex-col p-4 sm:p-5 space-y-4 pb-[calc(env(safe-area-inset-bottom)+9.5rem)]">
       <section>
         <h2 className="text-xs font-black uppercase tracking-widest mb-2 text-gray-400">{appLanguage === 'ms' ? 'Pilihan Pakej' : 'Package Option'}</h2>
         <UrgencyGrid mode={state.isEditMode ? 'edit' : 'new'} />

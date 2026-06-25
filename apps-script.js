@@ -208,6 +208,10 @@ function doGet(e) {
     return syncRecentOrders(e);
   }
 
+  if (action === "sync_all") {
+    return syncAllOrders(e);
+  }
+
   if (action === "get_link") {
     return getOrderLink(e);
   }
@@ -416,6 +420,63 @@ function syncRecentOrders(e) {
     return jsonOrJsonp(callback, {
       status: "success",
       orders: recentOrders
+    });
+
+  } catch (error) {
+    return jsonOrJsonp(callback, {
+      status: "error",
+      message: error.toString()
+    });
+  }
+}
+
+function syncAllOrders(e) {
+  var spreadsheetId = e.parameter.spreadsheetId;
+  var callback = e.parameter.callback;
+
+  try {
+    if (!spreadsheetId) {
+      return jsonOrJsonp(callback, {
+        status: "error",
+        message: "Missing spreadsheetId"
+      });
+    }
+
+    var ss = SpreadsheetApp.openById(spreadsheetId);
+    var sheets = ss.getSheets();
+    var allOrders = [];
+
+    sheets.forEach(function(sheet) {
+      try {
+        var lastRow = sheet.getLastRow();
+        var lastCol = sheet.getLastColumn();
+        if (lastRow < 2 || lastCol < 1) return;
+
+        var values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+
+        values.forEach(function(rowData) {
+          allOrders.push({
+            isDelivered: rowData[0] === true || String(rowData[0]).toLowerCase() === "true",
+            name: rowData[1] || "",
+            phone: rowData[2] || "",
+            order: rowData[3] || "",
+            template: rowData[4] || "",
+            bahasa: rowData[5] || "",
+            addon: rowData[6] || "",
+            jenis: rowData[7] || "",
+            due: formatDateValue(rowData[8]),
+            link: String(rowData[9] || ""),
+            orderId: String(rowData[10] || "")
+          });
+        });
+      } catch (sheetError) {
+        console.error("Error processing sheet " + sheet.getName() + ": " + sheetError.toString());
+      }
+    });
+
+    return jsonOrJsonp(callback, {
+      status: "success",
+      orders: allOrders
     });
 
   } catch (error) {

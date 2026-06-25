@@ -8,7 +8,7 @@ export function GeneralFormView() {
   const isSurat = state.mainType === 'Surat';
 
   return (
-    <div className="flex flex-col p-4 sm:p-5 space-y-4 pb-[calc(env(safe-area-inset-bottom)+5rem)]">
+    <div className="flex flex-col p-4 sm:p-5 space-y-4 pb-[calc(env(safe-area-inset-bottom)+9.5rem)]">
       {!isSurat && (
         <section>
           <label className="block text-xs font-black uppercase tracking-widest mb-2 text-gray-400">{appLanguage === 'ms' ? 'Nama Dokumen' : 'Document Name'}</label>
