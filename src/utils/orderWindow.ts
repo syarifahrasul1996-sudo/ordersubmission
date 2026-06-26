@@ -124,36 +124,3 @@ export function isActivePendingOrder(
     referenceDate
   );
 }
-
-export function removeStalePendingOrders(
-  orders: OrderHistoryItem[],
-  referenceDate: Date = new Date()
-): OrderHistoryItem[] {
-  const { startTimestamp } =
-    getActiveOrderWindow(referenceDate);
-
-  return orders.filter(order => {
-    if (!order?.state) {
-      return false;
-    }
-
-    // Keep delivered and deleted orders as history.
-    if (
-      order.state.isDelivered === true ||
-      order.state.isDeleted === true
-    ) {
-      return true;
-    }
-
-    const dueTimestamp = getOrderDueTimestamp(order);
-
-    // Keep records with missing or invalid due dates.
-    // We do not want to delete uncertain data automatically.
-    if (dueTimestamp === null) {
-      return true;
-    }
-
-    // Remove unfinished orders older than two days ago.
-    return dueTimestamp >= startTimestamp;
-  });
-}
