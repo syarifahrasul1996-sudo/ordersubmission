@@ -747,9 +747,73 @@ export function HistoryView() {
               continue;
             }
 
-            const existingIdx = updatedHistory.findIndex(
-              h => h.state?.orderId === generatedOrderId || h.id === generatedOrderId
-            );
+            const normalizeText = (value: unknown) =>
+  String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+
+const normalizePhone = (value: unknown) =>
+  String(value || '').replace(/\D/g, '');
+
+const normalizeDue = (value: unknown) => {
+  const timestamp = parseDueTimestamp(value);
+  return timestamp ? String(timestamp) : normalizeText(value);
+};
+
+const existingIdx = updatedHistory.findIndex((item) => {
+  const localState = item.state || {};
+
+  // First choice: exact permanent Order ID.
+  if (
+    localState.orderId === generatedOrderId ||
+    item.id === generatedOrderId
+  ) {
+    return true;
+  }
+
+  const localId = String(localState.orderId || item.id || '');
+
+  // Content matching is only allowed for temporary or unsynced records.
+  const canUseFallback =
+    localId.startsWith('SYNC-') ||
+    localState.syncStatus === 'syncing' ||
+    localState.syncStatus === 'failed' ||
+    localState.syncStatus === 'saved_locally' ||
+    localState.syncStatus === 'sent_unverified';
+
+  if (!canUseFallback) {
+    return false;
+  }
+
+  const sameSpreadsheet =
+    !localState.spreadsheetId ||
+    localState.spreadsheetId === res.spreadsheetId;
+
+  const sameName =
+    normalizeText(localState.customerName) ===
+    normalizeText(orderData.name);
+
+  const samePhone =
+    normalizePhone(localState.customerPhone) ===
+    normalizePhone(orderData.phone);
+
+  const sameDue =
+    normalizeDue(localState.customerDue || localState.dueTimestamp) ===
+    normalizeDue(orderData.due);
+
+  const sameOrder =
+    normalizeText(localState.customerOrder || localState.mainType) ===
+    normalizeText(orderData.order);
+
+  return (
+    sameSpreadsheet &&
+    sameName &&
+    samePhone &&
+    sameDue &&
+    sameOrder
+  );
+});
 
             const dueTs = parseDueTimestamp(orderData.due);
 
