@@ -19,7 +19,8 @@ export function BottomNavigation() {
     changeTab,
     pushView,
     startNewOrder,
-    appLanguage 
+    appLanguage,
+    drafts
   } = useAppContext();
   
   const [showAddMenu, setShowAddMenu] = useState(false);
@@ -58,7 +59,9 @@ export function BottomNavigation() {
           )}
           id="btn-nav-orders"
         >
-          <History className={cn("w-5 h-5", currentView === 'history' ? "stroke-[2.5]" : "stroke-[2]")} />
+          <div className="relative">
+            <History className={cn("w-5 h-5", currentView === 'history' ? "stroke-[2.5]" : "stroke-[2]")} />
+          </div>
           <span className="text-[9px] uppercase tracking-wider mt-1">
             {appLanguage === 'ms' ? 'Tempahan' : 'Orders'}
           </span>

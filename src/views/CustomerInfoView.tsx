@@ -53,7 +53,7 @@ function jsonpRequest<T>(url: string, params: Record<string, string | number | b
 }
 
 export function CustomerInfoView() {
-  const { appLanguage, state, setState, goHome, viewStack, updateOrderHistoryState, addToOfflineQueue, saveAsDraft: contextSaveAsDraft, deleteDraft, history, setHistory } = useAppContext();
+  const { appLanguage, state, setState, goHome, viewStack, updateOrderHistoryState, addToOfflineQueue, saveAsDraft: contextSaveAsDraft, deleteDraft, history, setHistory, saveOrderToHistory, generatedMessages } = useAppContext();
   const isActive = viewStack[viewStack.length - 1] === 'customer-info';
 
   const computeInitialValues = useCallback(() => {
@@ -552,7 +552,7 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
     const finalFormattedTemplate = template.trim().toUpperCase();
 
     // Save the new values to global state + history with syncing status
-    updateOrderHistoryState({
+    saveOrderToHistory(generatedMessages, {
       customerName: finalFormattedName,
       customerPhone: formattedPhone,
       customerInfo: updatedInfo,
@@ -568,6 +568,7 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
       hasNotified: false,
       orderId: finalOrderId,
       historyId: finalOrderId,
+      oldOrderId: (oldIdToSend && oldIdToSend.startsWith('SYNC-')) ? oldIdToSend : state.oldOrderId || undefined,
       price: price ? parseFloat(price) : undefined,
       spreadsheetId: resolvedSpreadsheetId,
       scriptUrl: resolvedWebhookUrl,

@@ -488,85 +488,106 @@ export function HistoryView() {
     const newStatus = isRetry ? currentStatus : !currentStatus;
     const now = Date.now();
 
-    // 1. Instantly update local state for perfect responsiveness and offline action
-    updateSpecificHistoryItem(item.id, {
-      isDelivered: newStatus,
-      hasNotified: false,
-      ...(spreadsheetId ? { spreadsheetId } : {}),
-      ...(spreadsheetId && orderId ? {
-        syncStatus: 'syncing',
-        syncLastAttempt: now,
-      } : {
-        syncStatus: 'saved_locally'
-      }),
-    });
+    const proceedToggle = async () => {
+      // 1. Instantly update local state for perfect responsiveness and offline action
+      updateSpecificHistoryItem(item.id, {
+        isDelivered: newStatus,
+        hasNotified: false,
+        ...(spreadsheetId ? { spreadsheetId } : {}),
+        ...(spreadsheetId && orderId ? {
+          syncStatus: 'syncing',
+          syncLastAttempt: now,
+        } : {
+          syncStatus: 'saved_locally'
+        }),
+      });
 
-    // 2. If spreadsheetId and orderId are configured, gently sync update with Google Sheets in background
-    if (spreadsheetId && orderId) {
-      const activeUrl = getActiveScriptUrl(spreadsheetId);
-      const callbackName = 'jsonp_callback_delivered_' + Math.round(Math.random() * 100000);
-      const url = new URL(activeUrl);
+      // 2. If spreadsheetId and orderId are configured, gently sync update with Google Sheets in background
+      if (spreadsheetId && orderId) {
+        const activeUrl = getActiveScriptUrl(spreadsheetId);
+        const callbackName = 'jsonp_callback_delivered_' + Math.round(Math.random() * 100000);
+        const url = new URL(activeUrl);
 
-      url.searchParams.append('action', 'update_delivered');
-      url.searchParams.append('spreadsheetId', spreadsheetId);
-      url.searchParams.append('orderId', orderId);
-      url.searchParams.append('isDelivered', String(newStatus));
-      url.searchParams.append('callback', callbackName);
+        url.searchParams.append('action', 'update_delivered');
+        url.searchParams.append('spreadsheetId', spreadsheetId);
+        url.searchParams.append('orderId', orderId);
+        url.searchParams.append('isDelivered', String(newStatus));
+        url.searchParams.append('callback', callbackName);
 
-      const triggerPostFallback = () => {
-        console.log("Executing no-cors POST update_delivered fallback...");
-        fetch(activeUrl, {
-          method: 'POST',
-          mode: 'no-cors',
-          headers: {
-            'Content-Type': 'text/plain;charset=utf-8'
-          },
-          body: JSON.stringify({
-            action: 'update_delivered',
-            spreadsheetId: spreadsheetId,
-            orderId: orderId,
-            isDelivered: newStatus
-          })
-        }).then(() => {
-          console.log("no-cors POST delivered fallback succeeded!");
-          updateSpecificHistoryItem(item.id, {
-            syncStatus: 'synced',
-            syncLastSuccess: Date.now(),
-            syncFailCount: 0,
+        const triggerPostFallback = () => {
+          console.log("Executing no-cors POST update_delivered fallback...");
+          fetch(activeUrl, {
+            method: 'POST',
+            mode: 'no-cors',
+            headers: {
+              'Content-Type': 'text/plain;charset=utf-8'
+            },
+            body: JSON.stringify({
+              action: 'update_delivered',
+              spreadsheetId: spreadsheetId,
+              orderId: orderId,
+              isDelivered: newStatus
+            })
+          }).then(() => {
+            console.log("no-cors POST delivered fallback succeeded!");
+            updateSpecificHistoryItem(item.id, {
+              syncStatus: 'synced',
+              syncLastSuccess: Date.now(),
+              syncFailCount: 0,
+            });
+          }).catch(postErr => {
+            console.error("POST delivered status fallback failed, queuing for offline:", postErr);
+            addToOfflineQueue({
+              action: 'update_delivered',
+              spreadsheetId: spreadsheetId,
+              orderId: orderId,
+              isDelivered: newStatus
+            }, activeUrl, item.id);
+            updateSpecificHistoryItem(item.id, {
+              syncStatus: 'failed',
+              syncFailCount: (item.state?.syncFailCount || 0) + 1,
+              syncLastAttempt: Date.now(),
+            });
           });
-        }).catch(postErr => {
-          console.error("POST delivered status fallback failed, queuing for offline:", postErr);
-          addToOfflineQueue({
-            action: 'update_delivered',
-            spreadsheetId: spreadsheetId,
-            orderId: orderId,
-            isDelivered: newStatus
-          }, activeUrl, item.id);
-          updateSpecificHistoryItem(item.id, {
-            syncStatus: 'failed',
-            syncFailCount: (item.state?.syncFailCount || 0) + 1,
-            syncLastAttempt: Date.now(),
-          });
-        });
-      };
+        };
 
-      try {
-        const result = await jsonpRequest(url, callbackName);
-        if (!result || result.status !== 'success') {
-          console.warn('Synced status check warning, trying POST fallback:', result?.message || 'Update failed');
+        try {
+          const result = await jsonpRequest(url, callbackName);
+          if (!result || result.status !== 'success') {
+            console.warn('Synced status check warning, trying POST fallback:', result?.message || 'Update failed');
+            triggerPostFallback();
+          } else {
+            updateSpecificHistoryItem(item.id, {
+               syncStatus: 'synced',
+               syncLastSuccess: Date.now(),
+               syncFailCount: 0,
+            });
+            handleGlobalSync(true);
+          }
+        } catch (err) {
+          console.warn('Failed to sync delivered status update in background, running POST fallback:', err);
           triggerPostFallback();
-        } else {
-          updateSpecificHistoryItem(item.id, {
-             syncStatus: 'synced',
-             syncLastSuccess: Date.now(),
-             syncFailCount: 0,
-          });
-          handleGlobalSync(true);
         }
-      } catch (err) {
-        console.warn('Failed to sync delivered status update in background, running POST fallback:', err);
-        triggerPostFallback();
       }
+    };
+
+    if (!isRetry) {
+      setConfirmAction({
+        title: appLanguage === 'ms' 
+          ? (newStatus ? 'Tanda sebagai Dihantar?' : 'Tanda sebagai Belum Dihantar?') 
+          : (newStatus ? 'Mark as Delivered?' : 'Mark as Not Delivered?'),
+        message: appLanguage === 'ms'
+          ? `Adakah anda pasti mahu menukar status tempahan untuk ${item.state?.customerName || 'pelanggan ini'} kepada ${newStatus ? 'Dihantar' : 'Belum Dihantar'}?`
+          : `Are you sure you want to change the delivery status for ${item.state?.customerName || 'this customer'} to ${newStatus ? 'Delivered' : 'Not Delivered'}?`,
+        confirmText: appLanguage === 'ms' ? 'Ya, Sahkan' : 'Yes, Confirm',
+        isDestructive: false,
+        onConfirm: async () => {
+          setConfirmAction(null);
+          await proceedToggle();
+        }
+      });
+    } else {
+      await proceedToggle();
     }
   };
 
@@ -768,20 +789,16 @@ const existingIdx = updatedHistory.findIndex((item) => {
   // First choice: exact permanent Order ID.
   if (
     localState.orderId === generatedOrderId ||
-    item.id === generatedOrderId
+    item.id === generatedOrderId ||
+    (localState.oldOrderId && (localState.oldOrderId === generatedOrderId || localState.oldOrderId === item.id))
   ) {
     return true;
   }
 
   const localId = String(localState.orderId || item.id || '');
 
-  // Content matching is only allowed for temporary or unsynced records.
-  const canUseFallback =
-    localId.startsWith('SYNC-') ||
-    localState.syncStatus === 'syncing' ||
-    localState.syncStatus === 'failed' ||
-    localState.syncStatus === 'saved_locally' ||
-    localState.syncStatus === 'sent_unverified';
+  // Content matching is only allowed for temporary records (starts with SYNC-). Permanent ORD-... records must NEVER use fallback content matching!
+  const canUseFallback = localId.startsWith('SYNC-') && !generatedOrderId.startsWith('ORD-');
 
   if (!canUseFallback) {
     return false;
@@ -1177,171 +1194,192 @@ const existingIdx = updatedHistory.findIndex((item) => {
       return;
     }
 
-    // Instantly update local UI
-    const now = Date.now();
-    setRemoteResults((prev) =>
-      prev.map((item, idx) => (idx === index ? { 
-        ...item, 
-        isDelivered: newStatus,
-        syncStatus: 'syncing',
-        syncLastAttempt: now
-      } : item))
-    );
+    const proceedToggle = async () => {
+      // Instantly update local UI
+      const now = Date.now();
+      setRemoteResults((prev) =>
+        prev.map((item, idx) => (idx === index ? { 
+          ...item, 
+          isDelivered: newStatus,
+          syncStatus: 'syncing',
+          syncLastAttempt: now
+        } : item))
+      );
 
-    // If it exists in local history too, update there
-    const existingIdx = history.findIndex((h) => h.state?.orderId === orderId);
-    if (existingIdx !== -1) {
-      updateSpecificHistoryItem(history[existingIdx].id, {
-        isDelivered: newStatus,
-        syncStatus: 'syncing',
-        syncLastAttempt: now
-      });
-    }
-
-    try {
-      const callbackName = 'jsonp_callback_remote_delivered_' + Math.round(Math.random() * 100000);
-      const url = new URL(scriptUrl);
-
-      url.searchParams.append('action', 'update_delivered');
-      url.searchParams.append('spreadsheetId', spreadsheetId);
-      url.searchParams.append('orderId', orderId);
-      url.searchParams.append('isDelivered', String(newStatus));
-      url.searchParams.append('callback', callbackName);
-
-      const result = await jsonpRequest(url, callbackName);
-      if (result.status !== 'success') {
-        console.warn('Synced status check warning:', result.message || 'Update failed');
-          // Try POST fallback
-          console.log("Executing no-cors POST update_delivered fallback from remote...");
-          fetch(scriptUrl, {
-            method: 'POST',
-            mode: 'no-cors',
-            headers: {
-              'Content-Type': 'text/plain;charset=utf-8'
-            },
-            body: JSON.stringify({
-              action: 'update_delivered',
-              spreadsheetId: spreadsheetId,
-              orderId: orderId,
-              isDelivered: newStatus
-            })
-          }).then(() => {
-             console.log("no-cors POST delivered fallback succeeded!");
-             setRemoteResults((prev) =>
-              prev.map((item, idx) => (idx === index ? { 
-                ...item, 
-                syncStatus: 'synced',
-                syncLastSuccess: Date.now(),
-                syncFailCount: 0
-              } : item))
-            );
-            if (existingIdx !== -1) {
-               updateSpecificHistoryItem(history[existingIdx].id, {
-                 syncStatus: 'synced',
-                 syncLastSuccess: Date.now(),
-                 syncFailCount: 0
-               });
-            }
-          }).catch((postErr) => {
-             console.error("POST delivered status fallback failed, queuing for offline:", postErr);
-             addToOfflineQueue({
-               action: 'update_delivered',
-               spreadsheetId: spreadsheetId,
-               orderId: orderId,
-               isDelivered: newStatus
-             }, scriptUrl, existingIdx !== -1 ? history[existingIdx].id : undefined);
-
-             setRemoteResults((prev) =>
-              prev.map((item, idx) => (idx === index ? { 
-                ...item, 
-                syncStatus: 'failed',
-                syncFailCount: (item.syncFailCount || 0) + 1,
-                syncLastAttempt: Date.now()
-              } : item))
-            );
-            if (existingIdx !== -1) {
-              updateSpecificHistoryItem(history[existingIdx].id, {
-                syncStatus: 'failed',
-                syncFailCount: (history[existingIdx].state?.syncFailCount || 0) + 1,
-                syncLastAttempt: Date.now()
-              });
-            }
-          });
-      } else {
-         setRemoteResults((prev) =>
-          prev.map((item, idx) => (idx === index ? { 
-            ...item, 
-            syncStatus: 'synced',
-            syncLastSuccess: Date.now(),
-            syncFailCount: 0
-          } : item))
-        );
-        if (existingIdx !== -1) {
-           updateSpecificHistoryItem(history[existingIdx].id, {
-             syncStatus: 'synced',
-             syncLastSuccess: Date.now(),
-             syncFailCount: 0
-           });
-        }
+      // If it exists in local history too, update there
+      const existingIdx = history.findIndex((h) => h.state?.orderId === orderId);
+      if (existingIdx !== -1) {
+        updateSpecificHistoryItem(history[existingIdx].id, {
+          isDelivered: newStatus,
+          syncStatus: 'syncing',
+          syncLastAttempt: now
+        });
       }
-    } catch (err) {
-      console.warn('Failed to sync delivered status update in background:', err);
-      // Try POST fallback
-      console.log("Executing no-cors POST update_delivered fallback from remote catch...");
-      fetch(scriptUrl, {
-        method: 'POST',
-        mode: 'no-cors',
-        headers: {
-          'Content-Type': 'text/plain;charset=utf-8'
-        },
-        body: JSON.stringify({
-          action: 'update_delivered',
-          spreadsheetId: spreadsheetId,
-          orderId: orderId,
-          isDelivered: newStatus
-        })
-      }).then(() => {
-         console.log("no-cors POST delivered fallback succeeded!");
-         setRemoteResults((prev) =>
-          prev.map((item, idx) => (idx === index ? { 
-            ...item, 
-            syncStatus: 'synced',
-            syncLastSuccess: Date.now(),
-            syncFailCount: 0
-          } : item))
-        );
-        if (existingIdx !== -1) {
-           updateSpecificHistoryItem(history[existingIdx].id, {
-             syncStatus: 'synced',
-             syncLastSuccess: Date.now(),
-             syncFailCount: 0
-           });
-        }
-      }).catch((postErr) => {
-         console.error("POST delivered status fallback failed, queuing for offline:", postErr);
-         addToOfflineQueue({
-           action: 'update_delivered',
-           spreadsheetId: spreadsheetId,
-           orderId: orderId,
-           isDelivered: newStatus
-         }, scriptUrl, existingIdx !== -1 ? history[existingIdx].id : undefined);
 
-         setRemoteResults((prev) =>
-          prev.map((item, idx) => (idx === index ? { 
-            ...item, 
-            syncStatus: 'failed',
-            syncFailCount: (item.syncFailCount || 0) + 1,
-            syncLastAttempt: Date.now()
-          } : item))
-        );
-        if (existingIdx !== -1) {
-          updateSpecificHistoryItem(history[existingIdx].id, {
-            syncStatus: 'failed',
-            syncFailCount: (history[existingIdx].state?.syncFailCount || 0) + 1,
-            syncLastAttempt: Date.now()
-          });
+      try {
+        const callbackName = 'jsonp_callback_remote_delivered_' + Math.round(Math.random() * 100000);
+        const url = new URL(scriptUrl);
+
+        url.searchParams.append('action', 'update_delivered');
+        url.searchParams.append('spreadsheetId', spreadsheetId);
+        url.searchParams.append('orderId', orderId);
+        url.searchParams.append('isDelivered', String(newStatus));
+        url.searchParams.append('callback', callbackName);
+
+        const result = await jsonpRequest(url, callbackName);
+        if (result.status !== 'success') {
+          console.warn('Synced status check warning:', result.message || 'Update failed');
+            // Try POST fallback
+            console.log("Executing no-cors POST update_delivered fallback from remote...");
+            fetch(scriptUrl, {
+              method: 'POST',
+              mode: 'no-cors',
+              headers: {
+                'Content-Type': 'text/plain;charset=utf-8'
+              },
+              body: JSON.stringify({
+                action: 'update_delivered',
+                spreadsheetId: spreadsheetId,
+                orderId: orderId,
+                isDelivered: newStatus
+              })
+            }).then(() => {
+               console.log("no-cors POST delivered fallback succeeded!");
+               setRemoteResults((prev) =>
+                prev.map((item, idx) => (idx === index ? { 
+                  ...item, 
+                  syncStatus: 'synced',
+                  syncLastSuccess: Date.now(),
+                  syncFailCount: 0
+                } : item))
+              );
+              if (existingIdx !== -1) {
+                 updateSpecificHistoryItem(history[existingIdx].id, {
+                   syncStatus: 'synced',
+                   syncLastSuccess: Date.now(),
+                   syncFailCount: 0
+                 });
+              }
+            }).catch((postErr) => {
+               console.error("POST delivered status fallback failed, queuing for offline:", postErr);
+               addToOfflineQueue({
+                 action: 'update_delivered',
+                 spreadsheetId: spreadsheetId,
+                 orderId: orderId,
+                 isDelivered: newStatus
+               }, scriptUrl, existingIdx !== -1 ? history[existingIdx].id : undefined);
+
+               setRemoteResults((prev) =>
+                prev.map((item, idx) => (idx === index ? { 
+                  ...item, 
+                  syncStatus: 'failed',
+                  syncFailCount: (item.syncFailCount || 0) + 1,
+                  syncLastAttempt: Date.now()
+                } : item))
+              );
+              if (existingIdx !== -1) {
+                updateSpecificHistoryItem(history[existingIdx].id, {
+                  syncStatus: 'failed',
+                  syncFailCount: (history[existingIdx].state?.syncFailCount || 0) + 1,
+                  syncLastAttempt: Date.now()
+                });
+              }
+            });
+        } else {
+           setRemoteResults((prev) =>
+            prev.map((item, idx) => (idx === index ? { 
+              ...item, 
+              syncStatus: 'synced',
+              syncLastSuccess: Date.now(),
+              syncFailCount: 0
+            } : item))
+          );
+          if (existingIdx !== -1) {
+             updateSpecificHistoryItem(history[existingIdx].id, {
+               syncStatus: 'synced',
+               syncLastSuccess: Date.now(),
+               syncFailCount: 0
+             });
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to sync delivered status update in background:', err);
+        // Try POST fallback
+        console.log("Executing no-cors POST update_delivered fallback from remote catch...");
+        fetch(scriptUrl, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: {
+            'Content-Type': 'text/plain;charset=utf-8'
+          },
+          body: JSON.stringify({
+            action: 'update_delivered',
+            spreadsheetId: spreadsheetId,
+            orderId: orderId,
+            isDelivered: newStatus
+          })
+        }).then(() => {
+           console.log("no-cors POST delivered fallback succeeded!");
+           setRemoteResults((prev) =>
+            prev.map((item, idx) => (idx === index ? { 
+              ...item, 
+              syncStatus: 'synced',
+              syncLastSuccess: Date.now(),
+              syncFailCount: 0
+            } : item))
+          );
+          if (existingIdx !== -1) {
+             updateSpecificHistoryItem(history[existingIdx].id, {
+               syncStatus: 'synced',
+               syncLastSuccess: Date.now(),
+               syncFailCount: 0
+             });
+          }
+        }).catch((postErr) => {
+           console.error("POST delivered status fallback failed, queuing for offline:", postErr);
+           addToOfflineQueue({
+             action: 'update_delivered',
+             spreadsheetId: spreadsheetId,
+             orderId: orderId,
+             isDelivered: newStatus
+           }, scriptUrl, existingIdx !== -1 ? history[existingIdx].id : undefined);
+
+           setRemoteResults((prev) =>
+            prev.map((item, idx) => (idx === index ? { 
+              ...item, 
+              syncStatus: 'failed',
+              syncFailCount: (item.syncFailCount || 0) + 1,
+              syncLastAttempt: Date.now()
+            } : item))
+          );
+          if (existingIdx !== -1) {
+            updateSpecificHistoryItem(history[existingIdx].id, {
+              syncStatus: 'failed',
+              syncFailCount: (history[existingIdx].state?.syncFailCount || 0) + 1,
+              syncLastAttempt: Date.now()
+            });
+          }
+        });
+      }
+    };
+
+    if (!isRetry) {
+      setConfirmAction({
+        title: appLanguage === 'ms' 
+          ? (newStatus ? 'Tanda sebagai Dihantar?' : 'Tanda sebagai Belum Dihantar?') 
+          : (newStatus ? 'Mark as Delivered?' : 'Mark as Not Delivered?'),
+        message: appLanguage === 'ms'
+          ? `Adakah anda pasti mahu menukar status tempahan untuk ${orderData.name || 'pelanggan ini'} kepada ${newStatus ? 'Dihantar' : 'Belum Dihantar'}?`
+          : `Are you sure you want to change the delivery status for ${orderData.name || 'this customer'} to ${newStatus ? 'Delivered' : 'Not Delivered'}?`,
+        confirmText: appLanguage === 'ms' ? 'Ya, Sahkan' : 'Yes, Confirm',
+        isDestructive: false,
+        onConfirm: async () => {
+          setConfirmAction(null);
+          await proceedToggle();
         }
       });
+    } else {
+      await proceedToggle();
     }
   };
 
@@ -1447,6 +1485,11 @@ const existingIdx = updatedHistory.findIndex((item) => {
           >
             <Save className="w-3.5 h-3.5" />
             <span className="truncate">{appLanguage === 'ms' ? 'Draf' : 'Drafts'}</span>
+            {drafts.length > 0 ? (
+              <span className="px-1.5 py-0.5 text-[9px] font-black bg-amber-500 text-white rounded-full scale-90 select-none animate-pulse">
+                {drafts.length}
+              </span>
+            ) : null}
           </button>
           <button
             type="button"

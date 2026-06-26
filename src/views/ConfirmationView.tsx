@@ -4,7 +4,7 @@ import { useAppContext } from '../AppContext';
 import { calculateDeadline, generateMessages } from '../utils';
 
 export function ConfirmationView({ onGenerated }: { onGenerated: () => void }) {
-  const { state, pushView, popView, setGeneratedMessages, saveOrderToHistory, appLanguage } = useAppContext();
+  const { state, pushView, popView, setGeneratedMessages, saveAsDraft, appLanguage } = useAppContext();
   const [copied, setCopied] = useState(false);
 
   const isE = state.isEditMode;
@@ -29,7 +29,7 @@ export function ConfirmationView({ onGenerated }: { onGenerated: () => void }) {
     const finalDlInfo = calculateDeadline(state, appLanguage);
     const messages = generateMessages(state, finalDlInfo, appLanguage);
     setGeneratedMessages(messages);
-    saveOrderToHistory(messages);
+    saveAsDraft(state, messages);
     pushView('output');
     onGenerated();
   };
