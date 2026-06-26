@@ -107,7 +107,7 @@ function AppContent() {
           </main>
 
           <FloatingControls />
-          <div className="md:hidden fixed bottom-0 left-0 right-0 z-40">
+          <div className="md:hidden absolute bottom-0 left-0 right-0 z-40">
             <BottomNavigation />
           </div>
         </div>

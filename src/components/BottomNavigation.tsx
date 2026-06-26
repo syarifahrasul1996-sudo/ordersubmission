@@ -65,7 +65,7 @@ export function BottomNavigation() {
         </button>
 
         {/* TAB 3: PLUS (+) BUTTON FOR ADD ORDER */}
-        <div className="flex-1 flex justify-center -mt-4.5">
+        <div className="flex-1 flex justify-center -mt-3">
           <button
             onClick={() => setShowAddMenu(true)}
             className="w-13 h-13 bg-primary text-white rounded-full flex items-center justify-center shadow-lg active:scale-90 transition-transform cursor-pointer border-4 border-white dark:border-zinc-900 hover:bg-primary/95"

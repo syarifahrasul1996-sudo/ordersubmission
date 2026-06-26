@@ -354,8 +354,7 @@ const showToastMessage = (msg: string) => {
 
   const syncStateAndSave = (isDraftSave = false) => {
     // Sync state one last time before saving
-    setState(prev => ({
-      ...prev,
+    const fields = {
       customerName: name,
       customerPhone: phone,
       customerOrder: order,
@@ -370,13 +369,18 @@ const showToastMessage = (msg: string) => {
       googleSheetLink: link,
       orderId: orderId,
       price: price ? parseFloat(price) : undefined,
+    };
+
+    setState(prev => ({
+      ...prev,
+      ...fields
     }));
     
     if (isDraftSave) {
         // Only save draft if it's a transient draft, NOT a completed order in local history or remote search result
         const isRealOrder = state.historyId && (!state.historyId.startsWith('draft_') || history?.some(item => item.id === state.historyId));
         if (!isRealOrder) {
-          contextSaveAsDraft();
+          contextSaveAsDraft(fields);
           showToastMessage(appLanguage === 'ms' ? 'Draf disimpan secara lokal!' : 'Draft saved locally!');
         }
     }

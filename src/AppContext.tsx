@@ -25,7 +25,7 @@ interface AppContextType {
   clearHistory: () => void;
   loadOrder: (item: OrderHistoryItem) => void;
   drafts: OrderHistoryItem[];
-  saveAsDraft: () => void;
+  saveAsDraft: (updatedState?: Partial<AppState>) => void;
   deleteDraft: (id: string) => void;
   loadDraft: (item: OrderHistoryItem) => void;
   theme: 'light' | 'dark';
@@ -729,31 +729,78 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setHistory(prev => prev.filter(item => item.id !== id));
   };
 
-  const saveAsDraft = () => {
+  const saveAsDraft = (updatedState?: Partial<AppState>) => {
+    // Merge currentState with the latest inputs immediately
+    const currentState = { ...state, ...updatedState };
+
     // If this is a real order (not starting with 'draft_' or already present in history), do not save it as a draft
-    if (state.historyId && (!state.historyId.startsWith('draft_') || history.some(item => item.id === state.historyId))) {
+    if (currentState.historyId && (!currentState.historyId.startsWith('draft_') || history.some(item => item.id === currentState.historyId))) {
       return;
     }
 
-    const draftId = state.historyId || `draft_${Date.now()}`;
-    const timestamp = state.timestamp || Date.now();
-    
+    // Attempt to find an existing incomplete draft in drafts using unique identifiers:
+    // 1. By historyId / draftId
+    // 2. By orderId
+    // 3. By customerPhone + mainType (if customerPhone is not empty)
+    // 4. By customerName + customerPhone (if not empty)
+    let matchedDraft: OrderHistoryItem | undefined = undefined;
+
+    if (currentState.historyId) {
+      matchedDraft = drafts.find(d => d.id === currentState.historyId);
+    }
+
+    if (!matchedDraft && currentState.orderId) {
+      matchedDraft = drafts.find(d => d.state?.orderId === currentState.orderId);
+    }
+
+    if (!matchedDraft && currentState.customerPhone && currentState.customerPhone.trim() !== '') {
+      const cleanPhone = currentState.customerPhone.trim();
+      matchedDraft = drafts.find(d => 
+        d.state?.customerPhone && 
+        d.state.customerPhone.trim() === cleanPhone &&
+        d.state.mainType === currentState.mainType
+      );
+    }
+
+    if (!matchedDraft && currentState.customerName && currentState.customerName.trim() !== '' && currentState.customerPhone && currentState.customerPhone.trim() !== '') {
+      const cleanName = currentState.customerName.trim().toLowerCase();
+      const cleanPhone = currentState.customerPhone.trim();
+      matchedDraft = drafts.find(d => 
+        d.state?.customerName && 
+        d.state.customerName.trim().toLowerCase() === cleanName &&
+        d.state?.customerPhone &&
+        d.state.customerPhone.trim() === cleanPhone
+      );
+    }
+
+    // Determine the draft ID: reuse the existing draft ID if matched, or use the current historyId, or create a new one
+    const draftId = matchedDraft ? matchedDraft.id : (currentState.historyId || `draft_${Date.now()}`);
+    const timestamp = matchedDraft ? matchedDraft.timestamp : (currentState.timestamp || Date.now());
+
+    // Construct the finalized patched state
+    const finalState = {
+      ...currentState,
+      historyId: draftId,
+      timestamp
+    };
+
     const draftItem: OrderHistoryItem = {
       id: draftId,
       timestamp,
-      state: { ...state, historyId: draftId, timestamp },
+      state: finalState,
       messages: []
     };
-    
+
     setDrafts(prev => {
       const exists = prev.find(d => d.id === draftId);
       if (exists) {
+        // Patch and update the existing draft
         return prev.map(d => d.id === draftId ? draftItem : d);
       }
       return [draftItem, ...prev];
     });
-    
-    setState(prev => ({ ...prev, historyId: draftId, timestamp }));
+
+    setState(finalState);
   };
 
   const deleteDraft = (id: string) => {
