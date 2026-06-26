@@ -819,7 +819,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       resumeLangs: Array.isArray(s.resumeLangs) ? s.resumeLangs : INITIAL_STATE.resumeLangs,
       timestamp: item.timestamp,
       historyId: item.id,
-      isEditMode: true
+      isEditMode: s.isEditMode !== undefined ? s.isEditMode : (s.subType === 'Edit' || s.mainType === 'Edit Resume')
     });
     // Go to the appropriate form view based on state
     if (s.mainType === 'Resume' || s.mainType === 'Curriculum Vitae') {
@@ -854,7 +854,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       resumeLangs: Array.isArray(s.resumeLangs) ? s.resumeLangs : INITIAL_STATE.resumeLangs,
       timestamp: item.timestamp,
       historyId: item.id,
-      isEditMode: true
+      isEditMode: s.isEditMode !== undefined ? s.isEditMode : (s.subType === 'Edit' || s.mainType === 'Edit Resume')
     });
     setViewStack(['home', 'history', 'customer-info']);
   };

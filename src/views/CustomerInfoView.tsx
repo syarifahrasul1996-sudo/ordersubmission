@@ -353,6 +353,30 @@ const showToastMessage = (msg: string) => {
   };
 
   const syncStateAndSave = (isDraftSave = false) => {
+    // Resolve mainType, subType, and isEditMode based on current order select option
+    let resolvedMainType = state.mainType;
+    let resolvedSubType = state.subType;
+    let resolvedIsEditMode = state.isEditMode;
+
+    if (order === 'Resume') {
+      resolvedMainType = 'Resume';
+      resolvedSubType = 'New';
+      resolvedIsEditMode = false;
+    } else if (order === 'Edit Resume') {
+      resolvedMainType = 'Resume';
+      resolvedSubType = 'Edit';
+      resolvedIsEditMode = true;
+    } else if (order === 'Surat') {
+      resolvedMainType = 'Surat';
+      resolvedIsEditMode = false;
+    } else if (order === 'Edit PDF') {
+      resolvedMainType = 'Edit PDF';
+      resolvedIsEditMode = false;
+    } else if (order === 'Lain2') {
+      resolvedMainType = 'Lain-lain';
+      resolvedIsEditMode = false;
+    }
+
     // Sync state one last time before saving
     const fields = {
       customerName: name,
@@ -369,6 +393,9 @@ const showToastMessage = (msg: string) => {
       googleSheetLink: link,
       orderId: orderId,
       price: price ? parseFloat(price) : undefined,
+      mainType: resolvedMainType,
+      subType: resolvedSubType,
+      isEditMode: resolvedIsEditMode
     };
 
     setState(prev => ({
