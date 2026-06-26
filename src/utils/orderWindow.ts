@@ -1,126 +1,44 @@
-import type { OrderHistoryItem } from '../types';
-import { parseDateStringToTimestamp } from '../utils';
+import React from 'react';
+import { Minus, Plus } from 'lucide-react';
+import { useAppContext } from '../AppContext';
+import { cn } from '../cn';
 
-const ACTIVE_WINDOW_PAST_DAYS = 2;
-const ACTIVE_WINDOW_FUTURE_DAYS = 3;
+export function FloatingControls() {
+  const { state, setState, viewStack, pushView } = useAppContext();
+  const currentView = viewStack[viewStack.length - 1];
+  
+  const formViews = ['resume-type', 'resume-form-fields', 'general-form'];
+  if (!formViews.includes(currentView)) return null;
 
-/**
- * Returns the order's valid due timestamp.
- *
- * Priority:
- * 1. state.dueTimestamp
- * 2. Parsed state.customerDue
- *
- * It deliberately does not use item.timestamp because that is the
- * time the order was created, not the order's due date.
- */
-export function getOrderDueTimestamp(
-  item: OrderHistoryItem
-): number | null {
-  const storedTimestamp = Number(item.state?.dueTimestamp);
-
-  if (
-    Number.isFinite(storedTimestamp) &&
-    storedTimestamp > 0
-  ) {
-    return storedTimestamp;
+  let isReady = !!state.urgency && (state.isEditMode || state.mainType !== 'Resume' || (state.resumeLangs || []).length > 0);
+  if (state.mainType === 'Lain-lain' && !state.customDoc.trim()) {
+    isReady = false;
   }
-
-  const customerDue = String(
-    item.state?.customerDue ?? ''
-  ).trim();
-
-  if (!customerDue) {
-    return null;
-  }
-
-  const parsedTimestamp =
-    parseDateStringToTimestamp(customerDue, 0).timestamp;
-
-  if (
-    !Number.isFinite(parsedTimestamp) ||
-    parsedTimestamp <= 0
-  ) {
-    return null;
-  }
-
-  return parsedTimestamp;
-}
-
-/**
- * Returns the active order window:
- * - Beginning of two days ago
- * - End of three days from today
- */
-export function getActiveOrderWindow(
-  referenceDate: Date = new Date()
-) {
-  const startDate = new Date(referenceDate);
-  startDate.setDate(
-    startDate.getDate() - ACTIVE_WINDOW_PAST_DAYS
-  );
-  startDate.setHours(0, 0, 0, 0);
-
-  const endDate = new Date(referenceDate);
-  endDate.setDate(
-    endDate.getDate() + ACTIVE_WINDOW_FUTURE_DAYS
-  );
-  endDate.setHours(23, 59, 59, 999);
-
-  return {
-    startTimestamp: startDate.getTime(),
-    endTimestamp: endDate.getTime(),
-  };
-}
-
-/**
- * Checks whether an order's due date is within the active window.
- */
-export function isOrderInsideActiveWindow(
-  item: OrderHistoryItem,
-  referenceDate: Date = new Date()
-): boolean {
-  const dueTimestamp = getOrderDueTimestamp(item);
-
-  if (dueTimestamp === null) {
-    return false;
-  }
-
-  const {
-    startTimestamp,
-    endTimestamp,
-  } = getActiveOrderWindow(referenceDate);
 
   return (
-    dueTimestamp >= startTimestamp &&
-    dueTimestamp <= endTimestamp
-  );
-}
-
-/**
- * Checks whether an order:
- * - Is not delivered
- * - Is not deleted
- * - Has a valid due date
- * - Is inside the active date window
- */
-export function isActivePendingOrder(
-  item: OrderHistoryItem,
-  referenceDate: Date = new Date()
-): boolean {
-  if (!item?.state) {
-    return false;
-  }
-
-  if (
-    item.state.isDelivered === true ||
-    item.state.isDeleted === true
-  ) {
-    return false;
-  }
-
-  return isOrderInsideActiveWindow(
-    item,
-    referenceDate
+    <div className="absolute bottom-[calc(env(safe-area-inset-bottom)+1rem)] left-4 right-4 sm:left-5 sm:right-5 bg-white/95 backdrop-blur-2xl border border-gray-100 p-3 flex gap-2 sm:gap-3 z-50 transition-all duration-300 rounded-[20px] shadow-[0_8px_30px_rgba(0,0,0,0.12)]">
+      <button 
+        onClick={() => setState(prev => ({ ...prev, extraHours: Math.max(0, prev.extraHours - 1) }))}
+        className="w-12 h-12 sm:w-14 sm:h-14 bg-surface active:bg-gray-200 text-text font-black rounded-[14px] flex items-center justify-center active:scale-95 shadow-sm transition-transform"
+      >
+        <Minus className="w-5 h-5 sm:w-6 sm:h-6" />
+      </button>
+      <button 
+        onClick={() => setState(prev => ({ ...prev, extraHours: prev.extraHours + 1 }))}
+        className="w-12 h-12 sm:w-14 sm:h-14 bg-surface active:bg-gray-200 text-text font-black rounded-[14px] flex items-center justify-center active:scale-95 shadow-sm transition-transform"
+      >
+        <Plus className="w-5 h-5 sm:w-6 sm:h-6" />
+      </button>
+      <button 
+        disabled={!isReady}
+        onClick={() => pushView('confirmation')}
+        className={cn(
+          "flex-1 h-12 sm:h-14 font-black text-base sm:text-[17px] rounded-[14px] transition-all active:scale-[0.98]",
+          isReady ? "bg-primary text-white shadow-md" : "bg-disabled text-white opacity-50"
+        )}
+      >
+        Sahkan Maklumat
+      </button>
+    </div>
   );
 }
