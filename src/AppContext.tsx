@@ -2,7 +2,6 @@ import React, { createContext, useContext, useState, ReactNode, useEffect } from
 import { AppState, INITIAL_STATE, ViewType, OrderHistoryItem } from './types';
 import { getSubscription, syncPushNotifications, clearPushNotifications } from './lib/push';
 
-
 interface AppContextType {
   state: AppState;
   setState: React.Dispatch<React.SetStateAction<AppState>>;
@@ -89,24 +88,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
   });
   
   const [viewStack, setViewStack] = useState<ViewType[]>(() => {
-  try {
-    const saved = localStorage.getItem('viewStack');
-
-    if (!saved) {
+    try {
+      const saved = localStorage.getItem('viewStack');
+      return saved ? JSON.parse(saved) : ['home'];
+    } catch {
       return ['home'];
     }
-
-    const parsed = JSON.parse(saved);
-
-    if (!Array.isArray(parsed) || parsed.length === 0) {
-      return ['home'];
-    }
-
-    return parsed;
-  } catch {
-    return ['home'];
-  }
-});
+  });
 
   const [generatedMessages, setGeneratedMessages] = useState<string[]>(() => {
     try {
@@ -117,26 +105,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   });
 
- const [history, setHistory] = useState<OrderHistoryItem[]>(() => {
-  try {
-    const saved = localStorage.getItem('orderHistory');
-
-    if (!saved) {
+  const [history, setHistory] = useState<OrderHistoryItem[]>(() => {
+    try {
+      const saved = localStorage.getItem('orderHistory');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return Array.isArray(parsed) ? parsed : [];
+      }
+      return [];
+    } catch {
       return [];
     }
-
-    const parsed = JSON.parse(saved);
-
-    return Array.isArray(parsed) ? parsed : [];
-  } catch (error) {
-    console.error(
-      'Failed to load order history:',
-      error
-    );
-
-    return [];
-  }
-});
+  });
 
   const [deletedOrderIds, setDeletedOrderIds] = useState<string[]>(() => {
     try {
@@ -288,11 +268,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             const timeUntilDue = dueTimestamp - now;
 
             // 1. Check 3 hours logic: 3 hours before due time
-            if (
-  timeUntilDue > 0 &&
-  timeUntilDue <= THREE_HOURS &&
-  !hasThreeHourChecked
-) {
+            if (timeUntilDue <= THREE_HOURS && !hasThreeHourChecked) {
               newState.hasThreeHourChecked = true;
               itemUpdated = true;
 
