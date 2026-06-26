@@ -16,7 +16,7 @@ export function FloatingControls() {
   }
 
   return (
-    <div className="fixed md:absolute bottom-[calc(env(safe-area-inset-bottom)+0.4rem)] left-4 right-4 sm:left-5 sm:right-5 bg-white/95 backdrop-blur-2xl border border-gray-100 p-3 flex gap-2 sm:gap-3 z-50 transition-all duration-300 rounded-[20px] shadow-[0_8px_30px_rgba(0,0,0,0.12)]">
+    <div className="fixed md:fixed bottom-[calc(env(safe-area-inset-bottom)+0.5rem)] left-4 right-4 sm:left-5 sm:right-5 bg-white/95 backdrop-blur-2xl border border-gray-100 p-3 flex gap-2 sm:gap-3 z-50 transition-all duration-300 rounded-[20px] shadow-[0_8px_30px_rgba(0,0,0,0.12)]">
       <button 
         onClick={() => setState(prev => ({ ...prev, extraHours: Math.max(0, prev.extraHours - 1) }))}
         className="w-12 h-12 sm:w-14 sm:h-14 bg-surface active:bg-gray-200 text-text font-black rounded-[14px] flex items-center justify-center active:scale-95 shadow-sm transition-transform"
