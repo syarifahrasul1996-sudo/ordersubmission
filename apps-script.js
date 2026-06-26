@@ -1040,78 +1040,88 @@ function updateOrder(e) {
     });
   }
 }
-
 function formatPhoneForSheet(phone) {
   var original = String(phone || "").trim();
+
+  if (!original) return "";
+
+  var hasPlusPrefix = original.indexOf("+") === 0;
+  var hasDoubleZeroPrefix = original.indexOf("00") === 0;
   var digits = original.replace(/\D/g, "");
 
   if (!digits) return "";
 
-  var countryCode = "";
-  var local = "";
+  // Convert 00 international prefix to normal international digits.
+  if (hasDoubleZeroPrefix && digits.indexOf("00") === 0) {
+    digits = digits.substring(2);
+    hasPlusPrefix = true;
+  }
+
+  // Malaysian local number: 011... → 6011...
+  if (!hasPlusPrefix && digits.indexOf("0") === 0) {
+    digits = "60" + digits.substring(1);
+  }
 
   // Malaysia
   if (digits.indexOf("60") === 0) {
-    countryCode = "60";
-    local = digits.substring(2);
-  }
-  // Singapore
-  else if (digits.indexOf("65") === 0) {
-    countryCode = "65";
-    local = digits.substring(2);
-  }
-  // Indonesia
-  else if (digits.indexOf("62") === 0) {
-    countryCode = "62";
-    local = digits.substring(2);
-  }
-  // Brunei
-  else if (digits.indexOf("673") === 0) {
-    countryCode = "673";
-    local = digits.substring(3);
-  }
-  // Thailand
-  else if (digits.indexOf("66") === 0) {
-    countryCode = "66";
-    local = digits.substring(2);
-  }
-  // Local Malaysian number
-  else if (digits.indexOf("0") === 0) {
-    countryCode = "60";
-    local = digits.substring(1);
-  }
-  // Unknown country: keep first 2 digits as country code
-  else {
-    countryCode = digits.substring(0, 2);
-    local = digits.substring(2);
+    var malaysiaLocal = digits.substring(2);
+
+    // Remove accidental zero after country code: 60011... → 6011...
+    if (malaysiaLocal.indexOf("0") === 0) {
+      malaysiaLocal = malaysiaLocal.substring(1);
+    }
+
+    // 011 numbers: 60 11-1118 4471
+    if (
+      malaysiaLocal.indexOf("11") === 0 &&
+      malaysiaLocal.length === 10
+    ) {
+      return (
+        "60 11-" +
+        malaysiaLocal.substring(2, 6) +
+        " " +
+        malaysiaLocal.substring(6)
+      );
+    }
+
+    // Other Malaysian mobile numbers: 60 13-923 7396
+    if (
+      malaysiaLocal.indexOf("1") === 0 &&
+      malaysiaLocal.length === 9
+    ) {
+      return (
+        "60 " +
+        malaysiaLocal.substring(0, 2) +
+        "-" +
+        malaysiaLocal.substring(2, 5) +
+        " " +
+        malaysiaLocal.substring(5)
+      );
+    }
+
+    // Preserve unusual Malaysian numbers without guessing grouping.
+    return "60 " + malaysiaLocal;
   }
 
-  // Malaysian style: 60 12-906 6817
-  if (countryCode === "60" && local.length >= 8) {
+  // Singapore: 65 8057 4517
+  if (digits.indexOf("65") === 0 && digits.length === 10) {
+    var singaporeLocal = digits.substring(2);
+
     return (
-      countryCode +
+      "65 " +
+      singaporeLocal.substring(0, 4) +
       " " +
-      local.substring(0, 2) +
-      "-" +
-      local.substring(2, 5) +
-      " " +
-      local.substring(5)
+      singaporeLocal.substring(4)
     );
   }
 
-  // Singapore style: 65 8057 4517
-  if (countryCode === "65" && local.length === 8) {
-    return (
-      countryCode +
-      " " +
-      local.substring(0, 4) +
-      " " +
-      local.substring(4)
-    );
+  // Other explicitly international numbers:
+  // +628123456789, +441234567890, etc.
+  if (hasPlusPrefix) {
+    return "+" + digits;
   }
 
-  // General fallback: country code + grouped local number
-  var groupedLocal = local.replace(/(\d{3})(?=\d)/g, "$1 ").trim();
-
-  return (countryCode + " " + groupedLocal).trim();
+  // Unknown format: preserve exactly what the user entered.
+  // Do not guess the country code or rearrange the number.
+  return original;
 }
