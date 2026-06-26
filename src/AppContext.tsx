@@ -89,13 +89,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
   });
   
   const [viewStack, setViewStack] = useState<ViewType[]>(() => {
-    try {
-      const saved = localStorage.getItem('viewStack');
-      return saved ? JSON.parse(saved) : ['home'];
-    } catch {
+  try {
+    const saved = localStorage.getItem('viewStack');
+
+    if (!saved) {
       return ['home'];
     }
-  });
+
+    const parsed = JSON.parse(saved);
+
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+      return ['home'];
+    }
+
+    return parsed;
+  } catch {
+    return ['home'];
+  }
+});
 
   const [generatedMessages, setGeneratedMessages] = useState<string[]>(() => {
     try {
