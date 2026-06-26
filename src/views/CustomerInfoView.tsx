@@ -850,7 +850,11 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
           headers: {
             'Content-Type': 'text/plain;charset=utf-8'
           },
-          body: JSON.stringify(payload)
+          body: JSON.stringify({
+  ...payload,
+  action: 'update_order',
+  oldOrderId: oldIdToSend || '',
+})
         }).then(() => {
           console.log("no-cors POST fallback succeeded!");
           updateOrderHistoryState({
