@@ -1,5 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { isActivePendingOrder } from '../utils/orderWindow';
+import {
+  getActiveOrderWindow,
+  getOrderDueTimestamp,
+  isActivePendingOrder,
+} from '../utils/orderWindow';
 import { 
   Calculator, 
   Clock, 
@@ -138,7 +142,7 @@ console.log(
   }))
 );
   // Derive statistics
-  const activeOrders = history.filter(isActivePendingOrder);
+  const activeOrders = history.filter(o => o && o.state && !o.state.isDelivered && !o.state.isDeleted);
   const totalPendingCount = activeOrders.length;
 
   const todayStart = new Date();
