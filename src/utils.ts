@@ -204,80 +204,50 @@ export function parseDateStringToTimestamp(dueText: string, defaultTimestamp: nu
     return { timestamp: defaultTimestamp, date: new Date(defaultTimestamp) };
   }
 
-const cleanText = dueText
-  .replace(/\s+at\s+/i, ' ')
-  .trim();
-
-// Parse DD/MM/YYYY or DD-MM-YYYY first.
-// This prevents JavaScript from reading 06/07/2026 as June 7.
-const localDateMatch = cleanText.match(
-  /^(\d{1,2})[/-](\d{1,2})[/-](\d{4})(?:\s+(\d{1,2})(?::(\d{1,2}))?(?::(\d{1,2}))?\s*(AM|PM)?)?$/i
-);
-
-if (localDateMatch) {
-  const day = Number(localDateMatch[1]);
-  const month = Number(localDateMatch[2]);
-  const year = Number(localDateMatch[3]);
-
-  let hours = Number(localDateMatch[4] || 0);
-  const minutes = Number(localDateMatch[5] || 0);
-  const seconds = Number(localDateMatch[6] || 0);
-  const meridiem = String(
-    localDateMatch[7] || ''
-  ).toUpperCase();
-
-  if (meridiem === 'PM' && hours < 12) {
-    hours += 12;
+  const cleanText = dueText.replace(/\s+at\s+/i, ' ').trim();
+  const directDate = new Date(cleanText);
+  if (!isNaN(directDate.getTime())) {
+    return { timestamp: directDate.getTime(), date: directDate };
   }
 
-  if (meridiem === 'AM' && hours === 12) {
-    hours = 0;
+  // Attempt custom DD/MM/YYYY parses with optional time
+  const parts = cleanText.split(/\s+/);
+  const datePart = parts[0];
+  const timePart = parts[1] || '00:00';
+
+  const dateSegs = datePart.split('/');
+  if (dateSegs.length === 3) {
+    const day = parseInt(dateSegs[0], 10);
+    const month = parseInt(dateSegs[1], 10) - 1;
+    const year = parseInt(dateSegs[2], 10);
+
+    const timeSegs = timePart.split(':');
+    let hours = parseInt(timeSegs[0] || '0', 10);
+    const minutes = parseInt(timeSegs[1] || '0', 10);
+    const seconds = parseInt(timeSegs[2] || '0', 10);
+
+    const isPM = cleanText.toUpperCase().includes('PM');
+    const isAM = cleanText.toUpperCase().includes('AM');
+    if (isPM && hours < 12) {
+      hours += 12;
+    } else if (isAM && hours === 12) {
+      hours = 0;
+    }
+
+    const parsedDME = new Date(year, month, day, hours, minutes, seconds);
+    if (!isNaN(parsedDME.getTime())) {
+      return { timestamp: parsedDME.getTime(), date: parsedDME };
+    }
   }
 
-  const parsedDate = new Date(
-    year,
-    month - 1,
-    day,
-    hours,
-    minutes,
-    seconds,
-    0
-  );
-
-  const isValid =
-    parsedDate.getFullYear() === year &&
-    parsedDate.getMonth() === month - 1 &&
-    parsedDate.getDate() === day &&
-    parsedDate.getHours() === hours &&
-    parsedDate.getMinutes() === minutes &&
-    parsedDate.getSeconds() === seconds;
-
-  if (isValid) {
-    return {
-      timestamp: parsedDate.getTime(),
-      date: parsedDate
-    };
+  // Try parsing first segment DD/MM/YYYY directly
+  const dateParts = dueText.split(' ')[0].split('/');
+  if (dateParts.length === 3) {
+    const parsedDME = new Date(parseInt(dateParts[2], 10), parseInt(dateParts[1], 10) - 1, parseInt(dateParts[0], 10));
+    if (!isNaN(parsedDME.getTime())) {
+      return { timestamp: parsedDME.getTime(), date: parsedDME };
+    }
   }
 
-  return {
-    timestamp: defaultTimestamp,
-    date: new Date(defaultTimestamp)
-  };
-}
-
-// Only use JavaScript's general parser after checking
-// the explicit DD/MM/YYYY format.
-const directDate = new Date(cleanText);
-
-if (!isNaN(directDate.getTime())) {
-  return {
-    timestamp: directDate.getTime(),
-    date: directDate
-  };
-}
-
-return {
-  timestamp: defaultTimestamp,
-  date: new Date(defaultTimestamp)
-};
+  return { timestamp: defaultTimestamp, date: new Date(defaultTimestamp) };
 }
