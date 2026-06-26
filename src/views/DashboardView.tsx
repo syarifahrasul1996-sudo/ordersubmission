@@ -107,7 +107,9 @@ export function DashboardView() {
   const { appLanguage, pushView, history } = useAppContext();
   
   const [filterYear, setFilterYear] = useState<string>(new Date().getFullYear().toString());
-  const [filterMonth, setFilterMonth] = useState<string>(   String(new Date().getMonth() + 1).padStart(2, '0') );
+  const [filterMonth, setFilterMonth] = useState<string>(
+  String(new Date().getMonth() + 1).padStart(2, '0')
+);
   
   const [remoteOrders, setRemoteOrders] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);

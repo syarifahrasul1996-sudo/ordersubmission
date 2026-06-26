@@ -103,10 +103,10 @@ export function ConfirmationView({ onGenerated }: { onGenerated: () => void }) {
 
         {state.mainType === 'Resume' && (
           <div className="space-y-4 pt-1">
-              {state.template.trim() ? (
+              {(state.template || '').trim() ? (
                 <div>
                     <p className="text-[10px] font-black text-subtext uppercase tracking-widest mb-1">Template</p>
-                    <p className="font-bold text-text text-sm uppercase tracking-wider">{state.template.trim().toUpperCase()}</p>
+                    <p className="font-bold text-text text-sm uppercase tracking-wider">{(state.template || '').trim().toUpperCase()}</p>
                 </div>
               ) : null}
               {!isE && (

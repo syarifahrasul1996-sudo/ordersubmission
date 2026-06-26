@@ -33,7 +33,7 @@ export function BottomNavigation() {
 
   return (
     <>
-      <div className="w-full bg-white/95 dark:bg-zinc-900/95 backdrop-blur-xl border-t border-gray-100 dark:border-zinc-850 px-2 py-2.5 flex items-center justify-between shrink-0 z-40 pb-[calc(env(safe-area-inset-bottom)+0.6rem)] shadow-[0_-4px_20px_rgba(0,0,0,0.03)]">
+      <div className="w-full bg-white/95 dark:bg-zinc-900/95 backdrop-blur-xl border-t border-gray-100 dark:border-zinc-850 px-2 pt-1.5 pb-[calc(env(safe-area-inset-bottom)+0.25rem)] flex items-center justify-between shrink-0 z-40 shadow-[0_-4px_20px_rgba(0,0,0,0.03)]">
         {/* TAB 1: HOME */}
         <button
           onClick={() => changeTab('home')}
@@ -65,7 +65,7 @@ export function BottomNavigation() {
         </button>
 
         {/* TAB 3: PLUS (+) BUTTON FOR ADD ORDER */}
-        <div className="flex-1 flex justify-center -mt-6">
+        <div className="flex-1 flex justify-center -mt-4.5">
           <button
             onClick={() => setShowAddMenu(true)}
             className="w-13 h-13 bg-primary text-white rounded-full flex items-center justify-center shadow-lg active:scale-90 transition-transform cursor-pointer border-4 border-white dark:border-zinc-900 hover:bg-primary/95"

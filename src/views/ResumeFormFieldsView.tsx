@@ -84,7 +84,7 @@ export function ResumeFormFieldsView() {
                 onClick={() => toggleResumeLang(lang)}
                 className={cn(
                   "flex-1 rounded-lg sm:rounded-[10px] font-bold transition-all text-xs sm:text-sm",
-                  state.resumeLangs.includes(lang) ? "bg-[#1C1C1E] text-white shadow-sm transform scale-[1.01]" : "text-text active:bg-gray-200"
+                  (state.resumeLangs || []).includes(lang) ? "bg-[#1C1C1E] text-white shadow-sm transform scale-[1.01]" : "text-text active:bg-gray-200"
                 )}
               >
                 {lang}
@@ -105,13 +105,13 @@ export function ResumeFormFieldsView() {
                 onClick={() => toggleAddon('Soft Copy Word')}
                 className={cn(
                   "w-full py-3 px-4 rounded-xl flex justify-between items-center transition-all border border-transparent",
-                  state.addons.includes('Soft Copy Word') ? "bg-primary text-white shadow-md font-bold" : "bg-surface font-semibold text-text"
+                  (state.addons || []).includes('Soft Copy Word') ? "bg-primary text-white shadow-md font-bold" : "bg-surface font-semibold text-text"
                 )}
               >
                 <span className="text-sm sm:text-base">Soft Copy Word</span>
-                <CheckCircle2 className={cn("w-5 h-5 transition-opacity", state.addons.includes('Soft Copy Word') ? "opacity-100" : "opacity-20")} />
+                <CheckCircle2 className={cn("w-5 h-5 transition-opacity", (state.addons || []).includes('Soft Copy Word') ? "opacity-100" : "opacity-20")} />
               </button>
-              {state.addons.includes('Soft Copy Word') && isMulti && (
+              {(state.addons || []).includes('Soft Copy Word') && isMulti && (
                 <div className="p-4 bg-surface rounded-xl border border-primary/20 space-y-3 shadow-inner">
                   <p className="text-xs font-bold text-primary tracking-tight">{appLanguage === 'ms' ? 'Pilih Bahasa Soft Copy:' : 'Choose Soft Copy Language:'}</p>
                   <div className="flex gap-2">
@@ -138,13 +138,13 @@ export function ResumeFormFieldsView() {
                 onClick={() => toggleAddon('Cover Letter')}
                 className={cn(
                   "w-full py-3 px-4 rounded-xl flex justify-between items-center transition-all border border-transparent",
-                  state.addons.includes('Cover Letter') ? "bg-primary text-white shadow-md font-bold" : "bg-surface font-semibold text-text"
+                  (state.addons || []).includes('Cover Letter') ? "bg-primary text-white shadow-md font-bold" : "bg-surface font-semibold text-text"
                 )}
               >
                 <span className="text-sm sm:text-base">Cover Letter</span>
-                <CheckCircle2 className={cn("w-5 h-5 transition-opacity", state.addons.includes('Cover Letter') ? "opacity-100" : "opacity-20")} />
+                <CheckCircle2 className={cn("w-5 h-5 transition-opacity", (state.addons || []).includes('Cover Letter') ? "opacity-100" : "opacity-20")} />
               </button>
-              {state.addons.includes('Cover Letter') && isMulti && (
+              {(state.addons || []).includes('Cover Letter') && isMulti && (
                 <div className="p-4 bg-surface rounded-xl border border-primary/20 space-y-3 shadow-inner">
                   <p className="text-xs font-bold text-primary tracking-tight">{appLanguage === 'ms' ? 'Pilih Bahasa Cover Letter:' : 'Choose Cover Letter Language:'}</p>
                   <div className="flex gap-2">
@@ -154,7 +154,7 @@ export function ResumeFormFieldsView() {
                         onClick={() => toggleClLang(lang)}
                         className={cn(
                           "flex-1 py-2 rounded-lg font-bold border border-transparent transition-all text-xs",
-                          state.clLangs.includes(lang) ? "bg-primary text-white shadow-sm" : "bg-white text-text shadow-xs"
+                          (state.clLangs || []).includes(lang) ? "bg-primary text-white shadow-sm" : "bg-white text-text shadow-xs"
                         )}
                       >
                         {lang}
@@ -171,11 +171,11 @@ export function ResumeFormFieldsView() {
                   onClick={() => toggleAddon('Soft Copy Dua Bahasa')}
                   className={cn(
                     "w-full py-3 px-4 rounded-xl flex justify-between items-center transition-all border border-transparent",
-                    state.addons.includes('Soft Copy Dua Bahasa') ? "bg-primary text-white shadow-md font-bold" : "bg-surface font-semibold text-text"
+                    (state.addons || []).includes('Soft Copy Dua Bahasa') ? "bg-primary text-white shadow-md font-bold" : "bg-surface font-semibold text-text"
                   )}
                 >
                   <span className="text-sm sm:text-base">Soft Copy Dua Bahasa</span>
-                  <CheckCircle2 className={cn("w-5 h-5 transition-opacity", state.addons.includes('Soft Copy Dua Bahasa') ? "opacity-100" : "opacity-20")} />
+                  <CheckCircle2 className={cn("w-5 h-5 transition-opacity", (state.addons || []).includes('Soft Copy Dua Bahasa') ? "opacity-100" : "opacity-20")} />
               </button>
             )}
 
@@ -185,13 +185,13 @@ export function ResumeFormFieldsView() {
                 onClick={() => toggleAddon('Custom')}
                 className={cn(
                   "w-full py-3 px-4 rounded-xl flex justify-between items-center transition-all border border-transparent",
-                  state.addons.includes('Custom') ? "bg-primary text-white shadow-md font-bold" : "bg-surface font-semibold text-text"
+                  (state.addons || []).includes('Custom') ? "bg-primary text-white shadow-md font-bold" : "bg-surface font-semibold text-text"
                 )}
               >
                 <span className="text-sm sm:text-base">Custom</span>
-                <CheckCircle2 className={cn("w-5 h-5 transition-opacity", state.addons.includes('Custom') ? "opacity-100" : "opacity-20")} />
+                <CheckCircle2 className={cn("w-5 h-5 transition-opacity", (state.addons || []).includes('Custom') ? "opacity-100" : "opacity-20")} />
               </button>
-              {state.addons.includes('Custom') && (
+              {(state.addons || []).includes('Custom') && (
                 <div className="pt-0.5">
                   <input 
                     type="text" 

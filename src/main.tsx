@@ -40,8 +40,12 @@ window.addEventListener('unhandledrejection', (event) => {
   }
 });
 
+import { AppErrorBoundary } from './components/AppErrorBoundary';
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <AppErrorBoundary>
+      <App />
+    </AppErrorBoundary>
   </StrictMode>,
 );

@@ -30,8 +30,8 @@ export function GeneralFormView() {
             <button
               key={lang}
               onClick={() => {
-                const isSelected = state.resumeLangs.includes(lang);
-                let newLangs = [...state.resumeLangs];
+                const isSelected = (state.resumeLangs || []).includes(lang);
+                let newLangs = [...(state.resumeLangs || [])];
                 if (isSelected) {
                    newLangs = newLangs.filter(l => l !== lang);
                    if (newLangs.length === 0) newLangs = [lang]; // minimum 1
@@ -42,7 +42,7 @@ export function GeneralFormView() {
               }}
               className={cn(
                 "flex-1 rounded-lg sm:rounded-[10px] font-bold transition-all text-xs sm:text-sm",
-                state.resumeLangs.includes(lang) ? "bg-[#1C1C1E] text-white shadow-sm transform scale-[1.01]" : "text-text active:bg-gray-200"
+                (state.resumeLangs || []).includes(lang) ? "bg-[#1C1C1E] text-white shadow-sm transform scale-[1.01]" : "text-text active:bg-gray-200"
               )}
             >
               {lang}

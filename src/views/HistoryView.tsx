@@ -4,6 +4,7 @@ import { cn } from '../cn';
 import { Clock, Trash2, Calendar, AlertCircle, RefreshCcw, Save, Bell, Check, Search, Database, Phone, Settings, ChevronDown, ChevronUp, Link, X, ArrowRight, Zap } from 'lucide-react';
 import { useAppContext } from '../AppContext';
 import { formatPhoneUniversal, parseDateStringToTimestamp } from '../utils';
+import { INITIAL_STATE } from '../types';
 
 const GOOGLE_SCRIPT_URL =
   'https://script.google.com/macros/s/AKfycbw5KpBvJyFpIXmsHueg4XPSRkZ0mg6kxHqjMGp3WEs8Hx_JodvKSoKEg6RMsdH54iCa/exec';
@@ -823,6 +824,7 @@ const existingIdx = updatedHistory.findIndex((item) => {
             let parsedTemplate = orderData.template ? String(orderData.template).trim().toUpperCase() : '';
 
             const newState = {
+              ...INITIAL_STATE,
               isDelivered: !!orderData.isDelivered,
               spreadsheetId: res.spreadsheetId,
               customerName: parsedName,
