@@ -1278,11 +1278,20 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
 
         <div className="space-y-1">
           <label className="text-xs font-black text-gray-400 ml-1 uppercase tracking-widest">{appLanguage === 'ms' ? 'Harga (RM)' : 'Price (RM)'}</label>
-          <input 
-            type="number"
-            step="0.01"
-            value={price}
-            onChange={(e) => setPrice(e.target.value)}
+          <input
+          data-price-field="text-version"
+          type="text"
+          inputMode="decimal"
+          value={price}
+          onChange={(e) => {
+  const value = e.target.value
+    .replace(',', '.')
+    .replace(/[^\d.]/g, '');
+
+  if (value === '' || /^\d*\.?\d{0,2}$/.test(value)) {
+    setPrice(value);
+  }
+}}
             placeholder={appLanguage === 'ms' ? 'Contoh: 50.00' : 'Example: 50.00'}
             className="w-full h-[46px] bg-surface rounded-xl px-4 font-bold text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all text-sm placeholder:text-gray-300"
           />
