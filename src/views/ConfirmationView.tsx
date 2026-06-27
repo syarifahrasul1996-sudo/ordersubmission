@@ -4,7 +4,7 @@ import { useAppContext } from '../AppContext';
 import { calculateDeadline, generateMessages } from '../utils';
 
 export function ConfirmationView({ onGenerated }: { onGenerated: () => void }) {
-  const { state, pushView, popView, setGeneratedMessages, saveAsDraft, appLanguage } = useAppContext();
+  const { state, pushView, popView, setGeneratedMessages, saveOrderToHistory, appLanguage } = useAppContext();
   const [copied, setCopied] = useState(false);
 
   const isE = state.isEditMode;
@@ -29,7 +29,7 @@ export function ConfirmationView({ onGenerated }: { onGenerated: () => void }) {
     const finalDlInfo = calculateDeadline(state, appLanguage);
     const messages = generateMessages(state, finalDlInfo, appLanguage);
     setGeneratedMessages(messages);
-    saveAsDraft(state, messages);
+    saveOrderToHistory(messages);
     pushView('output');
     onGenerated();
   };
@@ -103,10 +103,10 @@ export function ConfirmationView({ onGenerated }: { onGenerated: () => void }) {
 
         {state.mainType === 'Resume' && (
           <div className="space-y-4 pt-1">
-              {(state.template || '').trim() ? (
+              {state.template.trim() ? (
                 <div>
                     <p className="text-[10px] font-black text-subtext uppercase tracking-widest mb-1">Template</p>
-                    <p className="font-bold text-text text-sm uppercase tracking-wider">{(state.template || '').trim().toUpperCase()}</p>
+                    <p className="font-bold text-text text-sm uppercase tracking-wider">{state.template.trim().toUpperCase()}</p>
                 </div>
               ) : null}
               {!isE && (

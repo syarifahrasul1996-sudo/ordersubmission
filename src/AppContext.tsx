@@ -16,7 +16,7 @@ interface AppContextType {
   setGeneratedMessages: (msgs: string[]) => void;
   history: OrderHistoryItem[];
   setHistory: React.Dispatch<React.SetStateAction<OrderHistoryItem[]>>;
-  saveOrderToHistory: (messages: string[], customState?: Partial<AppState>) => void;
+  saveOrderToHistory: (messages: string[]) => void;
   updateOrderHistoryState: (updates: Partial<AppState>) => void;
   updateSpecificHistoryItem: (id: string, updates: Partial<AppState>) => void;
   deleteOrderFromHistory: (id: string) => void;
@@ -25,7 +25,7 @@ interface AppContextType {
   clearHistory: () => void;
   loadOrder: (item: OrderHistoryItem) => void;
   drafts: OrderHistoryItem[];
-  saveAsDraft: (updatedState?: Partial<AppState>, messages?: string[]) => void;
+  saveAsDraft: () => void;
   deleteDraft: (id: string) => void;
   loadDraft: (item: OrderHistoryItem) => void;
   theme: 'light' | 'dark';
@@ -570,122 +570,32 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const toggleTheme = () => setTheme(t => t === 'light' ? 'dark' : 'light');
   const toggleLanguage = () => setAppLanguage(l => l === 'ms' ? 'en' : 'ms');
 
-  const saveOrderToHistory = (messages: string[], customState?: Partial<AppState>) => {
-    const currentState = { ...state, ...customState };
+  const saveOrderToHistory = (messages: string[]) => {
+    let currentId = state.historyId;
+    let currentTimestamp = state.timestamp;
     
-    // Check if we are in an update flow (it's edit mode, or has a permanent ORD-... ID)
-    const isUpdateFlow = 
-      currentState.isEditMode === true || 
-      (currentState.orderId && currentState.orderId.startsWith('ORD-')) ||
-      (currentState.historyId && !currentState.historyId.startsWith('draft_') && currentState.historyId.startsWith('ORD-'));
-
-    if (isUpdateFlow) {
-      handleUpdateOrderFlow(messages, currentState);
-    } else {
-      handleCreateOrderFlow(messages, currentState);
-    }
-  };
-
-  const handleCreateOrderFlow = (messages: string[], currentState: AppState) => {
-    let currentId = currentState.historyId;
-    const wasDraft = currentId && currentId.startsWith('draft_');
-    const oldDraftId = wasDraft ? currentId : null;
-
-    // For create flow, if no history ID or it was a draft, assign a fresh ID.
-    // If currentState already has a permanent orderId (ORD-...), use that as the historyId.
-    if (!currentId || wasDraft) {
-      currentId = (currentState.orderId && currentState.orderId.startsWith('ORD-')) 
-        ? currentState.orderId 
-        : (currentState.orderId?.trim() || `SYNC-LOCAL-${Date.now()}`);
+    if (!currentId) {
+      currentId = Date.now().toString();
+      currentTimestamp = Date.now();
     }
     
-    const currentTimestamp = currentState.timestamp || Date.now();
-    
-    const finalState = { 
-      ...currentState, 
-      historyId: currentId, 
-      timestamp: currentTimestamp,
-      lastModifiedLocally: Date.now()
-    };
+    const finalState = { ...state, historyId: currentId, timestamp: currentTimestamp };
     
     const newItem: OrderHistoryItem = {
       id: currentId,
-      timestamp: currentTimestamp,
-      state: { ...finalState, syncStatus: finalState.syncStatus || 'saved_locally' },
+      timestamp: currentTimestamp!,
+      state: { ...finalState, syncStatus: 'saved_locally' },
       messages: [...messages]
     };
     
     setHistory(prev => {
-      // Find index matching the ID exactly to prevent any duplicates
-      const existingIdx = prev.findIndex(item => item.id === currentId);
-      if (existingIdx !== -1) {
-        return prev.map((item, idx) => idx === existingIdx ? newItem : item);
+      const exists = prev.find(item => item.id === currentId);
+      if (exists) {
+        return prev.map(item => item.id === currentId ? newItem : item);
       }
       return [newItem, ...prev];
     });
-
-    if (oldDraftId) {
-      setDrafts(prev => prev.filter(d => d.id !== oldDraftId));
-    }
     
-    setState(finalState);
-    syncPushNotifications(newItem, appLanguage).catch(console.warn);
-  };
-
-  const handleUpdateOrderFlow = (messages: string[], currentState: AppState) => {
-    // For update flow, find the existing history item using exact IDs (no fallback matching!).
-    // We want to preserve the permanent ORD-... ID.
-    const targetOrderId = currentState.orderId;
-    const targetHistoryId = currentState.historyId;
-    
-    const finalId = (targetHistoryId && targetHistoryId.startsWith('ORD-'))
-      ? targetHistoryId
-      : ((targetOrderId && targetOrderId.startsWith('ORD-')) ? targetOrderId : (targetHistoryId || targetOrderId || Date.now().toString()));
-
-    const finalState = {
-      ...currentState,
-      orderId: (targetOrderId && targetOrderId.startsWith('ORD-')) ? targetOrderId : finalId,
-      historyId: finalId,
-      lastModifiedLocally: Date.now()
-    };
-
-    const newItem: OrderHistoryItem = {
-      id: finalId,
-      timestamp: currentState.timestamp || Date.now(),
-      state: { ...finalState, syncStatus: finalState.syncStatus || 'saved_locally' },
-      messages: messages.length > 0 ? [...messages] : []
-    };
-
-    setHistory(prev => {
-      // Find index matching the ID exactly. Match STRICTLY by ID!
-      const existingIdx = prev.findIndex(item => {
-        return (
-          item.id === finalId ||
-          (targetHistoryId && item.id === targetHistoryId) ||
-          (targetOrderId && item.id === targetOrderId) ||
-          (targetOrderId && item.state?.orderId === targetOrderId)
-        );
-      });
-
-      if (existingIdx !== -1) {
-        const existingItem = prev[existingIdx];
-        const mergedItem: OrderHistoryItem = {
-          ...newItem,
-          timestamp: existingItem.timestamp || newItem.timestamp,
-          messages: messages.length > 0 ? messages : (existingItem.messages || []),
-          state: {
-            ...existingItem.state,
-            ...newItem.state,
-            orderId: newItem.state.orderId,
-            historyId: newItem.state.historyId,
-          }
-        };
-        return prev.map((item, idx) => idx === existingIdx ? mergedItem : item);
-      }
-      
-      return [newItem, ...prev];
-    });
-
     setState(finalState);
     syncPushNotifications(newItem, appLanguage).catch(console.warn);
   };
@@ -693,39 +603,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const updateOrderHistoryState = (updates: Partial<AppState>) => {
     const finalState = { ...state, ...updates, lastModifiedLocally: Date.now() };
     setState(finalState);
-    
-    const targetHistoryId = finalState.historyId;
-    const targetOrderId = finalState.orderId;
-    
-    if (targetHistoryId || targetOrderId) {
+    if (finalState.historyId) {
        setHistory(prev => {
-         const existingIdx = prev.findIndex(item => {
-           // Strict ID matching first
-           if (targetHistoryId && item.id === targetHistoryId) return true;
-           if (targetOrderId && item.id === targetOrderId) return true;
-           if (targetOrderId && item.state?.orderId === targetOrderId) return true;
-           
-           // Fallback to state-level old history IDs
-           if (state.historyId && item.id === state.historyId) return true;
-           if (state.orderId && item.id === state.orderId) return true;
-           if (state.orderId && item.state?.orderId === state.orderId) return true;
-           
-           return false;
-         });
-
-         if (existingIdx !== -1) {
-           return prev.map((item, idx) => {
-             if (idx === existingIdx) {
-               const updatedItem = { 
-                 ...item, 
-                 id: (targetHistoryId && targetHistoryId.startsWith('ORD-')) ? targetHistoryId : item.id,
-                 state: {
-                   ...item.state,
-                   ...finalState,
-                   historyId: (targetHistoryId && targetHistoryId.startsWith('ORD-')) ? targetHistoryId : (item.state?.historyId || item.id),
-                   orderId: (targetOrderId && targetOrderId.startsWith('ORD-')) ? targetOrderId : (item.state?.orderId || item.state?.orderId)
-                 }
-               };
+         const exists = prev.some(item => item.id === finalState.historyId);
+         if (exists) {
+           return prev.map(item => {
+             if (item.id === finalState.historyId) {
+               const updatedItem = { ...item, state: finalState };
                syncPushNotifications(updatedItem, appLanguage).catch(console.warn);
                return updatedItem;
              }
@@ -733,9 +617,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
            });
          }
          
-         const fallbackId = targetHistoryId || targetOrderId || Date.now().toString();
          const newItem: OrderHistoryItem = {
-           id: fallbackId,
+           id: finalState.historyId as string,
            timestamp: finalState.timestamp || Date.now(),
            state: finalState,
            messages: []
@@ -846,78 +729,31 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setHistory(prev => prev.filter(item => item.id !== id));
   };
 
-  const saveAsDraft = (updatedState?: Partial<AppState>, messages: string[] = []) => {
-    // Merge currentState with the latest inputs immediately
-    const currentState = { ...state, ...updatedState };
-
+  const saveAsDraft = () => {
     // If this is a real order (not starting with 'draft_' or already present in history), do not save it as a draft
-    if (currentState.historyId && (!currentState.historyId.startsWith('draft_') || history.some(item => item.id === currentState.historyId))) {
+    if (state.historyId && (!state.historyId.startsWith('draft_') || history.some(item => item.id === state.historyId))) {
       return;
     }
 
-    // Attempt to find an existing incomplete draft in drafts using unique identifiers:
-    // 1. By historyId / draftId
-    // 2. By orderId
-    // 3. By customerPhone + mainType (if customerPhone is not empty)
-    // 4. By customerName + customerPhone (if not empty)
-    let matchedDraft: OrderHistoryItem | undefined = undefined;
-
-    if (currentState.historyId) {
-      matchedDraft = drafts.find(d => d.id === currentState.historyId);
-    }
-
-    if (!matchedDraft && currentState.orderId) {
-      matchedDraft = drafts.find(d => d.state?.orderId === currentState.orderId);
-    }
-
-    if (!matchedDraft && currentState.customerPhone && currentState.customerPhone.trim() !== '') {
-      const cleanPhone = currentState.customerPhone.trim();
-      matchedDraft = drafts.find(d => 
-        d.state?.customerPhone && 
-        d.state.customerPhone.trim() === cleanPhone &&
-        d.state.mainType === currentState.mainType
-      );
-    }
-
-    if (!matchedDraft && currentState.customerName && currentState.customerName.trim() !== '' && currentState.customerPhone && currentState.customerPhone.trim() !== '') {
-      const cleanName = currentState.customerName.trim().toLowerCase();
-      const cleanPhone = currentState.customerPhone.trim();
-      matchedDraft = drafts.find(d => 
-        d.state?.customerName && 
-        d.state.customerName.trim().toLowerCase() === cleanName &&
-        d.state?.customerPhone &&
-        d.state.customerPhone.trim() === cleanPhone
-      );
-    }
-
-    // Determine the draft ID: reuse the existing draft ID if matched, or use the current historyId, or create a new one
-    const draftId = matchedDraft ? matchedDraft.id : (currentState.historyId || `draft_${Date.now()}`);
-    const timestamp = matchedDraft ? matchedDraft.timestamp : (currentState.timestamp || Date.now());
-
-    // Construct the finalized patched state
-    const finalState = {
-      ...currentState,
-      historyId: draftId,
-      timestamp
-    };
-
+    const draftId = state.historyId || `draft_${Date.now()}`;
+    const timestamp = state.timestamp || Date.now();
+    
     const draftItem: OrderHistoryItem = {
       id: draftId,
       timestamp,
-      state: finalState,
-      messages: messages.length > 0 ? [...messages] : (matchedDraft?.messages || [])
+      state: { ...state, historyId: draftId, timestamp },
+      messages: []
     };
-
+    
     setDrafts(prev => {
       const exists = prev.find(d => d.id === draftId);
       if (exists) {
-        // Patch and update the existing draft
         return prev.map(d => d.id === draftId ? draftItem : d);
       }
       return [draftItem, ...prev];
     });
-
-    setState(finalState);
+    
+    setState(prev => ({ ...prev, historyId: draftId, timestamp }));
   };
 
   const deleteDraft = (id: string) => {
@@ -936,7 +772,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       resumeLangs: Array.isArray(s.resumeLangs) ? s.resumeLangs : INITIAL_STATE.resumeLangs,
       timestamp: item.timestamp,
       historyId: item.id,
-      isEditMode: s.isEditMode !== undefined ? s.isEditMode : (s.subType === 'Edit' || s.mainType === 'Edit Resume')
+      isEditMode: true
     });
     // Go to the appropriate form view based on state
     if (s.mainType === 'Resume' || s.mainType === 'Curriculum Vitae') {
@@ -971,7 +807,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       resumeLangs: Array.isArray(s.resumeLangs) ? s.resumeLangs : INITIAL_STATE.resumeLangs,
       timestamp: item.timestamp,
       historyId: item.id,
-      isEditMode: s.isEditMode !== undefined ? s.isEditMode : (s.subType === 'Edit' || s.mainType === 'Edit Resume')
+      isEditMode: true
     });
     setViewStack(['home', 'history', 'customer-info']);
   };

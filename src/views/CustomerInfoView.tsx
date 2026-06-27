@@ -1,10 +1,23 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { RefreshCcw, Save, Check, ExternalLink, AlertCircle, ChevronDown } from 'lucide-react';
+import { RefreshCcw, Save, Check, FileText, ExternalLink, LogOut, Loader2, AlertCircle, ChevronDown } from 'lucide-react';
 import { useAppContext } from '../AppContext';
 import { calculateDeadline, formatPhoneUniversal, parseDateStringToTimestamp } from '../utils';
 import { Toast } from '../components/Toast';
 import { SetupHelper } from '../components/SetupHelper';
+import { googleSignIn, initAuth, getAccessToken, logout } from '../utils/googleAuth';
+import { User } from 'firebase/auth';
 import { cn } from '../cn';
+
+const TEMPLATE_SOURCES = {
+  agreement: {
+    docUrl: "https://docs.google.com/document/d/1Twi6iHoypMyWrpey9zC2GXUUOXBRZ8Op/edit",
+    mode: "strict"
+  },
+  letter: {
+    docUrl: "https://docs.google.com/document/d/135jL7gApNbIPMbnKs2bw1gdj53dFyg5i9fLTHb2yxP0/edit",
+    mode: "flexible"
+  }
+};
 
 function generateOrderId() {
   const now = new Date();
@@ -53,7 +66,7 @@ function jsonpRequest<T>(url: string, params: Record<string, string | number | b
 }
 
 export function CustomerInfoView() {
-  const { appLanguage, state, setState, goHome, viewStack, updateOrderHistoryState, addToOfflineQueue, saveAsDraft: contextSaveAsDraft, deleteDraft, history, setHistory, saveOrderToHistory, generatedMessages } = useAppContext();
+  const { appLanguage, state, setState, goHome, viewStack, updateOrderHistoryState, addToOfflineQueue, saveAsDraft: contextSaveAsDraft, deleteDraft, history, setHistory } = useAppContext();
   const isActive = viewStack[viewStack.length - 1] === 'customer-info';
 
   const computeInitialValues = useCallback(() => {
@@ -231,19 +244,216 @@ export function CustomerInfoView() {
   
   // Form session recovery state
   const [showResumeBanner, setShowResumeBanner] = useState(false);
+  const [googleUser, setGoogleUser] = useState<User | null>(null);
+  const [isGeneratingDoc, setIsGeneratingDoc] = useState(false);
   const isInitializingRef = useRef(true);
 
   useEffect(() => {
-  const handleClickOutside = (event: MouseEvent) => {
-    if (addOnRef.current && !addOnRef.current.contains(event.target as Node)) {
-      setIsAddOnOpen(false);
+    const handleClickOutside = (event: MouseEvent) => {
+      if (addOnRef.current && !addOnRef.current.contains(event.target as Node)) {
+        setIsAddOnOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const handleGenerateDoc = async () => {
+    let token = await getAccessToken();
+    if (!googleUser || !token) {
+      try {
+        const authRes = await googleSignIn();
+        if (!authRes) return;
+        setGoogleUser(authRes.user);
+        token = authRes.accessToken;
+      } catch (err) {
+        showToastMessage("Ralat melog masuk ke Google");
+        return;
+      }
+    }
+
+    setIsGeneratingDoc(true);
+
+    try {
+      if (!token) throw new Error("Sila log masuk ke Google Drive/Docs dahulu.");
+
+      const fetchDocContent = async (docUrl: string): Promise<string> => {
+        const match = docUrl.match(/\/d\/(.+?)(?:\/|$)/);
+        if (!match) throw new Error("Templat link format tidak sah: " + docUrl);
+        const templateId = match[1];
+
+        const templateRes = await fetch(`https://docs.googleapis.com/v1/documents/${templateId}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (!templateRes.ok) {
+          throw new Error("Gagal membaca templat dokumen. Sila pastikan templat boleh diakses (shared).");
+        }
+        const templateDoc = await templateRes.json();
+        
+        let extractedText = "";
+        if (templateDoc.body && templateDoc.body.content) {
+          templateDoc.body.content.forEach((el: any) => {
+            if (el.paragraph && el.paragraph.elements) {
+              el.paragraph.elements.forEach((elem: any) => {
+                if (elem.textRun && elem.textRun.content) {
+                  extractedText += elem.textRun.content;
+                }
+              });
+            }
+          });
+        }
+        return extractedText;
+      };
+
+      let templateContent = "";
+      let mode = "letter";
+
+      if (order === "Surat") {
+        const letterTemplate = await fetchDocContent(TEMPLATE_SOURCES.letter.docUrl);
+        templateContent = letterTemplate || "";
+        mode = "letter";
+      } else if (order === "Agreement" || (template && template.includes("PERJANJIAN"))) {
+        const agreementTemplateSection = await fetchDocContent(TEMPLATE_SOURCES.agreement.docUrl);
+        templateContent = agreementTemplateSection || "";
+        mode = "agreement";
+      }
+
+      // Perform standard placeholder replacements locally instead of using Gemini AI
+      let text = templateContent;
+      if (text) {
+        const replacements: Record<string, string> = {
+          "NAMA": name || "",
+          "NAME": name || "",
+          "NAMA_PELANGGAN": name || "",
+          "CUSTOMER_NAME": name || "",
+          "TELEFON": phone || "",
+          "PHONE": phone || "",
+          "NO_TELEFON": phone || "",
+          "PHONE_NUMBER": phone || "",
+          "ORDER": order || "",
+          "JENIS_ORDER": order || "",
+          "TEMPLATE": template || "",
+          "BAHASA": bahasa || "",
+          "ADD_ON": addOn || "",
+          "JENIS": jenis || "",
+          "DUE": due || "",
+          "DUE_DATE": due || "",
+          "TARIKH_AKHIR": due || "",
+          "ORDER_ID": orderId || "",
+          "ID_ORDER": orderId || "",
+          "INFO": info || "",
+          "MAKLUMAT": info || "",
+        };
+
+        Object.entries(replacements).forEach(([key, value]) => {
+          const bracketRegex = new RegExp(`\\[${key}\\]|\\{${key}\\}|\\{\\{${key}\\}\\}`, 'gi');
+          text = text.replace(bracketRegex, value);
+        });
+      } else {
+        // Fallback layout if template doc couldn't be loaded or is empty
+        text = `RUJUKAN: ${orderId}
+TARIKH: ${new Date().toLocaleDateString('ms-MY')}
+
+Kepada:
+${name}
+${phone}
+
+Perkara: ${order.toUpperCase()} - TEMPLATE: ${template.toUpperCase()}
+
+Tuan/Puan,
+
+Merujuk kepada perkara di atas, berikut adalah maklumat terperinci mengenai pesanan anda:
+
+1. ID PESANAN: ${orderId}
+2. JENIS TEMPLATE: ${template}
+3. BAHASA: ${bahasa || 'N/A'}
+4. ADD-ON: ${addOn || 'N/A'}
+5. JENIS PESANAN: ${jenis || 'N/A'}
+6. TARIKH AKHIR (DUE DATE): ${due || 'N/A'}
+
+MAKLUMAT TAMBAHAN:
+${info || 'Tiada maklumat tambahan disediakan.'}
+
+Sekian, terima kasih.
+
+Yang benar,
+Dokumen Dijana Secara Automatik`;
+      }
+      
+      // Create new doc
+      const createRes = await fetch('https://docs.googleapis.com/v1/documents', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: `${order || 'Surat'} - ${name || orderId}` })
+      });
+      if (!createRes.ok) throw new Error("Gagal membuat fail dokumen");
+      const docData = await createRes.json();
+      const documentId = docData.documentId;
+
+      // Insert text and apply formatting (Cambria font, 1.15 line spacing)
+      await fetch(`https://docs.googleapis.com/v1/documents/${documentId}:batchUpdate`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requests: [
+            {
+              insertText: {
+                location: { index: 1 },
+                text: text
+              }
+            },
+            {
+              updateTextStyle: {
+                textStyle: {
+                  weightedFontFamily: {
+                    fontFamily: "Cambria"
+                  }
+                },
+                fields: "weightedFontFamily",
+                range: {
+                  startIndex: 1,
+                  endIndex: 1 + text.length
+                }
+              }
+            },
+            {
+              updateParagraphStyle: {
+                paragraphStyle: {
+                  lineSpacing: 115
+                },
+                fields: "lineSpacing",
+                range: {
+                  startIndex: 1,
+                  endIndex: 1 + text.length
+                }
+              }
+            }
+          ]
+        })
+      });
+
+      // Update permissions
+      await fetch(`https://www.googleapis.com/drive/v3/files/${documentId}/permissions`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'anyone', role: 'writer' })
+      });
+
+      const newLink = `https://docs.google.com/document/d/${documentId}/edit`;
+      setLink(prev => {
+        const cleaned = (prev || '').trim();
+        return cleaned ? `${cleaned}\n${newLink}` : newLink;
+      });
+      showToastMessage(appLanguage === 'ms' ? "Surat berjaya dicipta!" : "Letter generated!");
+    } catch (e: any) {
+      console.error(e);
+      showToastMessage(e.message || (appLanguage === 'ms' ? "Gagal mencipta surat." : "Failed to generate letter."));
+    } finally {
+      setIsGeneratingDoc(false);
     }
   };
-  document.addEventListener('mousedown', handleClickOutside);
-  return () => document.removeEventListener('mousedown', handleClickOutside);
-}, []);
 
-const showToastMessage = (msg: string) => {
+  const showToastMessage = (msg: string) => {
     setToastMsg(msg);
     setShowToast(true);
     setTimeout(() => setShowToast(false), 3000);
@@ -353,32 +563,9 @@ const showToastMessage = (msg: string) => {
   };
 
   const syncStateAndSave = (isDraftSave = false) => {
-    // Resolve mainType, subType, and isEditMode based on current order select option
-    let resolvedMainType = state.mainType;
-    let resolvedSubType = state.subType;
-    let resolvedIsEditMode = state.isEditMode;
-
-    if (order === 'Resume') {
-      resolvedMainType = 'Resume';
-      resolvedSubType = 'New';
-      resolvedIsEditMode = false;
-    } else if (order === 'Edit Resume') {
-      resolvedMainType = 'Resume';
-      resolvedSubType = 'Edit';
-      resolvedIsEditMode = true;
-    } else if (order === 'Surat') {
-      resolvedMainType = 'Surat';
-      resolvedIsEditMode = false;
-    } else if (order === 'Edit PDF') {
-      resolvedMainType = 'Edit PDF';
-      resolvedIsEditMode = false;
-    } else if (order === 'Lain2') {
-      resolvedMainType = 'Lain-lain';
-      resolvedIsEditMode = false;
-    }
-
     // Sync state one last time before saving
-    const fields = {
+    setState(prev => ({
+      ...prev,
       customerName: name,
       customerPhone: phone,
       customerOrder: order,
@@ -393,21 +580,13 @@ const showToastMessage = (msg: string) => {
       googleSheetLink: link,
       orderId: orderId,
       price: price ? parseFloat(price) : undefined,
-      mainType: resolvedMainType,
-      subType: resolvedSubType,
-      isEditMode: resolvedIsEditMode
-    };
-
-    setState(prev => ({
-      ...prev,
-      ...fields
     }));
     
     if (isDraftSave) {
         // Only save draft if it's a transient draft, NOT a completed order in local history or remote search result
         const isRealOrder = state.historyId && (!state.historyId.startsWith('draft_') || history?.some(item => item.id === state.historyId));
         if (!isRealOrder) {
-          contextSaveAsDraft(fields);
+          contextSaveAsDraft();
           showToastMessage(appLanguage === 'ms' ? 'Draf disimpan secara lokal!' : 'Draft saved locally!');
         }
     }
@@ -552,7 +731,7 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
     const finalFormattedTemplate = template.trim().toUpperCase();
 
     // Save the new values to global state + history with syncing status
-    saveOrderToHistory(generatedMessages, {
+    updateOrderHistoryState({
       customerName: finalFormattedName,
       customerPhone: formattedPhone,
       customerInfo: updatedInfo,
@@ -568,7 +747,6 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
       hasNotified: false,
       orderId: finalOrderId,
       historyId: finalOrderId,
-      oldOrderId: (oldIdToSend && oldIdToSend.startsWith('SYNC-')) ? oldIdToSend : state.oldOrderId || undefined,
       price: price ? parseFloat(price) : undefined,
       spreadsheetId: resolvedSpreadsheetId,
       scriptUrl: resolvedWebhookUrl,
@@ -1116,8 +1294,8 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
         <div className="space-y-1">
           <div className="flex justify-between items-center ml-1 mb-0.5">
             <label className="text-xs font-black text-gray-400 uppercase tracking-widest">
-            {appLanguage === 'ms' ? 'Link (Asingkan dengan enter/koma untuk lebih 1 link)' : 'Links (Separate multiple links with enter/comma)'}
-          </label>
+              {appLanguage === 'ms' ? 'Link (Asingkan dengan enter/koma untuk lebih 1 link)' : 'Links (Separate multiple links with enter/comma)'}
+            </label>
           </div>
           
           <div className="relative">

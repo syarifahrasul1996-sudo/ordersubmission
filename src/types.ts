@@ -39,7 +39,6 @@ export interface AppState {
   syncLastSuccess?: number;
   syncFailCount?: number;
   isDueInvalid?: boolean;
-  oldOrderId?: string;
   dashboardFilterMonth?: string;
   dashboardFilterYear?: string;
   lastModifiedLocally?: number;
