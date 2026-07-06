@@ -1,0 +1,13 @@
+{
+  "documentsInStaging": 5983,
+  "expectedDocuments": 5983,
+  "missingExpectedDocuments": 0,
+  "unexpectedDocuments": 0,
+  "duplicateSourceKeys": 0,
+  "duplicateDocumentIds": 0,
+  "excludedRowsFoundInStaging": 0,
+  "generatedIds": 5540,
+  "existingSafeIds": 443,
+  "numericPrices": 38,
+  "nullPrices": 5945
+}

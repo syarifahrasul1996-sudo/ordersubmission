@@ -3,7 +3,10 @@ import { useAppContext } from '../AppContext';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LabelList, CartesianGrid } from 'recharts';
 import { RefreshCcw, AlertCircle, Clock, X, ChevronDown } from 'lucide-react';
 import { calculateDeadline, generateMessages, parseDateStringToTimestamp } from '../utils';
+import { getOrderDueTimestamp } from '../utils/orderWindow';
 import { AppState } from '../types';
+import { getOperationalOrders, getOverdueOrders, getArchivedOrders, isFirestoreCanary } from '../services/firestoreOrders';
+
 
 const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbw5KpBvJyFpIXmsHueg4XPSRkZ0mg6kxHqjMGp3WEs8Hx_JodvKSoKEg6RMsdH54iCa/exec';
 
@@ -104,154 +107,123 @@ function SafeResponsiveContainer({ children }: SafeResponsiveContainerProps) {
 }
 
 export function DashboardView() {
-  const { appLanguage, pushView, history } = useAppContext();
+  const { appLanguage, pushView, history, syncOrders, isSyncing, deletedOrderIds } = useAppContext();
   
   const [filterYear, setFilterYear] = useState<string>(new Date().getFullYear().toString());
   const [filterMonth, setFilterMonth] = useState<string>(
-  String(new Date().getMonth() + 1).padStart(2, '0')
-);
+    String(new Date().getMonth() + 1).padStart(2, '0')
+  );
   
-  const [remoteOrders, setRemoteOrders] = useState<any[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [lastUpdated, setLastUpdated] = useState<number | null>(null);
-
   const annualSheets = useMemo(() => {
-  try {
-    const saved = localStorage.getItem('db_annual_sheets');
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed;
+    try {
+      const saved = localStorage.getItem('db_annual_sheets');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
       }
+    } catch {
+      // ignore
     }
-  } catch {
-    // ignore
-  }
 
-  return [
-    {
-      year: '2024',
-      spreadsheetId: '1B9zdWXVLnvj0jNNVnKxcb6cJnS1VLCIdB4j-RR3wOlg',
-      scriptUrl: ''
-    },
-    {
-      year: '2025',
-      spreadsheetId: '1myU9apnYWWtU3snnCw14qI6ZS05i4DY6oOswLz1sCwo',
-      scriptUrl: ''
-    },
-    {
-      year: '2026',
-      spreadsheetId: '1kUAJYUVhr9bPYErtpnohpvuGGyhBSvJyEOIyzEFivJo',
-      scriptUrl: ''
-    }
-  ];
-}, []);
-
-  const globalScriptUrl = useMemo(() => {
-    return localStorage.getItem('db_global_script_url') || GOOGLE_SCRIPT_URL;
+    return [
+      {
+        year: '2024',
+        spreadsheetId: '1B9zdWXVLnvj0jNNVnKxcb6cJnS1VLCIdB4j-RR3wOlg',
+        scriptUrl: ''
+      },
+      {
+        year: '2025',
+        spreadsheetId: '1myU9apnYWWtU3snnCw14qI6ZS05i4DY6oOswLz1sCwo',
+        scriptUrl: ''
+      },
+      {
+        year: '2026',
+        spreadsheetId: '1kUAJYUVhr9bPYErtpnohpvuGGyhBSvJyEOIyzEFivJo',
+        scriptUrl: ''
+      }
+    ];
   }, []);
 
-  const fetchDashboardOrders = async (year: string) => {
-    setIsLoading(true);
-    setError(null);
-
-    if (year === 'all') {
-      const activeConfigs = annualSheets.filter((s: any) => s.year && s.spreadsheetId?.trim() !== '');
-      if (activeConfigs.length === 0) {
-        setRemoteOrders([]);
-        setError(appLanguage === 'ms' 
-          ? `Tiada Database Cloud dikonfigurasikan. Sila tetapkan di Sejarah > Tetapan.`
-          : `No Cloud Database configured. Please configure in History > Settings.`
-        );
-        setIsLoading(false);
-        return;
-      }
-
-      try {
-        const fetchPromises = activeConfigs.map(async (sheetConfig: any) => {
-          try {
-            const sId = extractId(sheetConfig.spreadsheetId);
-            const sUrl = sheetConfig.scriptUrl?.trim() || globalScriptUrl;
-            const safeYear = String(sheetConfig.year).replace(/[^\w]/g, '_');
-            const callbackName = 'jsonp_callback_dashboard_' + Math.round(1000000 * Math.random()) + '_' + safeYear;
-            const url = new URL(sUrl);
-
-            url.searchParams.append('action', 'get_dashboard_orders');
-            url.searchParams.append('spreadsheetId', sId);
-            url.searchParams.append('year', sheetConfig.year);
-            url.searchParams.append('callback', callbackName);
-
-            const data = await jsonpRequest(url, callbackName);
-            if (data && data.status === 'success' && Array.isArray(data.orders)) {
-              return data.orders.map((o: any) => ({ ...o, spreadsheetId: sId }));
-            }
-          } catch (e) {
-            console.warn(`Failed to fetch dashboard orders for ${sheetConfig.year}:`, e);
-          }
-          return [];
-        });
-
-        const results = await Promise.all(fetchPromises);
-        setRemoteOrders(results.flat());
-        setLastUpdated(Date.now());
-      } catch (err: any) {
-        console.warn('All-time fetch failed:', err);
-        setError(appLanguage === 'ms' ? `Ralat mendapatkan data: ${err.message}` : `Failed to fetch data: ${err.message}`);
-      } finally {
-        setIsLoading(false);
-      }
-      return;
-    }
-
-    const sheetConfig = annualSheets.find((s: any) => s.year === year && s.spreadsheetId?.trim() !== '');
-    if (!sheetConfig) {
-      setRemoteOrders([]);
-      setError(appLanguage === 'ms' 
-        ? `Tiada Database Cloud dikonfigurasikan untuk tahun ${year}. Sila tetapkan di Sejarah > Tetapan.`
-        : `No Cloud Database configured for year ${year}. Please configure in History > Settings.`
-      );
-      setIsLoading(false);
-      return;
-    }
-
-    const sId = extractId(sheetConfig.spreadsheetId);
-    const sUrl = sheetConfig.scriptUrl?.trim() || globalScriptUrl;
-    
-    try {
-      const safeYear = String(year).replace(/[^\w]/g, '_');
-      const callbackName = 'jsonp_callback_dashboard_' + Math.round(100000 * Math.random()) + '_' + safeYear;
-      const url = new URL(sUrl);
-
-      url.searchParams.append('action', 'get_dashboard_orders');
-      url.searchParams.append('spreadsheetId', sId);
-      url.searchParams.append('year', year);
-      url.searchParams.append('callback', callbackName);
-
-      const data = await jsonpRequest(url, callbackName);
-      
-      if (data && data.status === 'success' && Array.isArray(data.orders)) {
-        setRemoteOrders(data.orders.map((o: any) => ({ ...o, spreadsheetId: sId })));
-        setLastUpdated(Date.now());
-      } else {
-        throw new Error(data?.message || 'Invalid response format');
-      }
-    } catch (err: any) {
-      console.warn('Dashboard fetch failed:', err);
-      setError(appLanguage === 'ms' ? `Ralat mendapatkan data: ${err.message}` : `Failed to fetch data: ${err.message}`);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchDashboardOrders(filterYear);
-  }, [filterYear, annualSheets, globalScriptUrl]);
-
   const stats = useMemo(() => {
-    const orders = remoteOrders;
+    // 1. Filter out deleted and draft orders exactly like in HistoryView to guarantee consistency
+    const activeHistoryItems = history.filter(Boolean).filter((item) => {
+      if (!item || !item.state) return false;
+      
+      const isDeleted = item.state.isDeleted === true || item.state.isDeleted === 'true' || item.state.isDeleted === 1 || item.state.isDeleted === '1';
+      if (isDeleted) return false;
+      if (item.state.syncStatus === 'draft' || item.state.status === 'draft') return false;
+
+      const orderId = item.state?.orderId;
+      const id = item.id;
+      if (deletedOrderIds && (deletedOrderIds.includes(id) || (orderId && deletedOrderIds.includes(orderId)))) {
+        return false;
+      }
+      return true;
+    });
+
+    // Build global customer maps to accurately detect Repeat Customers across all years
+    const globalCustomerPhoneCounts = new Map<string, number>();
+    const globalCustomerNameCounts = new Map<string, number>();
+
+    activeHistoryItems.forEach(item => {
+      if (!item || !item.state) return;
+      
+      let phone = item.state.customerPhone || '';
+      phone = String(phone).replace(/\D/g, '');
+      if (phone.startsWith('60')) phone = '0' + phone.substring(2);
+      if (phone) {
+        globalCustomerPhoneCounts.set(phone, (globalCustomerPhoneCounts.get(phone) || 0) + 1);
+      }
+
+      let name = String(item.state.customerName || '').trim().toLowerCase();
+      if (name) {
+        globalCustomerNameCounts.set(name, (globalCustomerNameCounts.get(name) || 0) + 1);
+      }
+    });
+
+    const getBestDueTimestampLocal = (item: any): number => {
+      if (!item) return 0;
+      
+      const dueTimestamp = Number(item.state?.dueTimestamp);
+      if (Number.isFinite(dueTimestamp) && dueTimestamp > 0) {
+        return dueTimestamp;
+      }
+      
+      const customerDue = String(item.state?.customerDue ?? '').trim();
+      if (customerDue) {
+        const parsed = parseDateStringToTimestamp(customerDue, 0).timestamp;
+        if (parsed > 0) {
+          return parsed;
+        }
+      }
+      
+      return Number(item.timestamp) || 0;
+    };
+
+    // Decorate each order with its exact best due timestamp to make filtering absolutely consistent
+    const orders = activeHistoryItems.map(item => {
+      const bestDue = getBestDueTimestampLocal(item);
+      const actualDue = getOrderDueTimestamp(item);
+      const isDueInvalid = actualDue === null;
+      return {
+        ...item.state,
+        dueTimestamp: bestDue,
+        isDueInvalid: isDueInvalid
+      };
+    });
     
-    const availableYearsSet = new Set<string>(annualSheets.filter((s:any) => s.year).map((s:any) => s.year));
+    const availableYearsSet = new Set<string>();
+    annualSheets.filter((s:any) => s.year).forEach((s:any) => availableYearsSet.add(s.year));
+    
+    // Add years from all orders
+    orders.forEach(order => {
+      if (order.dueTimestamp && order.dueTimestamp > 0) {
+        availableYearsSet.add(String(new Date(order.dueTimestamp).getFullYear()));
+      }
+    });
+
     if (filterYear !== 'all' && !availableYearsSet.has(filterYear)) {
       availableYearsSet.add(filterYear);
     }
@@ -277,15 +249,48 @@ export function DashboardView() {
     }
 
     const filteredOrders = orders.filter(order => {
-      if (filterMonth !== 'all' && filterYear !== 'all') {
-        if (!order.dueTimestamp || order.dueTimestamp === 0) return false;
-        
-        const date = new Date(order.dueTimestamp);
+      if (!order.dueTimestamp || order.dueTimestamp === 0) {
+        return filterYear === 'all';
+      }
+      const date = new Date(order.dueTimestamp);
+      
+      if (filterYear !== 'all') {
+        const yStr = String(date.getFullYear());
+        if (yStr !== filterYear) return false;
+      }
+      
+      if (filterMonth !== 'all') {
         const mStr = String(date.getMonth() + 1).padStart(2, '0');
         if (mStr !== filterMonth) return false;
       }
       return true;
     });
+
+    const isDelivered = (o: any) => {
+      const val = o.isDelivered;
+      return val === true || val === 'true' || val === 1 || val === '1';
+    };
+
+    let completedOrders = 0;
+    let pendingOrders = 0;
+
+    filteredOrders.forEach(o => {
+      if (isDelivered(o)) {
+        completedOrders++;
+      } else {
+        pendingOrders++;
+      }
+    });
+
+    // Robust validation helper
+    const sumStatus = completedOrders + pendingOrders;
+    const rawCount = filteredOrders.length;
+    console.log(`[Dashboard Validation] Filtered Orders Raw Count: ${rawCount}, Sum of Statuses (Completed: ${completedOrders}, Pending: ${pendingOrders}): ${sumStatus}`);
+    if (sumStatus !== rawCount) {
+      console.warn(`[Dashboard Validation DISCREPANCY] Sum of statuses (${sumStatus}) does not match raw count (${rawCount})!`);
+    } else {
+      console.log(`[Dashboard Validation OK] All ${rawCount} filtered orders are fully accounted for in status breakdown.`);
+    }
 
     let totalOrders = 0;
     let totalIncome = 0;
@@ -296,44 +301,35 @@ export function DashboardView() {
     let invalidDatesCount = 0;
     const invalidOrdersList: any[] = [];
 
-    // Create a lookup map for local history prices
-    const historyPrices = new Map<string, number>();
-    history.forEach(item => {
-      if (item.state.price !== undefined && item.state.orderId) {
-        historyPrices.set(item.state.orderId, item.state.price);
-      }
-    });
-
     filteredOrders.forEach(order => {
       // Order ID deduplication
-      if (String(order.name || '').trim() !== '') {
+      if (String(order.customerName || '').trim() !== '') {
         totalOrders++;
         
         // Income calculation
-        const orderId = order.orderId;
-        const localPrice = orderId ? historyPrices.get(orderId) : undefined;
-        const remotePrice = parseFloat(order.price || order.harga); // in case backend is updated in future
-        
+        const remotePrice = parseFloat(String(order.price || 0)); 
         if (!isNaN(remotePrice)) {
           totalIncome += remotePrice;
-        } else if (localPrice !== undefined) {
-          totalIncome += localPrice;
         }
       }
 
       // Customer Phone normalization
-      let phone = order.phone || '';
+      let phone = order.customerPhone || '';
       phone = String(phone).replace(/\D/g, '');
       if (phone.startsWith('60')) phone = '0' + phone.substring(2);
-      if (phone) customers.set(phone, (customers.get(phone) || 0) + 1);
+      
+      let name = String(order.customerName || '').trim().toLowerCase();
+      const custKey = phone || name;
+      if (custKey) {
+        customers.set(custKey, (customers.get(custKey) || 0) + 1);
+      }
 
-      // Main Type
-      const type = order.order || order.jenisTempahan || 'Unknown';
+      // Main Type - map cleanly using mainType and fall back to customerOrder for Custom/Lain-lain
+      const type = (order.mainType === 'Lain-lain' ? (order.customerOrder || 'Lain-lain') : (order.mainType || 'Resume')).trim();
       typeCounts.set(type, (typeCounts.get(type) || 0) + 1);
 
       // Urgency
-      // Urgency
-      const urgencyRaw = String(order.jenis || order.urgency || '')
+      const urgencyRaw = String(order.customerJenis || order.urgency || '')
         .trim()
         .toLowerCase();
 
@@ -357,7 +353,7 @@ export function DashboardView() {
       urgencyCounts.set(urgency, (urgencyCounts.get(urgency) || 0) + 1);
 
       // Monthly chart aggregation (only if valid date)
-      if (order.dueTimestamp && order.dueTimestamp > 0) {
+      if (!order.isDueInvalid && order.dueTimestamp && order.dueTimestamp > 0) {
         const date = new Date(order.dueTimestamp);
         const mStr = String(date.getMonth() + 1).padStart(2, '0');
         const yStr = String(date.getFullYear());
@@ -374,8 +370,16 @@ export function DashboardView() {
     });
 
     let repeatCustomers = 0;
-    customers.forEach(count => {
-      if (count > 1) repeatCustomers++;
+    customers.forEach((count, key) => {
+      if (count > 1) {
+        repeatCustomers++;
+        return;
+      }
+      const hasGlobalPhoneRepeat = globalCustomerPhoneCounts.has(key) && (globalCustomerPhoneCounts.get(key) || 0) > 1;
+      const hasGlobalNameRepeat = globalCustomerNameCounts.has(key) && (globalCustomerNameCounts.get(key) || 0) > 1;
+      if (hasGlobalPhoneRepeat || hasGlobalNameRepeat) {
+        repeatCustomers++;
+      }
     });
 
     const totalUniqueCustomers = customers.size;
@@ -429,6 +433,8 @@ export function DashboardView() {
       totalUniqueCustomers,
       repeatCustomers,
       repeatCustomerRate,
+      completedOrders,
+      pendingOrders,
       ordersByMonth: ordersChartData,
       customerTypes,
       typesChart,
@@ -438,7 +444,7 @@ export function DashboardView() {
       invalidDatesCount,
       invalidOrdersList
     };
-  }, [remoteOrders, appLanguage, filterYear, filterMonth, annualSheets]);
+  }, [appLanguage, filterYear, filterMonth, annualSheets, history, deletedOrderIds]);
 
   const [showInvalidModal, setShowInvalidModal] = useState(false);
 
@@ -457,22 +463,30 @@ export function DashboardView() {
     const isDueInvalid = dueTs === -1 || !(order.due || '').trim();
 
     const updates: Partial<AppState> = {
-      customerName: order.name || '',
-      customerPhone: order.phone || '',
-      customerOrder: order.order || order.jenisTempahan || '',
-      customerJenis: order.jenis || order.urgency || '',
-      customerDue: order.due || '',
-      mainType: orderType,
-      subType: order.pakej || '',
-      urgency: urgency,
+      customerName: order.customerName || order.name || '',
+      customerPhone: order.customerPhone || order.phone || '',
+      customerOrder: order.customerOrder || order.order || order.jenisTempahan || '',
+      customerTemplate: order.customerTemplate || order.template || '',
+      customerBahasa: order.customerBahasa || order.bahasa || '',
+      customerAddOn: order.customerAddOn || order.addOn || order.addon || '',
+      customerJenis: order.customerJenis || order.jenis || order.urgency || '',
+      customerDue: order.customerDue || order.due || '',
+      mainType: order.mainType || (orderType === 'Edit Resume' ? 'Resume' : orderType === 'Surat' ? 'Surat' : orderType === 'Edit PDF' ? 'Edit PDF' : orderType === 'Lain2' || orderType === 'Lain-lain' ? 'Lain-lain' : 'Resume'),
+      subType: order.subType || order.pakej || '',
+      urgency: order.urgency || urgency,
       dueTimestamp: dueTs === -1 ? Date.now() : dueTs,
       spreadsheetId: order.spreadsheetId || '',
       orderId: order.orderId || '',
-      googleSheetLink: order.googleSheetLink || order.link || '',
-      isEditMode: true,
+      googleSheetLink: order.googleSheetLink || order.orderLink || order.link || '',
+      isEditMode: orderType === 'Edit Resume' || order.isEditMode === true || order.isEditMode === 'true',
       isDueInvalid: isDueInvalid,
       dashboardFilterMonth: filterMonth,
-      dashboardFilterYear: filterYear
+      dashboardFilterYear: filterYear,
+      addons: order.addons || [],
+      customDoc: order.customDoc || '',
+      clLangs: order.clLangs || [],
+      resumeLangs: order.resumeLangs || [],
+      softcopyLang: order.softcopyLang || ''
     };
 
     pushView('customer-info', updates);
@@ -550,24 +564,18 @@ export function DashboardView() {
           <h2 className="text-2xl font-black text-text tracking-tighter">
             {appLanguage === 'ms' ? 'Tinjauan Perniagaan' : 'Business Overview'}
           </h2>
-          {lastUpdated && (
-            <p className="text-xs text-gray-500 flex items-center mt-1">
-              <Clock className="w-3 h-3 mr-1" />
-              {appLanguage === 'ms' ? 'Dikemas kini: ' : 'Updated: '} {new Date(lastUpdated).toLocaleTimeString()}
-            </p>
-          )}
         </div>
         
         <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 w-full lg:w-auto">
           <button
-            onClick={() => fetchDashboardOrders(filterYear)}
-            disabled={isLoading}
+            onClick={() => syncOrders()}
+            disabled={isSyncing}
             className={`h-10 w-10 shrink-0 rounded-xl font-bold border border-gray-200 flex items-center justify-center transition-all ${
-              isLoading ? 'opacity-50 cursor-not-allowed bg-gray-50' : 'bg-surface hover:bg-gray-50 active:scale-95 text-text'
+              isSyncing ? 'opacity-50 cursor-not-allowed bg-gray-50' : 'bg-surface hover:bg-gray-50 active:scale-95 text-text'
             }`}
             title={appLanguage === 'ms' ? 'Muat Semula' : 'Refresh'}
           >
-            <RefreshCcw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+            <RefreshCcw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
           </button>
           
           <div className="relative flex-1 sm:flex-none">
@@ -606,21 +614,6 @@ export function DashboardView() {
           )}
         </div>
       </div>
-
-      {error ? (
-        <div className="bg-red-50 text-red-600 p-4 rounded-xl flex border border-red-100 shadow-sm leading-relaxed text-sm">
-          <AlertCircle className="w-5 h-5 mr-3 shrink-0 mt-0.5" />
-          <p>{error}</p>
-        </div>
-      ) : isLoading && remoteOrders.length === 0 ? (
-        <div className="bg-surface rounded-xl p-8 flex flex-col items-center justify-center border border-gray-100 shadow-sm mt-8">
-          <RefreshCcw className="w-8 h-8 text-primary animate-spin mb-4" />
-          <p className="text-gray-500 font-medium">
-            {appLanguage === 'ms' ? 'Memuatkan data dari Google Sheets...' : 'Loading data from Google Sheets...'}
-          </p>
-        </div>
-      ) : (
-        <>
           <div className="grid grid-cols-2 gap-3 mb-3">
             <div className="bg-surface border border-gray-100 rounded-xl p-3 shadow-sm flex flex-col justify-center">
               <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-0.5 truncate">{appLanguage === 'ms' ? 'Pendapatan (RM)' : 'Total Income (RM)'}</p>
@@ -647,6 +640,22 @@ export function DashboardView() {
             <div className="bg-surface border border-gray-100 rounded-xl p-3 shadow-sm flex flex-col justify-center relative overflow-hidden">
               <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-0.5 truncate">{appLanguage === 'ms' ? 'Kadar Ulangan' : 'Repeat Rate'}</p>
               <p className="text-2xl font-black text-primary">{stats.repeatCustomerRate}%</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 mb-4">
+            <div className="bg-surface border border-gray-100 rounded-xl p-3 shadow-sm flex flex-col justify-center">
+              <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-0.5 truncate">
+                {appLanguage === 'ms' ? 'Sudah Siap (Dihantar)' : 'Completed (Delivered)'}
+              </p>
+              <p className="text-2xl font-black text-emerald-600">{stats.completedOrders}</p>
+            </div>
+
+            <div className="bg-surface border border-gray-100 rounded-xl p-3 shadow-sm flex flex-col justify-center">
+              <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-0.5 truncate">
+                {appLanguage === 'ms' ? 'Belum Siap (Pending)' : 'Incomplete (Pending)'}
+              </p>
+              <p className="text-2xl font-black text-amber-500">{stats.pendingOrders}</p>
             </div>
           </div>
 
@@ -789,10 +798,7 @@ export function DashboardView() {
               </div>
             </div>
           </div>
-        </>
-      )}
-
-    </div>
+        </div>
     </>
   );
 }

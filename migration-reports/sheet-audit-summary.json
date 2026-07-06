@@ -1,0 +1,559 @@
+{
+  "spreadsheetsChecked": 3,
+  "worksheetsDiscovered": 30,
+  "monthlyWorksheetsProcessed": 24,
+  "nonMonthlyWorksheetsSkipped": 6,
+  "worksheetsWithMissingHeaders": 0,
+  "worksheetsWithInvalidHeaders": 0,
+  "emptyRowsIgnored": 669,
+  "nonEmptyRows": 6410,
+  "READY_WITH_EXISTING_ID": 0,
+  "MIGRATABLE_GENERATED_ID": 38,
+  "MIGRATABLE_PRICE_NULL": 445,
+  "MIGRATABLE_GENERATED_ID_AND_PRICE_NULL": 5502,
+  "REQUIRES_MANUAL_REVIEW": 425,
+  "IGNORED_EMPTY_ROW": 669,
+  "totalIssues": 425,
+  "blankOrderIds": 5572,
+  "duplicateIdsWithinWorksheet": 3,
+  "duplicateIdsAcrossWorksheets": 2,
+  "duplicateIdsAcrossYears": 4,
+  "blankCustomerNames": 69,
+  "blankPrices": 6315,
+  "invalidPrices": 49,
+  "blankDueDates": 102,
+  "invalidDueDates": 6,
+  "ambiguousDueDates": 0,
+  "invalidDeliveryStatuses": 0,
+  "bySpreadsheet": {
+    "2024": {
+      "spreadsheetId": "1B9zdWXVLnvj0jNNVnKxcb6cJnS1VLCIdB4j-RR3wOlg",
+      "locale": "en_GB",
+      "timeZone": "Asia/Kuala_Lumpur",
+      "discoveredWorksheets": [
+        "Julai 2024",
+        "Ogos 2024",
+        "September 2024",
+        "Oktober 2024",
+        "November 2024",
+        "Disember 2024"
+      ],
+      "processedWorksheets": [
+        "Julai 2024",
+        "Ogos 2024",
+        "September 2024",
+        "Oktober 2024",
+        "November 2024",
+        "Disember 2024"
+      ],
+      "skippedWorksheets": [],
+      "invalidHeaderWorksheets": [],
+      "emptyWorksheets": [],
+      "readErrors": [],
+      "monthlyWorksheetsFound": 6,
+      "rowsReturned": 2452,
+      "nonEmptyRows": 2261,
+      "migratableRows": 2077,
+      "manualReviewRows": 184,
+      "emptyRows": 185,
+      "existingIds": 174,
+      "missingIds": 2087,
+      "numericPrices": 44,
+      "nullPrices": 2198,
+      "headerDetails": {
+        "Julai 2024": {
+          "header": [
+            "Done",
+            "Nama",
+            "Phone Number",
+            "Order",
+            "Template",
+            "Bahasa",
+            "Add On",
+            "Jenis",
+            "Due",
+            "Link",
+            "",
+            ""
+          ],
+          "mappingMethod": "header-detection",
+          "dataStartRow": 2
+        },
+        "Ogos 2024": {
+          "header": [
+            "",
+            "Nama",
+            "Phone Number",
+            "Order",
+            "Template",
+            "Bahasa",
+            "Add On",
+            "Jenis",
+            "Due",
+            "Link",
+            "",
+            ""
+          ],
+          "mappingMethod": "header-detection",
+          "dataStartRow": 2
+        },
+        "September 2024": {
+          "header": [
+            " ",
+            "Nama",
+            "Phone Number",
+            "Order",
+            "Template",
+            "Bahasa",
+            "Add On",
+            "Jenis",
+            "Due",
+            "Link",
+            "",
+            ""
+          ],
+          "mappingMethod": "header-detection",
+          "dataStartRow": 2
+        },
+        "Oktober 2024": {
+          "header": [
+            " ",
+            "Nama",
+            "Phone Number",
+            "Order",
+            "Template",
+            "Bahasa",
+            "Add On",
+            "Jenis",
+            "Due",
+            "Link",
+            "",
+            ""
+          ],
+          "mappingMethod": "header-detection",
+          "dataStartRow": 2
+        },
+        "November 2024": {
+          "header": [
+            " ",
+            "Nama",
+            "Phone Number",
+            "Order",
+            "Template",
+            "Bahasa",
+            "Add On",
+            "Jenis",
+            "Due",
+            "Link",
+            "",
+            ""
+          ],
+          "mappingMethod": "header-detection",
+          "dataStartRow": 2
+        },
+        "Disember 2024": {
+          "header": [
+            " ",
+            "Nama",
+            "Phone Number",
+            "Order",
+            "Template",
+            "Bahasa",
+            "Add On",
+            "Jenis",
+            "Due",
+            "Link",
+            "",
+            ""
+          ],
+          "mappingMethod": "header-detection",
+          "dataStartRow": 2
+        }
+      }
+    },
+    "2025": {
+      "spreadsheetId": "1myU9apnYWWtU3snnCw14qI6ZS05i4DY6oOswLz1sCwo",
+      "locale": "en_GB",
+      "timeZone": "Asia/Kuala_Lumpur",
+      "discoveredWorksheets": [
+        "Januari 2025",
+        "Februari 2025",
+        "Mac 2025",
+        "April 2025",
+        "Mei 2025",
+        "June 2025",
+        "July 2025",
+        "August 2025",
+        "September 2025",
+        "October 2025",
+        "November 2025",
+        "December 2025"
+      ],
+      "processedWorksheets": [
+        "Januari 2025",
+        "Februari 2025",
+        "Mac 2025",
+        "April 2025",
+        "Mei 2025",
+        "June 2025",
+        "July 2025",
+        "August 2025",
+        "September 2025",
+        "October 2025",
+        "November 2025",
+        "December 2025"
+      ],
+      "skippedWorksheets": [],
+      "invalidHeaderWorksheets": [],
+      "emptyWorksheets": [],
+      "readErrors": [],
+      "monthlyWorksheetsFound": 12,
+      "rowsReturned": 2973,
+      "nonEmptyRows": 2598,
+      "migratableRows": 2460,
+      "manualReviewRows": 138,
+      "emptyRows": 366,
+      "existingIds": 132,
+      "missingIds": 2466,
+      "numericPrices": 2,
+      "nullPrices": 2570,
+      "headerDetails": {
+        "Januari 2025": {
+          "header": [
+            "",
+            "Nama",
+            "Phone Number",
+            "Order",
+            "Template",
+            "Bahasa",
+            "Add On",
+            "Jenis",
+            "Due",
+            "Link",
+            "",
+            ""
+          ],
+          "mappingMethod": "header-detection",
+          "dataStartRow": 2
+        },
+        "Februari 2025": {
+          "header": [
+            " ",
+            "Nama",
+            "Phone Number",
+            "Order",
+            "Template",
+            "Bahasa",
+            "Add On",
+            "Jenis",
+            "Due",
+            "Link",
+            "",
+            ""
+          ],
+          "mappingMethod": "header-detection",
+          "dataStartRow": 2
+        },
+        "Mac 2025": {
+          "header": [
+            " ",
+            "Nama",
+            "Phone Number",
+            "Order",
+            "Template",
+            "Bahasa",
+            "Add On",
+            "Jenis",
+            "Due",
+            "Link",
+            "",
+            ""
+          ],
+          "mappingMethod": "header-detection",
+          "dataStartRow": 2
+        },
+        "April 2025": {
+          "header": [
+            " ",
+            "Nama",
+            "Phone Number",
+            "Order",
+            "Template",
+            "Bahasa",
+            "Add On",
+            "Jenis",
+            "Due",
+            "Link",
+            "",
+            ""
+          ],
+          "mappingMethod": "header-detection",
+          "dataStartRow": 2
+        },
+        "Mei 2025": {
+          "header": [
+            "60 11-4040 7497",
+            "Nama",
+            "Phone Number",
+            "Order",
+            "Template",
+            "Bahasa",
+            "Add On",
+            "Jenis",
+            "Due",
+            "Link",
+            "",
+            ""
+          ],
+          "mappingMethod": "header-detection",
+          "dataStartRow": 2
+        },
+        "June 2025": {
+          "header": [
+            " ",
+            "Nama",
+            "Phone Number",
+            "Order",
+            "Template",
+            "Bahasa",
+            "Add On",
+            "Jenis",
+            "Due",
+            "Link",
+            "",
+            ""
+          ],
+          "mappingMethod": "header-detection",
+          "dataStartRow": 2
+        },
+        "July 2025": {
+          "header": [
+            " ",
+            "Nama",
+            "Phone Number",
+            "Order",
+            "Template",
+            "Bahasa",
+            "Add On",
+            "Jenis",
+            "Due",
+            "Link",
+            "",
+            ""
+          ],
+          "mappingMethod": "header-detection",
+          "dataStartRow": 2
+        },
+        "August 2025": {
+          "header": [
+            "6269",
+            "Nama",
+            "Phone Number",
+            "Order",
+            "Template",
+            "Bahasa",
+            "Add On",
+            "Jenis",
+            "Due",
+            "Link",
+            "",
+            ""
+          ],
+          "mappingMethod": "header-detection",
+          "dataStartRow": 2
+        },
+        "September 2025": {
+          "header": [
+            " ",
+            "Nama",
+            "Phone Number",
+            "Order",
+            "Template",
+            "Bahasa",
+            "Add On",
+            "Jenis",
+            "Due",
+            "Link",
+            "",
+            ""
+          ],
+          "mappingMethod": "header-detection",
+          "dataStartRow": 2
+        },
+        "October 2025": {
+          "header": null,
+          "mappingMethod": "fixed-column-fallback",
+          "dataStartRow": 1
+        },
+        "November 2025": {
+          "header": null,
+          "mappingMethod": "fixed-column-fallback",
+          "dataStartRow": 1
+        },
+        "December 2025": {
+          "header": null,
+          "mappingMethod": "fixed-column-fallback",
+          "dataStartRow": 1
+        }
+      }
+    },
+    "2026": {
+      "spreadsheetId": "1kUAJYUVhr9bPYErtpnohpvuGGyhBSvJyEOIyzEFivJo",
+      "locale": "en_GB",
+      "timeZone": "Asia/Kuala_Lumpur",
+      "discoveredWorksheets": [
+        "Januari 2026",
+        "Februari 2026",
+        "Mac 2026",
+        "April 2026",
+        "Mei 2026",
+        "June 2026",
+        "July 2026",
+        "August 2026",
+        "September 2026",
+        "October 2026",
+        "November 2026",
+        "December 2026"
+      ],
+      "processedWorksheets": [
+        "Januari 2026",
+        "Februari 2026",
+        "Mac 2026",
+        "April 2026",
+        "Mei 2026",
+        "June 2026"
+      ],
+      "skippedWorksheets": [
+        "July 2026",
+        "August 2026",
+        "September 2026",
+        "October 2026",
+        "November 2026",
+        "December 2026"
+      ],
+      "invalidHeaderWorksheets": [],
+      "emptyWorksheets": [],
+      "readErrors": [],
+      "monthlyWorksheetsFound": 6,
+      "rowsReturned": 1675,
+      "nonEmptyRows": 1551,
+      "migratableRows": 1448,
+      "manualReviewRows": 103,
+      "emptyRows": 118,
+      "existingIds": 532,
+      "missingIds": 1019,
+      "numericPrices": 0,
+      "nullPrices": 1547,
+      "headerDetails": {
+        "Januari 2026": {
+          "header": [
+            "",
+            "Nama",
+            "Phone Number",
+            "Order",
+            "Template",
+            "Bahasa",
+            "Add On",
+            "Jenis",
+            "Due",
+            "Link",
+            "",
+            ""
+          ],
+          "mappingMethod": "header-detection",
+          "dataStartRow": 2
+        },
+        "Februari 2026": {
+          "header": [
+            "",
+            "Nama",
+            "Phone Number",
+            "Order",
+            "Template",
+            "Bahasa",
+            "Add On",
+            "Jenis",
+            "Due",
+            "Link",
+            "",
+            ""
+          ],
+          "mappingMethod": "header-detection",
+          "dataStartRow": 2
+        },
+        "Mac 2026": {
+          "header": [
+            ".",
+            "Nama",
+            "Phone Number",
+            "Order",
+            "Template",
+            "Bahasa",
+            "Add On",
+            "Jenis",
+            "Due",
+            "Link",
+            "",
+            ""
+          ],
+          "mappingMethod": "header-detection",
+          "dataStartRow": 2
+        },
+        "April 2026": {
+          "header": [
+            "TRUE",
+            "Nama",
+            "Phone Number",
+            "Order",
+            "Template",
+            "Bahasa",
+            "Add On",
+            "Jenis",
+            "Due",
+            "Link",
+            "",
+            ""
+          ],
+          "mappingMethod": "header-detection",
+          "dataStartRow": 2
+        },
+        "Mei 2026": {
+          "header": [
+            "",
+            "Nama",
+            "Phone Number",
+            "Order",
+            "Template",
+            "Bahasa",
+            "Add On",
+            "Jenis",
+            "Due",
+            "Link",
+            "",
+            ""
+          ],
+          "mappingMethod": "header-detection",
+          "dataStartRow": 2
+        },
+        "June 2026": {
+          "header": [
+            "",
+            "Nama",
+            "Phone Number",
+            "Order",
+            "Template",
+            "Bahasa",
+            "Add On",
+            "Jenis",
+            "Due",
+            "Link",
+            "Order ID",
+            "HARGA"
+          ],
+          "mappingMethod": "header-detection",
+          "dataStartRow": 2
+        }
+      }
+    }
+  }
+}

@@ -26,7 +26,8 @@ export function HomeView() {
     history, 
     changeTab, 
     setHistoryDeliveryFilter, 
-    setHistoryPendingTimeFilter 
+    setHistoryPendingTimeFilter,
+    deletedOrderIds
   } = useAppContext();
   const [calcUrgency, setCalcUrgency] = useState<string>('all');
   const [superHours, setSuperHours] = useState<number>(2);
@@ -39,11 +40,37 @@ export function HomeView() {
       return value;
     }
 
+    if (typeof value === 'string' && /^\d+$/.test(value.trim())) {
+      const num = Number(value.trim());
+      if (Number.isFinite(num)) {
+        return num;
+      }
+    }
+
     if (typeof value !== 'string' || !value.trim()) {
       return 0;
     }
 
     return parseDateStringToTimestamp(value, 0).timestamp;
+  };
+
+  const getBestDueTimestamp = (item: any): number => {
+    if (!item) return 0;
+    
+    const dueTimestamp = Number(item.state?.dueTimestamp);
+    if (Number.isFinite(dueTimestamp) && dueTimestamp > 0) {
+      return dueTimestamp;
+    }
+    
+    const customerDue = String(item.state?.customerDue ?? '').trim();
+    if (customerDue) {
+      const parsed = parseDateStringToTimestamp(customerDue, 0).timestamp;
+      if (parsed > 0) {
+        return parsed;
+      }
+    }
+    
+    return Number(item.timestamp) || 0;
   };
 
   // Update Estimated Delivery Times
@@ -142,7 +169,22 @@ console.log(
   }))
 );
   // Derive statistics
-  const activeOrders = history.filter(o => o && o.state && !o.state.isDelivered && !o.state.isDeleted);
+  const activeOrders = history.filter(o => {
+    if (!o || !o.state) return false;
+    // whatever only saved locally, that is a draft. dont take into account
+    if (o.state.syncStatus === 'draft' || o.state.status === 'draft') return false;
+    
+    const isDelivered = o.state.isDelivered === true || o.state.isDelivered === 'true' || o.state.isDelivered === 1 || o.state.isDelivered === '1';
+    const isDeleted = o.state.isDeleted === true || o.state.isDeleted === 'true' || o.state.isDeleted === 1 || o.state.isDeleted === '1';
+    
+    if (isDelivered || isDeleted) return false;
+    const orderId = o.state.orderId;
+    const id = o.id;
+    if (deletedOrderIds && (deletedOrderIds.includes(id) || (orderId && deletedOrderIds.includes(orderId)))) {
+      return false;
+    }
+    return true;
+  });
   const totalPendingCount = activeOrders.length;
 
   const todayStart = new Date();
@@ -158,12 +200,12 @@ console.log(
   tomorrowEnd.setHours(23, 59, 59, 999);
 
   const todayPendingCount = activeOrders.filter(o => {
-    const ts = parseDueTimestamp(o.state?.dueTimestamp || o.timestamp);
+    const ts = getBestDueTimestamp(o);
     return ts >= todayStart.getTime() && ts <= todayEnd.getTime();
   }).length;
 
   const tomorrowPendingCount = activeOrders.filter(o => {
-    const ts = parseDueTimestamp(o.state?.dueTimestamp || o.timestamp);
+    const ts = getBestDueTimestamp(o);
     return ts >= tomorrowStart.getTime() && ts <= tomorrowEnd.getTime();
   }).length;
 

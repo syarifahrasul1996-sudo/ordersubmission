@@ -40,6 +40,9 @@ window.addEventListener('unhandledrejection', (event) => {
   }
 });
 
+import { auth } from './lib/firebase';
+import { onAuthStateChanged } from 'firebase/auth';
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <App />

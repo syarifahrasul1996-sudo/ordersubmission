@@ -8,9 +8,14 @@
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "start": "node dist/server.cjs",
     "preview": "vite preview",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "audit:sheets": "tsx scripts/auditGoogleSheets.ts",
+    "migrate:firestore:dry": "tsx scripts/migrateToFirestore.ts --dry-run",
+    "migrate:firestore:staging": "tsx scripts/migrateToFirestoreStaging.ts",
+    "verify:firestore:staging": "tsx scripts/verifyFirestoreStaging.ts"
   },
   "dependencies": {
+    "@google-cloud/firestore": "^8.6.0",
     "@google/genai": "^2.9.0",
     "@tailwindcss/vite": "^4.1.14",
     "@types/express": "^4.17.25",
@@ -23,6 +28,7 @@
     "express": "^4.22.2",
     "firebase": "^12.14.0",
     "framer-motion": "^12.40.0",
+    "googleapis": "^173.0.0",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
     "react": "^19.0.1",
@@ -39,7 +45,10 @@
     "workbox-window": "^7.4.1"
   },
   "devDependencies": {
+    "@firebase/eslint-plugin-security-rules": "^0.0.2",
     "@types/web-push": "^3.6.4",
-    "glob": "^13.0.6"
+    "firebase-admin": "^14.1.0",
+    "glob": "^13.0.6",
+    "google-auth-library": "^10.9.0"
   }
 }

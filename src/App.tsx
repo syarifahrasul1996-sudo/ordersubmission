@@ -1,4 +1,4 @@
-import React, { useState, Suspense, lazy } from 'react';
+import React, { useState, useEffect, Suspense, lazy } from 'react';
 import { AppProvider, useAppContext } from './AppContext';
 import { Header } from './components/Header';
 import { ViewSection } from './components/ViewSection';
@@ -19,6 +19,8 @@ const ContactsSyncView = lazy(() => import('./views/ContactsSyncView').then(m =>
 const OthersView = lazy(() => import('./views/OthersView').then(m => ({ default: m.OthersView })));
 
 import { BottomNavigation } from './components/BottomNavigation';
+import { auth } from './lib/firebase';
+import { onAuthStateChanged } from 'firebase/auth';
 
 
 import { DesktopSidebar } from './components/DesktopSidebar';

@@ -3,7 +3,10 @@ import { createPortal } from 'react-dom';
 import { cn } from '../cn';
 import { Clock, Trash2, Calendar, AlertCircle, RefreshCcw, Save, Bell, Check, Search, Database, Phone, Settings, ChevronDown, ChevronUp, Link, X, ArrowRight, Zap } from 'lucide-react';
 import { useAppContext } from '../AppContext';
+import { OrderHistoryItem } from '../types';
 import { formatPhoneUniversal, parseDateStringToTimestamp } from '../utils';
+import { getOperationalOrders, getOverdueOrders, getArchivedOrders, isFirestoreCanary } from '../services/firestoreOrders';
+
 
 const GOOGLE_SCRIPT_URL =
   'https://script.google.com/macros/s/AKfycbw5KpBvJyFpIXmsHueg4XPSRkZ0mg6kxHqjMGp3WEs8Hx_JodvKSoKEg6RMsdH54iCa/exec';
@@ -69,11 +72,49 @@ const parseDueTimestamp = (value: unknown): number => {
     return value;
   }
 
+  if (typeof value === 'string' && /^\d+$/.test(value.trim())) {
+    const num = Number(value.trim());
+    if (Number.isFinite(num)) {
+      return num;
+    }
+  }
+
   if (typeof value !== 'string' || !value.trim()) {
     return 0;
   }
 
   return parseDateStringToTimestamp(value, 0).timestamp;
+};
+
+const getBestDueTimestamp = (item: any): number => {
+  if (!item) return 0;
+  
+  const dueTimestamp = Number(item.state?.dueTimestamp);
+  if (Number.isFinite(dueTimestamp) && dueTimestamp > 0) {
+    return dueTimestamp;
+  }
+  
+  const customerDue = String(item.state?.customerDue ?? '').trim();
+  if (customerDue) {
+    const parsed = parseDateStringToTimestamp(customerDue, 0).timestamp;
+    if (parsed > 0) {
+      return parsed;
+    }
+  }
+  
+  return Number(item.timestamp) || 0;
+};
+
+const isDeliveredState = (item: any): boolean => {
+  if (!item || !item.state) return false;
+  const val = item.state.isDelivered;
+  return val === true || val === 'true' || val === 1 || val === '1';
+};
+
+const isDeletedState = (item: any): boolean => {
+  if (!item || !item.state) return false;
+  const val = item.state.isDeleted;
+  return val === true || val === 'true' || val === 1 || val === '1';
 };
 
 export function HistoryView() {
@@ -190,13 +231,26 @@ export function HistoryView() {
 
   const localizedHistoryItems = useMemo(() => {
     return history.filter(Boolean).filter((item) => {
-      if (item.state?.isDeleted) return false;
-      if (deliveryFilter === 'delivered' && !item.state?.isDelivered) return false;
-      if (deliveryFilter === 'pending' && item.state?.isDelivered) return false;
+      if (!item || !item.state) return false;
+      
+      const isDelivered = isDeliveredState(item);
+      const isDeleted = isDeletedState(item);
+      
+      if (isDeleted) return false;
+      // whatever only saved locally, that is a draft. dont take into account
+      if (item.state.syncStatus === 'draft') return false;
+
+      const orderId = item.state?.orderId;
+      const id = item.id;
+      if (deletedOrderIds && (deletedOrderIds.includes(id) || (orderId && deletedOrderIds.includes(orderId)))) {
+        return false;
+      }
+      if (deliveryFilter === 'delivered' && !isDelivered) return false;
+      if (deliveryFilter === 'pending' && isDelivered) return false;
       
       // If pending filter is active, apply sub-time filters
       if (deliveryFilter === 'pending' && pendingTimeFilter !== 'all') {
-        const orderTime = parseDueTimestamp(item.state?.dueTimestamp || item.timestamp);
+        const orderTime = getBestDueTimestamp(item);
         const d = new Date(orderTime);
         d.setHours(0, 0, 0, 0);
         const orderDateTs = d.getTime();
@@ -231,29 +285,29 @@ export function HistoryView() {
         if (!nameMatch && !idMatch && !phoneMatch) return false;
       }
 
-      // Date filter: only show today's order, 2 days before and 3 days onward relative to today
-      const orderTimeVal = parseDueTimestamp(item.state?.dueTimestamp || item.timestamp);
-      const now = new Date(currentTime);
-      
-      const minDate = new Date(now);
-      minDate.setDate(now.getDate() - 2);
-      minDate.setHours(0, 0, 0, 0);
+      // Date filter: only apply the active date window (2 days before and 3 days after) for 'all' or 'delivered' views.
+      // For 'pending' views, we want to see ALL pending orders so that overdue or far-future pending orders are not hidden.
+      if (deliveryFilter !== 'pending') {
+        const orderTimeVal = getBestDueTimestamp(item);
+        const now = new Date(currentTime);
+        
+        const minDate = new Date(now);
+        minDate.setDate(now.getDate() - 2);
+        minDate.setHours(0, 0, 0, 0);
 
-      const maxDate = new Date(now);
-      maxDate.setDate(now.getDate() + 3);
-      maxDate.setHours(23, 59, 59, 999);
+        const maxDate = new Date(now);
+        maxDate.setDate(now.getDate() + 3);
+        maxDate.setHours(23, 59, 59, 999);
 
-      if (orderTimeVal < minDate.getTime() || orderTimeVal > maxDate.getTime()) {
-        // Only return false if we AREN'T explicitly filtering for a specific pending day
-        if (deliveryFilter !== 'pending' || pendingTimeFilter === 'all') {
+        if (orderTimeVal < minDate.getTime() || orderTimeVal > maxDate.getTime()) {
           return false;
         }
       }
 
       return true;
     }).sort((a, b) => {
-      const aDelivered = !!a.state?.isDelivered;
-      const bDelivered = !!b.state?.isDelivered;
+      const aDelivered = isDeliveredState(a);
+      const bDelivered = isDeliveredState(b);
 
       // Pending orders appear above delivered orders
       if (!aDelivered && bDelivered) return -1;
@@ -303,19 +357,34 @@ export function HistoryView() {
   }, [history, deliveryFilter, searchQuery, currentTime]);
 
   const filteredDrafts = useMemo(() => {
-    if (!searchQuery.trim()) return drafts;
+    // Combine drafts and unsynced history items (which are drafts/saved locally only)
+    const unsyncedHistory = history.filter(item => item && item.state && item.state.syncStatus !== 'synced');
+    const seenIds = new Set<string>();
+    const combined: OrderHistoryItem[] = [];
+
+    [...drafts, ...unsyncedHistory].forEach(item => {
+      if (!item) return;
+      if (!seenIds.has(item.id)) {
+        seenIds.add(item.id);
+        combined.push(item);
+      }
+    });
+
+    if (!searchQuery.trim()) return combined;
     const query = searchQuery.toLowerCase().trim();
-    return drafts.filter(draft => {
-      const nameMatch = String(draft.data?.customerName || draft.data?.name || '').toLowerCase().includes(query);
-      const phoneMatch = String(draft.data?.customerPhone || draft.data?.phone || '').toLowerCase().includes(query);
-      const typeMatch = String(draft.type || '').toLowerCase().includes(query);
-      const orderMatch = String(draft.data?.mainType || '').toLowerCase().includes(query);
+    return combined.filter(draft => {
+      const s = draft.state;
+      if (!s) return false;
+      const nameMatch = String(s.customerName || '').toLowerCase().includes(query);
+      const phoneMatch = String(s.customerPhone || '').toLowerCase().includes(query);
+      const typeMatch = String(s.mainType || '').toLowerCase().includes(query);
+      const orderMatch = String(s.customerOrder || '').toLowerCase().includes(query);
       return nameMatch || phoneMatch || typeMatch || orderMatch;
     });
-  }, [drafts, searchQuery]);
+  }, [drafts, history, searchQuery]);
 
   const filteredTrash = useMemo(() => {
-    const deletedItems = history.filter(item => item?.state?.isDeleted);
+    const deletedItems = history.filter(item => isDeletedState(item) && item.state?.syncStatus === 'synced');
     if (!searchQuery.trim()) return deletedItems;
     const query = searchQuery.toLowerCase().trim();
     return deletedItems.filter(item => {
@@ -350,9 +419,20 @@ export function HistoryView() {
 
     // Use full history for stats, not just filtered results
     history.forEach(item => {
-      if (item.state?.isDeleted || item.state?.isDelivered) return;
+      if (!item || !item.state) return;
+      if (item.state.syncStatus === 'draft' || item.state.status === 'draft') return; // whatever only saved locally, that is a draft. dont take into account
       
-      const due = parseDueTimestamp(item.state?.dueTimestamp || item.timestamp);
+      const isDelivered = item.state.isDelivered === true || item.state.isDelivered === 'true' || item.state.isDelivered === 1 || item.state.isDelivered === '1';
+      const isDeleted = item.state.isDeleted === true || item.state.isDeleted === 'true' || item.state.isDeleted === 1 || item.state.isDeleted === '1';
+      
+      if (isDeleted || isDelivered) return;
+      const orderId = item.state?.orderId;
+      const id = item.id;
+      if (deletedOrderIds && (deletedOrderIds.includes(id) || (orderId && deletedOrderIds.includes(orderId)))) {
+        return;
+      }
+      
+      const due = getBestDueTimestamp(item);
       if (!due) return;
       
       const dueDate = new Date(due);
@@ -366,7 +446,7 @@ export function HistoryView() {
     });
 
     return { today: todayCount, tomorrow: tomorrowCount, day2: day2Count, day3: day3Count };
-  }, [history, currentTime]);
+  }, [history, currentTime, deletedOrderIds]);
 
   const extractId = (input: string) => {
     const trimmed = input.trim();
@@ -720,7 +800,7 @@ export function HistoryView() {
               itemDueTimestamp &&
               itemDueTimestamp >= startDate.getTime() &&
               itemDueTimestamp <= endDate.getTime() &&
-              !item.state?.isDeleted &&
+              !isDeletedState(item) &&
               item.state?.syncStatus === 'synced' &&
               !fetchedOrderIds.has(itemOrderId)
             ) {
@@ -773,10 +853,13 @@ const existingIdx = updatedHistory.findIndex((item) => {
   }
 
   const localId = String(localState.orderId || item.id || '');
+  const isLocalTemp = localId.startsWith('SYNC-') || localId.startsWith('draft_') || !localId;
+  const isRemoteTemp = generatedOrderId.startsWith('SYNC-') || !generatedOrderId;
 
-  // Content matching is only allowed for temporary or unsynced records.
+  // Content matching is only allowed if at least one side has a temporary ID or if unsynced.
   const canUseFallback =
-    localId.startsWith('SYNC-') ||
+    isLocalTemp ||
+    isRemoteTemp ||
     localState.syncStatus === 'syncing' ||
     localState.syncStatus === 'failed' ||
     localState.syncStatus === 'saved_locally' ||
@@ -852,7 +935,7 @@ const existingIdx = updatedHistory.findIndex((item) => {
             if (existingIdx !== -1) {
               const existingItem = updatedHistory[existingIdx];
 
-              if (existingItem.state?.isDeleted) {
+              if (isDeletedState(existingItem)) {
                 const activeSheet = annualSheets.find(s => s.spreadsheetId === res.spreadsheetId);
                 if (activeSheet) {
                   addToOfflineQueue({
@@ -867,8 +950,11 @@ const existingIdx = updatedHistory.findIndex((item) => {
               const localState = existingItem.state || {};
               const isUnsynced = localState.syncStatus !== 'synced';
 
+              const localDelivered = localState.isDelivered === true || localState.isDelivered === 'true' || localState.isDelivered === 1 || localState.isDelivered === '1';
+              const remoteDelivered = !!newState.isDelivered;
+
               const hasDiff = 
-                !!localState.isDelivered !== !!newState.isDelivered ||
+                localDelivered !== remoteDelivered ||
                 String(localState.customerName || '') !== String(newState.customerName || '') ||
                 String(localState.customerPhone || '') !== String(newState.customerPhone || '') ||
                 String(localState.customerOrder || '') !== String(newState.customerOrder || '') ||
@@ -883,11 +969,16 @@ const existingIdx = updatedHistory.findIndex((item) => {
                   // while Google Sheets/script cache catches up. Otherwise, we accept the sheet's new data.
                   const recentlyToggledOrEdited = localState.lastModifiedLocally && (currentNow - localState.lastModifiedLocally < 30000);
                   if (!recentlyToggledOrEdited) {
+                    const localId = String(localState.orderId || existingItem.id || '');
+                    const isLocalTemp = localId.startsWith('SYNC-') || localId.startsWith('draft_') || !localId;
+                    const isRemoteTemp = generatedOrderId.startsWith('SYNC-') || !generatedOrderId;
+
                     updatedHistory[existingIdx] = {
                       ...existingItem,
                       state: {
                         ...localState,
                         ...newState,
+                        orderId: (!isLocalTemp && isRemoteTemp) ? localState.orderId : newState.orderId,
                         syncStatus: 'synced'
                       }
                     };
@@ -1018,6 +1109,53 @@ const existingIdx = updatedHistory.findIndex((item) => {
     setIsSearching(true);
     setSearchError('');
     setRemoteResults([]);
+
+    if (isFirestoreCanary) {
+      try {
+        const op = await getOperationalOrders();
+        const ov = await getOverdueOrders();
+        const arch = await getArchivedOrders();
+        
+        const allOrders = [...op, ...ov, ...arch].map(item => ({
+          orderId: item.orderId,
+          name: item.customerName,
+          phone: item.customerPhone,
+          order: item.customerOrder,
+          template: item.customerTemplate,
+          bahasa: item.customerBahasa,
+          addon: item.customerAddOn,
+          jenis: item.customerJenis,
+          due: item.customerDue || (item.dueTimestamp ? new Date(item.dueTimestamp).toLocaleString() : ''),
+          link: item.orderLink,
+          price: item.price,
+          isDelivered: item.isDelivered,
+          sheetName: item.isDelivered ? 'orders_archive_canary' : 'orders_canary',
+          spreadsheetId: 'canary'
+        }));
+
+        const lowerQ = q.toLowerCase();
+        const filtered = allOrders.filter(o => 
+          (o.name && o.name.toLowerCase().includes(lowerQ)) ||
+          (o.phone && o.phone.toLowerCase().includes(lowerQ)) ||
+          (o.orderId && o.orderId.toLowerCase().includes(lowerQ))
+        );
+
+        setRemoteResults(filtered);
+        if (filtered.length === 0) {
+          setSearchError(
+            appLanguage === 'ms'
+              ? 'Tiada padanan dijumpai di Firestore Canary.'
+              : 'No matching records found in Firestore Canary.'
+          );
+        }
+      } catch (err: any) {
+        console.error('Firestore search failed:', err);
+        setSearchError(appLanguage === 'ms' ? 'Carian Firestore gagal: ' + err.message : 'Firestore search failed: ' + err.message);
+      } finally {
+        setIsSearching(false);
+      }
+      return;
+    }
 
     const allMatchedOrders: any[] = [];
     const errors: string[] = [];
@@ -1445,6 +1583,11 @@ const existingIdx = updatedHistory.findIndex((item) => {
           >
             <Save className="w-3.5 h-3.5" />
             <span className="truncate">{appLanguage === 'ms' ? 'Draf' : 'Drafts'}</span>
+            {filteredDrafts.length > 0 && (
+              <span className="px-1.5 py-0.5 text-[9px] font-black bg-blue-600 text-white rounded-full scale-90 select-none">
+                {filteredDrafts.length}
+              </span>
+            )}
           </button>
           <button
             type="button"
@@ -1475,7 +1618,7 @@ const existingIdx = updatedHistory.findIndex((item) => {
             <Trash2 className="w-3.5 h-3.5" />
             <span className="truncate">{appLanguage === 'ms' ? 'Tong Sampah' : 'Trash Bin'}</span>
             {(() => {
-              const deletedCount = history.filter(item => item?.state?.isDeleted).length;
+              const deletedCount = history.filter(item => isDeletedState(item) && item.state?.syncStatus === 'synced').length;
               return deletedCount > 0 ? (
                 <span className="px-1.5 py-0.5 text-[9px] font-black bg-rose-600 dark:bg-rose-500 text-white rounded-full scale-90 select-none animate-pulse">
                   {deletedCount}
@@ -1486,7 +1629,7 @@ const existingIdx = updatedHistory.findIndex((item) => {
         </div>
         {activeTab === 'local' && (
           <div className="space-y-4">
-            {history.filter(item => !item.state?.isDeleted).length === 0 ? (
+            {history.filter(item => !isDeletedState(item) && item.state?.syncStatus === 'synced').length === 0 ? (
               <div className="flex flex-col items-center justify-center py-20 text-subtext space-y-4">
                 <Clock className="w-16 h-16 opacity-50" />
                 <p className="font-bold">
@@ -1634,7 +1777,7 @@ const existingIdx = updatedHistory.findIndex((item) => {
 
               return (
                 <div className="space-y-2">
-                  {matchedItems.map((item) => {
+                  {matchedItems.map((item, idx) => {
                   const lastEditedDateObj = new Date(item.timestamp || Date.now());
                   const formattedLastEditedDate = lastEditedDateObj.toLocaleString(
                     appLanguage === 'ms' ? 'ms-MY' : 'en-US',
@@ -1661,7 +1804,7 @@ const existingIdx = updatedHistory.findIndex((item) => {
                   );
 
                   const now = currentTime;
-                  const isDelivered = !!item.state?.isDelivered;
+                  const isDelivered = isDeliveredState(item);
                   const timeUntilDue = item.state?.dueTimestamp ? item.state.dueTimestamp - now : 0;
                   const isDueSoon = !isDelivered && timeUntilDue > 0 && timeUntilDue <= 20 * 60 * 1000;
                   const isOverdue = !isDelivered && item.state?.dueTimestamp ? timeUntilDue <= 0 : false;
@@ -1678,7 +1821,7 @@ const existingIdx = updatedHistory.findIndex((item) => {
 
                   return (
                     <div
-                      key={item.id}
+                      key={`${item.id}-${idx}`}
                       onClick={() => loadOrder(item)}
                       className={`bg-surface border relative overflow-hidden ${
                         isDelivered
@@ -1971,7 +2114,7 @@ const existingIdx = updatedHistory.findIndex((item) => {
           </div>
         ) : (
           <div className="space-y-2.5">
-            {filteredDrafts.map((draft) => {
+            {filteredDrafts.map((draft, idx) => {
               const date = new Date(draft.timestamp);
               const formattedDate = date.toLocaleString(appLanguage === 'ms' ? 'ms-MY' : 'en-US', {
                 day: 'numeric',
@@ -1982,7 +2125,7 @@ const existingIdx = updatedHistory.findIndex((item) => {
 
               return (
                 <div
-                  key={draft.id}
+                  key={`${draft.id}-${idx}`}
                   onClick={() => loadDraft(draft)}
                   className="bg-surface border border-gray-200/60 rounded-xl p-3 flex flex-col space-y-2 hover:border-blue-300 hover:bg-blue-50/5 cursor-pointer active:scale-[0.995] transition-all shadow-sm"
                 >
@@ -2005,6 +2148,7 @@ const existingIdx = updatedHistory.findIndex((item) => {
                             : 'Are you sure you want to delete this draft?',
                           onConfirm: () => {
                             deleteDraft(draft.id);
+                            permanentlyDeleteOrderFromHistory(draft.id);
                             setConfirmAction(null);
                           }
                         });
@@ -2248,7 +2392,7 @@ const existingIdx = updatedHistory.findIndex((item) => {
             </div>
 
             {remoteResults.map((item, idx) => {
-              const isDelivered = !!item.isDelivered;
+              const isDelivered = item.isDelivered === true || item.isDelivered === 'true' || item.isDelivered === 1 || item.isDelivered === '1';
               const orderId = item.orderId || item.generatedId || `SYNC-TMP-${idx}`;
 
               return (
@@ -2520,14 +2664,14 @@ const existingIdx = updatedHistory.findIndex((item) => {
               </div>
 
               <div className="space-y-3">
-                {deletedItems.map((item) => {
+                {deletedItems.map((item, idx) => {
                   const customerName = item.state?.customerName || item.state?.name || 'Unknown';
                   const dateStr = item.timestamp ? new Date(item.timestamp).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) : '';
                   const orderIdHex = item.state?.orderId || item.id;
                   
                   return (
                     <div
-                      key={item.id}
+                      key={`${item.id}-${idx}`}
                       className="bg-surface border border-gray-100 dark:border-gray-800/40 rounded-2xl p-4 shadow-sm flex flex-col space-y-3.5 hover:border-gray-200 transition-all duration-150 animate-fade-in"
                     >
                       <div className="flex items-start justify-between">

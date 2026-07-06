@@ -1,7 +1,7 @@
 import React, { useRef, useState } from 'react';
 import { Copy, Check } from 'lucide-react';
 import { useAppContext } from '../AppContext';
-import { calculateDeadline, generateMessages } from '../utils';
+import { calculateDeadline, generateMessages, toProperCase } from '../utils';
 
 export function ConfirmationView({ onGenerated }: { onGenerated: () => void }) {
   const { state, pushView, popView, setGeneratedMessages, saveOrderToHistory, appLanguage } = useAppContext();
@@ -15,15 +15,23 @@ export function ConfirmationView({ onGenerated }: { onGenerated: () => void }) {
   const langText = (!isE && state.resumeLangs && state.resumeLangs.length > 0) ? state.resumeLangs.join(' & ') : '-';
   const dlInfo = calculateDeadline(state, appLanguage);
 
-  const adds = (state.addons || []).map(a => {
-      if (a === 'Soft Copy Word') return `Soft Copy Word (${state.softcopyLang})`;
-      if (a === 'Cover Letter') {
-          const clText = ['Melayu', 'English'].filter(l => state.clLangs && state.clLangs.includes(l)).join(' & ');
-          return `Cover Letter (${clText})`;
-      }
-      if (a === 'Custom') return (state.customDoc || '').trim() || 'Custom';
-      return a;
-  });
+  let adds: string[] = [];
+  if (state.customerAddOn && String(state.customerAddOn).trim()) {
+    adds = String(state.customerAddOn)
+      .split(',')
+      .map((s: string) => toProperCase(s))
+      .filter(Boolean);
+  } else {
+    adds = (state.addons || []).map(a => {
+        if (a === 'Soft Copy Word') return `Soft Copy Word (${state.softcopyLang})`;
+        if (a === 'Cover Letter') {
+            const clText = ['Melayu', 'English'].filter(l => state.clLangs && state.clLangs.includes(l)).join(' & ');
+            return `Cover Letter (${clText})`;
+        }
+        if (a === 'Custom') return toProperCase(state.customDoc || '').trim() || 'Custom';
+        return a;
+    });
+  }
 
   const handleGenerate = () => {
     const finalDlInfo = calculateDeadline(state, appLanguage);

@@ -27,19 +27,52 @@ export function calculateDeadline(state: any, appLanguage: string) {
   return { formatted: dateStr, total };
 }
 
+export function toProperCase(str: string): string {
+  if (!str) return '';
+  return str
+    .trim()
+    .replace(/\w\S*/g, (txt) => {
+      const upper = txt.toUpperCase();
+      if (['ATS', 'BI', 'BM', 'PDF', 'CV'].includes(upper)) {
+        return upper;
+      }
+      return txt.charAt(0).toUpperCase() + txt.substring(1).toLowerCase();
+    });
+}
+
+export function formatAddOnString(addOnStr: string): string {
+  if (!addOnStr) return '';
+  return addOnStr
+    .split(',')
+    .map(item => toProperCase(item))
+    .filter(Boolean)
+    .join(', ');
+}
+
 export function generateMessages(state: any, dl: { formatted: string, total: number }, appLanguage: string) {
   const isE = state.isEditMode;
   let raw = state.mainType === 'Lain-lain' ? ((state.customDoc || '').trim() || 'Dokumen') : state.mainType;
   const docLabel = raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase();
   
-  const addsForDisplay = (state.addons || []).map((a: string) => {
+  let addsForDisplay: string[] = [];
+  if (state.customerAddOn && String(state.customerAddOn).trim()) {
+    addsForDisplay = String(state.customerAddOn)
+      .split(',')
+      .map((s: string) => toProperCase(s))
+      .filter(Boolean);
+  } else {
+    addsForDisplay = (state.addons || []).map((a: string) => {
       if (a === 'Soft Copy Word') return `Soft Copy Word (${state.softcopyLang})`;
       if (a === 'Cover Letter') {
           const clText = ['Melayu', 'English'].filter(l => state.clLangs && state.clLangs.includes(l)).join(' & ');
           return `Cover Letter (${clText})`;
       }
+      if (a === 'Custom') {
+          return toProperCase(state.customDoc || '').trim() || 'Custom';
+      }
       return a;
-  });
+    });
+  }
   
   const title = docLabel + (addsForDisplay.length > 0 && !isE ? " + " + addsForDisplay.join(" + ") : "");
   
@@ -205,12 +238,8 @@ export function parseDateStringToTimestamp(dueText: string, defaultTimestamp: nu
   }
 
   const cleanText = dueText.replace(/\s+at\s+/i, ' ').trim();
-  const directDate = new Date(cleanText);
-  if (!isNaN(directDate.getTime())) {
-    return { timestamp: directDate.getTime(), date: directDate };
-  }
 
-  // Attempt custom DD/MM/YYYY parses with optional time
+  // Attempt custom DD/MM/YYYY parses with optional time first to avoid JS new Date() parsing it as MM/DD/YYYY
   const parts = cleanText.split(/\s+/);
   const datePart = parts[0];
   const timePart = parts[1] || '00:00';
@@ -240,13 +269,10 @@ export function parseDateStringToTimestamp(dueText: string, defaultTimestamp: nu
     }
   }
 
-  // Try parsing first segment DD/MM/YYYY directly
-  const dateParts = dueText.split(' ')[0].split('/');
-  if (dateParts.length === 3) {
-    const parsedDME = new Date(parseInt(dateParts[2], 10), parseInt(dateParts[1], 10) - 1, parseInt(dateParts[0], 10));
-    if (!isNaN(parsedDME.getTime())) {
-      return { timestamp: parsedDME.getTime(), date: parsedDME };
-    }
+  // Fallback to standard new Date() for formats other than DD/MM/YYYY
+  const directDate = new Date(cleanText);
+  if (!isNaN(directDate.getTime())) {
+    return { timestamp: directDate.getTime(), date: directDate };
   }
 
   return { timestamp: defaultTimestamp, date: new Date(defaultTimestamp) };

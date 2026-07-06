@@ -112,6 +112,12 @@ export function isActivePendingOrder(
     return false;
   }
 
+  // whatever only saved locally, that is a draft. dont take into account
+  const stateVal = item.state as any;
+  if (stateVal.syncStatus === 'draft' || stateVal.status === 'draft') {
+    return false;
+  }
+
   if (
     item.state.isDelivered === true ||
     item.state.isDeleted === true

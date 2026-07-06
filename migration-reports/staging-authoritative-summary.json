@@ -1,0 +1,11 @@
+{
+  "projectId": "deft-verbena-smln4",
+  "databaseId": "ai-studio-ordersubmission-812e5ca5-4c13-4685-aeb6-9c38e1052adb",
+  "collection": "orders_migration_staging",
+  "documentCount": 5983,
+  "uniqueDocumentIdCount": 5983,
+  "uniqueSourceKeyCount": 5983,
+  "duplicateSourceKeys": [],
+  "missingSourceKeys": [],
+  "manifestSha256": "1556ae28e1cbbf3f22012d544dd33794f350bd7bb472d862a72b43a4597c3ee9"
+}

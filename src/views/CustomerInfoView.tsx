@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { RefreshCcw, Save, Check, FileText, ExternalLink, LogOut, Loader2, AlertCircle, ChevronDown } from 'lucide-react';
 import { useAppContext } from '../AppContext';
-import { calculateDeadline, formatPhoneUniversal, parseDateStringToTimestamp } from '../utils';
+import { calculateDeadline, formatPhoneUniversal, parseDateStringToTimestamp, toProperCase, formatAddOnString } from '../utils';
 import { Toast } from '../components/Toast';
 import { SetupHelper } from '../components/SetupHelper';
 import { googleSignIn, initAuth, getAccessToken, logout } from '../utils/googleAuth';
@@ -127,12 +127,14 @@ export function CustomerInfoView() {
           }
         } else if (a === 'ATS Resume' || a === 'ATS') {
           initAddOnList.push('ATS');
+        } else if (a === 'Custom') {
+          initAddOnList.push(toProperCase(state.customDoc || '').trim() || 'Custom');
         } else {
-          initAddOnList.push(a);
+          initAddOnList.push(toProperCase(a));
         }
       });
     }
-    const initAddOn = initAddOnList.join(', ');
+    const initAddOn = formatAddOnString(initAddOnList.join(', '));
 
     const validDropdownOptions = [
       'Editable softcopy BI',
@@ -633,6 +635,7 @@ Dokumen Dijana Secara Automatik`;
   }, [name, phone, info, link, order, template, bahasa, addOn, jenis, due, dueTimestamp, orderId, price, isActive, showResumeBanner]);
 
   const handleSaveInfo = async () => {
+    if (isSaving) return;
     if (!name.trim() || !phone.trim()) {
       setErrorMsg(appLanguage === 'ms' ? 'Sila isi semua ruangan.' : 'Please fill all fields.');
       return;
@@ -730,6 +733,27 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
     const finalFormattedName = name.trim().replace(/\w\S*/g, (txt) => txt.charAt(0).toUpperCase() + txt.substring(1).toLowerCase());
     const finalFormattedTemplate = template.trim().toUpperCase();
 
+    let finalMainType = 'Resume';
+    let finalIsEditMode = false;
+    if (order === 'Edit Resume') {
+      finalMainType = 'Resume';
+      finalIsEditMode = true;
+    } else if (order === 'Surat') {
+      finalMainType = 'Surat';
+      finalIsEditMode = false;
+    } else if (order === 'Edit PDF') {
+      finalMainType = 'Edit PDF';
+      finalIsEditMode = false;
+    } else if (order === 'Lain2' || order === 'Lain-lain') {
+      finalMainType = 'Lain-lain';
+      finalIsEditMode = false;
+    } else {
+      finalMainType = 'Resume';
+      finalIsEditMode = false;
+    }
+
+    const finalFormattedAddOn = formatAddOnString(addOn);
+
     // Save the new values to global state + history with syncing status
     updateOrderHistoryState({
       customerName: finalFormattedName,
@@ -740,7 +764,7 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
       customerOrder: order,
       customerTemplate: finalFormattedTemplate,
       customerBahasa: bahasa,
-      customerAddOn: addOn,
+      customerAddOn: finalFormattedAddOn,
       customerJenis: jenis,
       customerDue: due,
       dueTimestamp: parsedTimestamp,
@@ -751,6 +775,8 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
       spreadsheetId: resolvedSpreadsheetId,
       scriptUrl: resolvedWebhookUrl,
       syncStatus: 'syncing',
+      mainType: finalMainType,
+      isEditMode: finalIsEditMode
     });
 
     setDueTimestamp(parsedTimestamp);
@@ -767,7 +793,7 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
         order,
         finalFormattedTemplate || "",
         bahasa || "",
-        addOn || "",
+        finalFormattedAddOn || "",
         jenis,
         due,
         link || "",
@@ -1204,6 +1230,7 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
               type="text"
               value={addOn}
               onChange={(e) => setAddOn(e.target.value)}
+              onBlur={() => setAddOn(formatAddOnString(addOn))}
               placeholder={appLanguage === 'ms' ? 'Pilihan terpilih (boleh taip atau edit secara manual di sini)...' : 'Selected options (type or edit manually here)...'}
               className="w-full h-[40px] bg-surface rounded-xl px-4 font-bold text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all text-xs placeholder:text-gray-300 placeholder:font-semibold" 
             />

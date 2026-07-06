@@ -1,0 +1,12 @@
+{
+  "firestore": {
+    "collections": {
+      "orders_canary": {
+        "description": "Active undelivered orders for canary testing"
+      },
+      "orders_archive_canary": {
+        "description": "Delivered archived orders for canary testing"
+      }
+    }
+  }
+}

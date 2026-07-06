@@ -1,9 +1,10 @@
 {
-  "projectId": "deft-verbena-smln4",
-  "appId": "1:364958105969:web:5e9bd689c8d9483eca76d0",
-  "apiKey": "AIzaSyAcRzAckfBYO0vRZnW4yEDqoJzgwclK1iQ",
-  "authDomain": "deft-verbena-smln4.firebaseapp.com",
-  "storageBucket": "deft-verbena-smln4.firebasestorage.app",
-  "messagingSenderId": "364958105969",
+  "projectId": "order-submission-501208",
+  "appId": "1:440315185873:web:10a310f20b28a0413853f0",
+  "apiKey": "AIzaSyDqF5o8uNqY50gTF-I_tcY4Q8Wy-z_2dCs",
+  "authDomain": "order-submission-501208.firebaseapp.com",
+  "firestoreDatabaseId": "ai-studio-ordersubmission-812e5ca5-4c13-4685-aeb6-9c38e1052adb",
+  "storageBucket": "order-submission-501208.firebasestorage.app",
+  "messagingSenderId": "440315185873",
   "measurementId": ""
 }

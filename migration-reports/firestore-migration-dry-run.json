@@ -1,0 +1,13 @@
+{
+  "summary": {
+    "isDryRun": true,
+    "proposedDocumentCount": 5983,
+    "excludedRowCount": 425,
+    "ignoredEmptyRowCount": 669,
+    "generatedIdCount": 5540,
+    "existingSafeIdCount": 443,
+    "unsafeExistingIdsReplaced": 0,
+    "duplicateIdCount": 0,
+    "duplicateSourceKeyCount": 0
+  }
+}

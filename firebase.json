@@ -1,0 +1,8 @@
+{
+  "firestore": [
+    {
+      "database": "ai-studio-ordersubmission-812e5ca5-4c13-4685-aeb6-9c38e1052adb",
+      "rules": "firestore.ordersubmission.rules"
+    }
+  ]
+}

@@ -1,0 +1,77 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // -- 1. Reusable Helpers --
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner() {
+      // Approved UID for syarifahrasul1996@gmail.com
+      return isSignedIn() && request.auth.uid == "HQbvTmFoJVVZYF73w026vh6wmPX2";
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    // -- 2. Entity Validation --
+    function isValidOrder(data) {
+      let requiredFields = [
+        'documentId', 'customerName', 'customerPhone', 'customerOrder', 
+        'customerTemplate', 'customerBahasa', 'customerAddOn', 'customerJenis',
+        'deliveryDate', 'originalDue', 'orderLink', 'price', 'isDelivered',
+        'migrationVersion', 'migratedAt'
+      ];
+      
+      return data.keys().hasAll(requiredFields) &&
+      data.documentId is string && data.documentId.size() <= 128 &&
+      data.customerName is string && data.customerName.size() <= 256 &&
+      data.customerPhone is string && data.customerPhone.size() <= 32 &&
+      data.customerOrder is string && data.customerOrder.size() <= 128 &&
+      data.customerTemplate is string && data.customerTemplate.size() <= 128 &&
+      data.customerBahasa is string && data.customerBahasa.size() <= 64 &&
+      data.customerAddOn is string && data.customerAddOn.size() <= 256 &&
+      data.customerJenis is string && data.customerJenis.size() <= 64 &&
+      (data.deliveryDate == null || data.deliveryDate is timestamp) &&
+      data.originalDue is string && data.originalDue.size() <= 128 &&
+      data.orderLink is string && data.orderLink.size() <= 1024 &&
+      (data.price == null || data.price is number) &&
+      data.isDelivered is bool &&
+      data.migrationVersion == '1.0-canary' &&
+      data.migratedAt is timestamp &&
+      // Validation for optional fields if they exist
+      (!data.keys().hasAny(['originalOrderId']) || data.originalOrderId == null || data.originalOrderId is string) &&
+      (!data.keys().hasAny(['generatedOrderId']) || data.generatedOrderId is bool) &&
+      (!data.keys().hasAny(['sourceSpreadsheetId']) || data.sourceSpreadsheetId is string);
+    }
+
+    // -- 3. Collection-Specific Rules --
+
+    match /orders_canary/{orderId} {
+      allow read: if isOwner();
+      allow create: if isOwner() && isValidId(orderId) && isValidOrder(incoming());
+      allow update: if isOwner() && isValidId(orderId) && isValidOrder(incoming());
+      allow delete: if isOwner() && isValidId(orderId);
+    }
+
+    match /orders_archive_canary/{orderId} {
+      allow read: if isOwner();
+      allow write: if false;
+    }
+
+    match /orders_migration_staging/{doc=**} { allow read: if true; allow write: if false; }
+    match /orders/{doc=**} { allow read, write: if false; }
+    match /orders_archive/{doc=**} { allow read, write: if false; }
+
+    // -- 4. Global Catch-All Deny --
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

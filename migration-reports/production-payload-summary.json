@@ -1,0 +1,12 @@
+{
+  "payloadDocumentCount": 5983,
+  "ordersCount": 320,
+  "ordersArchiveCount": 5663,
+  "uniqueDocumentIds": 5983,
+  "uniqueSourceKeys": 5983,
+  "unsafeIdsReplaced": 11,
+  "blankIdsReplaced": 5540,
+  "duplicateIdsFound": 0,
+  "duplicateSourceKeysFound": 0,
+  "payloadSha256": "377058797bcd3e0a0d02deb60059b0f131f6cb39a40921509a55752c35d3e306"
+}

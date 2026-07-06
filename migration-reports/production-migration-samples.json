@@ -1,0 +1,474 @@
+{
+  "orders": [
+    {
+      "id": "sheet-5ffe084cadea53ab",
+      "data": {
+        "isDelivered": false,
+        "customerName": "Nur Azmira",
+        "customerPhone": "60 11-1052 0602",
+        "customerOrder": "Resume",
+        "customerTemplate": "ATS",
+        "customerBahasa": "English",
+        "customerAddOn": "No add on",
+        "customerJenis": "Tidak Urgent",
+        "originalDue": "04/07/2024 at 5:13pm",
+        "normalizedDue": "2024-07-04",
+        "orderLink": "",
+        "orderId": "sheet-5ffe084cadea53ab",
+        "originalOrderId": null,
+        "generatedOrderId": true,
+        "price": null,
+        "originalPrice": ""
+      }
+    },
+    {
+      "id": "sheet-6cf7264600fb913f",
+      "data": {
+        "isDelivered": false,
+        "customerName": "Nor Atira",
+        "customerPhone": "‪60 10‑265 3788‬",
+        "customerOrder": "Resume",
+        "customerTemplate": "B7",
+        "customerBahasa": "Melayu",
+        "customerAddOn": "No add on",
+        "customerJenis": "Super Urgent",
+        "originalDue": "03/02/2025 at 10:28pm",
+        "normalizedDue": "2025-02-03",
+        "orderLink": "https://www.canva.com/design/DAGdxccuOX8/UVCUeNgKHE2CkFiCkC3nCA/edit?utm_content=DAGdxccuOX8&utm_campaign=designshare&utm_medium=link2&utm_source=sharebutton",
+        "orderId": "sheet-6cf7264600fb913f",
+        "originalOrderId": null,
+        "generatedOrderId": true,
+        "price": null,
+        "originalPrice": ""
+      }
+    },
+    {
+      "id": "sheet-709f27f013b6e70a",
+      "data": {
+        "isDelivered": false,
+        "customerName": "Kesavan",
+        "customerPhone": "‪60 11‑2648 7508‬",
+        "customerOrder": "Resume",
+        "customerTemplate": "A",
+        "customerBahasa": "English",
+        "customerAddOn": "Editable softcopy",
+        "customerJenis": "Tidak Urgent",
+        "originalDue": "11/02/2025 at 6:54pm",
+        "normalizedDue": "2025-02-11",
+        "orderLink": "https://www.canva.com/design/DAGev32wvXE/OREBMl2QXYk27pteOVzi4w/edit?utm_content=DAGev32wvXE&utm_campaign=designshare&utm_medium=link2&utm_source=sharebutton",
+        "orderId": "separate page",
+        "originalOrderId": "separate page",
+        "generatedOrderId": false,
+        "price": null,
+        "originalPrice": ""
+      }
+    },
+    {
+      "id": "sheet-03ee9b42bbc06f0c",
+      "data": {
+        "isDelivered": false,
+        "customerName": "Vimalan",
+        "customerPhone": "‪60 11‑1636 7813‬",
+        "customerOrder": "Resume",
+        "customerTemplate": "A4",
+        "customerBahasa": "English",
+        "customerAddOn": "No add on",
+        "customerJenis": "Super Urgent",
+        "originalDue": "28/02/2025 at 7:35pm",
+        "normalizedDue": "2025-02-28",
+        "orderLink": "https://www.canva.com/design/DAGgYc2zhoU/Fkd_JsPI6BB7MrmxVnkgFQ/edit?utm_content=DAGgYc2zhoU&utm_campaign=designshare&utm_medium=link2&utm_source=sharebutton",
+        "orderId": "sheet-03ee9b42bbc06f0c",
+        "originalOrderId": null,
+        "generatedOrderId": true,
+        "price": null,
+        "originalPrice": ""
+      }
+    },
+    {
+      "id": "sheet-cbf62f52fb798332",
+      "data": {
+        "isDelivered": false,
+        "customerName": "Praveenthiran",
+        "customerPhone": "‪65 8497 8244‬",
+        "customerOrder": "Edit PDF",
+        "customerTemplate": "",
+        "customerBahasa": "",
+        "customerAddOn": "",
+        "customerJenis": "Tidak Urgent",
+        "originalDue": "30/03/2025 at 11:36am",
+        "normalizedDue": "2025-03-30",
+        "orderLink": "https://drive.google.com/file/d/1Vib4OGY21L6p-fC6N0uqpIE2EOZoqGVf/view?usp=sharing",
+        "orderId": "sheet-cbf62f52fb798332",
+        "originalOrderId": null,
+        "generatedOrderId": true,
+        "price": null,
+        "originalPrice": ""
+      }
+    }
+  ],
+  "archive": [
+    {
+      "id": "sheet-4f05d11a89b0005c",
+      "data": {
+        "isDelivered": true,
+        "customerName": "Rohafezah",
+        "customerPhone": "60 19-3515075",
+        "customerOrder": "Resume",
+        "customerTemplate": "A6",
+        "customerBahasa": "Melayu",
+        "customerAddOn": "No add on",
+        "customerJenis": "Tidak Urgent",
+        "originalDue": "07/07/2024 at 8:41pm",
+        "normalizedDue": "2024-07-07",
+        "orderLink": "",
+        "orderId": "sheet-4f05d11a89b0005c",
+        "originalOrderId": null,
+        "generatedOrderId": true,
+        "price": null,
+        "originalPrice": ""
+      }
+    },
+    {
+      "id": "sheet-ff79047f86f4d577",
+      "data": {
+        "isDelivered": true,
+        "customerName": "SITI MUNIRAH BINTI AHMAD",
+        "customerPhone": "60 12-2719803",
+        "customerOrder": "Resume",
+        "customerTemplate": "B4",
+        "customerBahasa": "English",
+        "customerAddOn": "No add on",
+        "customerJenis": "Tidak Urgent",
+        "originalDue": "08/07/2024 at 11:06am",
+        "normalizedDue": "2024-07-08",
+        "orderLink": "",
+        "orderId": "sheet-ff79047f86f4d577",
+        "originalOrderId": null,
+        "generatedOrderId": true,
+        "price": null,
+        "originalPrice": ""
+      }
+    },
+    {
+      "id": "sheet-d788a5a14cf801db",
+      "data": {
+        "isDelivered": true,
+        "customerName": "Muhammad Syahmi",
+        "customerPhone": "60198294671",
+        "customerOrder": "Resume",
+        "customerTemplate": "A18",
+        "customerBahasa": "English",
+        "customerAddOn": "No add on",
+        "customerJenis": "Tidak Urgent",
+        "originalDue": "08/07/2024 at 5:36pm",
+        "normalizedDue": "2024-07-08",
+        "orderLink": "",
+        "orderId": "sheet-d788a5a14cf801db",
+        "originalOrderId": null,
+        "generatedOrderId": true,
+        "price": null,
+        "originalPrice": ""
+      }
+    },
+    {
+      "id": "sheet-194f85a6f47fbe1e",
+      "data": {
+        "isDelivered": true,
+        "customerName": "Muhammad abdul hakeem",
+        "customerPhone": "60195357478",
+        "customerOrder": "Resume",
+        "customerTemplate": "A15",
+        "customerBahasa": "English",
+        "customerAddOn": "No add on",
+        "customerJenis": "Tidak Urgent",
+        "originalDue": "08/07/2024 at 6:40pm",
+        "normalizedDue": "2024-07-08",
+        "orderLink": "",
+        "orderId": "sheet-194f85a6f47fbe1e",
+        "originalOrderId": null,
+        "generatedOrderId": true,
+        "price": null,
+        "originalPrice": ""
+      }
+    },
+    {
+      "id": "sheet-109453c82c59ca73",
+      "data": {
+        "isDelivered": true,
+        "customerName": "Nursyahirah Binti Che Mahadi",
+        "customerPhone": "6 013-6751629",
+        "customerOrder": "Resume",
+        "customerTemplate": "A5",
+        "customerBahasa": "Melayu",
+        "customerAddOn": "No add on",
+        "customerJenis": "Urgent",
+        "originalDue": "08/07/2024 at 8:00pm",
+        "normalizedDue": "2024-07-08",
+        "orderLink": "",
+        "orderId": "sheet-109453c82c59ca73",
+        "originalOrderId": null,
+        "generatedOrderId": true,
+        "price": null,
+        "originalPrice": ""
+      }
+    }
+  ],
+  "safeIds": [
+    {
+      "id": "GAMBAL",
+      "original": "GAMBAL"
+    },
+    {
+      "id": "10",
+      "original": "10"
+    },
+    {
+      "id": "15",
+      "original": "15"
+    },
+    {
+      "id": "40",
+      "original": "40"
+    },
+    {
+      "id": "ORD-20260626-104413",
+      "original": "ORD-20260626-104413"
+    }
+  ],
+  "replacedIds": [
+    {
+      "id": "sheet-5ffe084cadea53ab",
+      "original": null
+    },
+    {
+      "id": "sheet-4f05d11a89b0005c",
+      "original": null
+    },
+    {
+      "id": "sheet-ff79047f86f4d577",
+      "original": null
+    },
+    {
+      "id": "sheet-d788a5a14cf801db",
+      "original": null
+    },
+    {
+      "id": "sheet-194f85a6f47fbe1e",
+      "original": null
+    }
+  ],
+  "nullPrice": [
+    {
+      "id": "sheet-5ffe084cadea53ab",
+      "data": {
+        "isDelivered": false,
+        "customerName": "Nur Azmira",
+        "customerPhone": "60 11-1052 0602",
+        "customerOrder": "Resume",
+        "customerTemplate": "ATS",
+        "customerBahasa": "English",
+        "customerAddOn": "No add on",
+        "customerJenis": "Tidak Urgent",
+        "originalDue": "04/07/2024 at 5:13pm",
+        "normalizedDue": "2024-07-04",
+        "orderLink": "",
+        "orderId": "sheet-5ffe084cadea53ab",
+        "originalOrderId": null,
+        "generatedOrderId": true,
+        "price": null,
+        "originalPrice": ""
+      }
+    },
+    {
+      "id": "sheet-4f05d11a89b0005c",
+      "data": {
+        "isDelivered": true,
+        "customerName": "Rohafezah",
+        "customerPhone": "60 19-3515075",
+        "customerOrder": "Resume",
+        "customerTemplate": "A6",
+        "customerBahasa": "Melayu",
+        "customerAddOn": "No add on",
+        "customerJenis": "Tidak Urgent",
+        "originalDue": "07/07/2024 at 8:41pm",
+        "normalizedDue": "2024-07-07",
+        "orderLink": "",
+        "orderId": "sheet-4f05d11a89b0005c",
+        "originalOrderId": null,
+        "generatedOrderId": true,
+        "price": null,
+        "originalPrice": ""
+      }
+    },
+    {
+      "id": "sheet-ff79047f86f4d577",
+      "data": {
+        "isDelivered": true,
+        "customerName": "SITI MUNIRAH BINTI AHMAD",
+        "customerPhone": "60 12-2719803",
+        "customerOrder": "Resume",
+        "customerTemplate": "B4",
+        "customerBahasa": "English",
+        "customerAddOn": "No add on",
+        "customerJenis": "Tidak Urgent",
+        "originalDue": "08/07/2024 at 11:06am",
+        "normalizedDue": "2024-07-08",
+        "orderLink": "",
+        "orderId": "sheet-ff79047f86f4d577",
+        "originalOrderId": null,
+        "generatedOrderId": true,
+        "price": null,
+        "originalPrice": ""
+      }
+    },
+    {
+      "id": "sheet-d788a5a14cf801db",
+      "data": {
+        "isDelivered": true,
+        "customerName": "Muhammad Syahmi",
+        "customerPhone": "60198294671",
+        "customerOrder": "Resume",
+        "customerTemplate": "A18",
+        "customerBahasa": "English",
+        "customerAddOn": "No add on",
+        "customerJenis": "Tidak Urgent",
+        "originalDue": "08/07/2024 at 5:36pm",
+        "normalizedDue": "2024-07-08",
+        "orderLink": "",
+        "orderId": "sheet-d788a5a14cf801db",
+        "originalOrderId": null,
+        "generatedOrderId": true,
+        "price": null,
+        "originalPrice": ""
+      }
+    },
+    {
+      "id": "sheet-194f85a6f47fbe1e",
+      "data": {
+        "isDelivered": true,
+        "customerName": "Muhammad abdul hakeem",
+        "customerPhone": "60195357478",
+        "customerOrder": "Resume",
+        "customerTemplate": "A15",
+        "customerBahasa": "English",
+        "customerAddOn": "No add on",
+        "customerJenis": "Tidak Urgent",
+        "originalDue": "08/07/2024 at 6:40pm",
+        "normalizedDue": "2024-07-08",
+        "orderLink": "",
+        "orderId": "sheet-194f85a6f47fbe1e",
+        "originalOrderId": null,
+        "generatedOrderId": true,
+        "price": null,
+        "originalPrice": ""
+      }
+    }
+  ],
+  "nullDelivery": [
+    {
+      "id": "sheet-44cf692b60421ea0",
+      "data": {
+        "isDelivered": true,
+        "customerName": "Zulhelmi",
+        "customerPhone": "",
+        "customerOrder": "Resume",
+        "customerTemplate": "A14",
+        "customerBahasa": "English",
+        "customerAddOn": "No add on",
+        "customerJenis": "Urgent",
+        "originalDue": "",
+        "normalizedDue": null,
+        "orderLink": "https://www.canva.com/design/DAGLwGEw94I/mFa_2btdbUtLO5o13ZcXng/edit?utm_content=DAGLwGEw94I&utm_campaign=designshare&utm_medium=link2&utm_source=sharebutton",
+        "orderId": "sheet-44cf692b60421ea0",
+        "originalOrderId": null,
+        "generatedOrderId": true,
+        "price": null,
+        "originalPrice": ""
+      }
+    },
+    {
+      "id": "sheet-e816c542ee1550e5",
+      "data": {
+        "isDelivered": true,
+        "customerName": "Muhammad Adib",
+        "customerPhone": "",
+        "customerOrder": "Resume",
+        "customerTemplate": "A10",
+        "customerBahasa": "English",
+        "customerAddOn": "No add on",
+        "customerJenis": "Urgent",
+        "originalDue": "",
+        "normalizedDue": null,
+        "orderLink": "https://www.canva.com/design/DAGLv7n5be8/YChbotpdDZsdmf6og8cRYg/edit?utm_content=DAGLv7n5be8&utm_campaign=designshare&utm_medium=link2&utm_source=sharebutton",
+        "orderId": "sheet-e816c542ee1550e5",
+        "originalOrderId": null,
+        "generatedOrderId": true,
+        "price": null,
+        "originalPrice": ""
+      }
+    },
+    {
+      "id": "sheet-ed3ae55b8dd5e409",
+      "data": {
+        "isDelivered": true,
+        "customerName": "Muhammad Arif",
+        "customerPhone": "",
+        "customerOrder": "Resume",
+        "customerTemplate": "A17",
+        "customerBahasa": "Melayu",
+        "customerAddOn": "No add on",
+        "customerJenis": "Urgent",
+        "originalDue": "",
+        "normalizedDue": null,
+        "orderLink": "https://www.canva.com/design/DAGMGgWFj6o/F-fPfIzXlh8V7VMr_7s_3A/edit?utm_content=DAGMGgWFj6o&utm_campaign=designshare&utm_medium=link2&utm_source=sharebutton",
+        "orderId": "sheet-ed3ae55b8dd5e409",
+        "originalOrderId": null,
+        "generatedOrderId": true,
+        "price": null,
+        "originalPrice": ""
+      }
+    },
+    {
+      "id": "sheet-30c17a58eb89642e",
+      "data": {
+        "isDelivered": true,
+        "customerName": "Emylia Natashsh",
+        "customerPhone": "",
+        "customerOrder": "Resume",
+        "customerTemplate": "",
+        "customerBahasa": "Melayu",
+        "customerAddOn": "No add on",
+        "customerJenis": "Urgent",
+        "originalDue": "",
+        "normalizedDue": null,
+        "orderLink": "https://www.canva.com/design/DAGMG7oWCzc/EXeDQE_2BpNkZUGL_COgWw/edit?utm_content=DAGMG7oWCzc&utm_campaign=designshare&utm_medium=link2&utm_source=sharebutton",
+        "orderId": "sheet-30c17a58eb89642e",
+        "originalOrderId": null,
+        "generatedOrderId": true,
+        "price": null,
+        "originalPrice": ""
+      }
+    },
+    {
+      "id": "sheet-9213a05284dbbbf8",
+      "data": {
+        "isDelivered": true,
+        "customerName": "Nurul Haziqah Binti Hussian",
+        "customerPhone": "601128369838",
+        "customerOrder": "Resume",
+        "customerTemplate": "A15",
+        "customerBahasa": "",
+        "customerAddOn": "No add on",
+        "customerJenis": "Tidak Urgent",
+        "originalDue": "",
+        "normalizedDue": null,
+        "orderLink": "",
+        "orderId": "sheet-9213a05284dbbbf8",
+        "originalOrderId": null,
+        "generatedOrderId": true,
+        "price": null,
+        "originalPrice": ""
+      }
+    }
+  ]
+}

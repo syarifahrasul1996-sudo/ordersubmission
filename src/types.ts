@@ -43,9 +43,21 @@ export interface AppState {
   dashboardFilterYear?: string;
   lastModifiedLocally?: number;
   isDeleted?: boolean;
+  ENABLE_CANARY_FIRESTORE?: boolean;
+  status?: string;
+  type?: string;
 }
 
 export type ViewType = 'home' | 'resume-type' | 'resume-form-fields' | 'general-form' | 'confirmation' | 'output' | 'history' | 'customer-info' | 'dashboard' | 'contacts-sync' | 'others';
+
+export interface InAppNotification {
+  id: string;
+  title: string;
+  body: string;
+  timestamp: number;
+  isRead: boolean;
+  type?: 'soon' | 'due' | 'sync' | 'status_query';
+}
 
 export interface OrderHistoryItem {
   id: string;
@@ -91,4 +103,5 @@ export const INITIAL_STATE: AppState = {
   dashboardFilterMonth: 'all',
   dashboardFilterYear: new Date().getFullYear().toString(),
   isDeleted: false,
+  ENABLE_CANARY_FIRESTORE: false,
 };

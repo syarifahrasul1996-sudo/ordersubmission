@@ -1,0 +1,80 @@
+[
+  {
+    "num": 1,
+    "name": "Read Access to orders_canary",
+    "pass": true,
+    "evidence": "Successfully read collection. Found 10 documents."
+  },
+  {
+    "num": 2,
+    "name": "Read Access to orders_archive_canary",
+    "pass": true,
+    "evidence": "Successfully read collection. Found 10 documents."
+  },
+  {
+    "num": 3,
+    "name": "Exactly 10 documents in orders_canary",
+    "pass": true,
+    "evidence": "Collection size is 10 (Expected: 10)."
+  },
+  {
+    "num": 4,
+    "name": "Exactly 10 documents in orders_archive_canary",
+    "pass": true,
+    "evidence": "Collection size is 10 (Expected: 10)."
+  },
+  {
+    "num": 5,
+    "name": "Exactly 5,983 documents in orders_migration_staging",
+    "pass": true,
+    "evidence": "Collection size is 5983 (Expected: 5983)."
+  },
+  {
+    "num": 6,
+    "name": "Retrieve 5 operational undelivered orders inside window",
+    "pass": true,
+    "evidence": "Found 5 orders: [ORD-20260624-185849, ORD-20260625-233432, ORD-20260626-102534, ORD-20260626-112229, ORD-20260626-170425]. Operational window: 2026-06-25 to 2026-07-01."
+  },
+  {
+    "num": 7,
+    "name": "Retrieve 5 overdue undelivered orders before today",
+    "pass": true,
+    "evidence": "Found 5 orders: [sheet-cbf62f52fb798332, sheet-03ee9b42bbc06f0c, separate page, sheet-6cf7264600fb913f, sheet-5ffe084cadea53ab]."
+  },
+  {
+    "num": 8,
+    "name": "Retrieve 10 archived historical records",
+    "pass": true,
+    "evidence": "Found 10 records: [sheet-d7bac7193d2b80e3, sheet-b9984591484c537b, sheet-6de515b540f5d24e, sheet-53e8855717a27c5a, sheet-05f9aeb805c5813e, sheet-ff79047f86f4d577, sheet-d788a5a14cf801db, sheet-194f85a6f47fbe1e, sheet-109453c82c59ca73, sheet-4f05d11a89b0005c]."
+  },
+  {
+    "num": 9,
+    "name": "Preservation of price fields (numeric and null value integrity)",
+    "pass": true,
+    "evidence": "Found 10 null prices and 0 numeric prices inside orders_canary."
+  },
+  {
+    "num": 10,
+    "name": "Date field mapping and deserialization to AppState milliseconds",
+    "pass": true,
+    "evidence": "Date is represented as Firestore Timestamp: {\"type\":\"firestore/timestamp/1.0\",\"seconds\":1782518400,\"nanoseconds\":0}."
+  },
+  {
+    "num": 11,
+    "name": "Write/Update permission and successful record editing in orders_canary",
+    "pass": true,
+    "evidence": "Update succeeded: true, Restore succeeded: true."
+  },
+  {
+    "num": 12,
+    "name": "Write/Update permission and successful record editing in orders_archive_canary",
+    "pass": true,
+    "evidence": "Update succeeded: true, Restore succeeded: true."
+  },
+  {
+    "num": 13,
+    "name": "Canary order search query filter performance",
+    "pass": true,
+    "evidence": "Found 1 records. Matching document ID: ORD-20260624-185849."
+  }
+]

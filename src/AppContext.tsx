@@ -1,6 +1,155 @@
 import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
-import { AppState, INITIAL_STATE, ViewType, OrderHistoryItem } from './types';
+import { AppState, INITIAL_STATE, ViewType, OrderHistoryItem, InAppNotification } from './types';
 import { getSubscription, syncPushNotifications, clearPushNotifications } from './lib/push';
+import { getOperationalOrders, getOverdueOrders, getArchivedOrders } from './services/firestoreOrders';
+import { parseDateStringToTimestamp } from './utils';
+
+const deduplicateHistory = (items: OrderHistoryItem[]): OrderHistoryItem[] => {
+  if (!Array.isArray(items)) return [];
+
+  const normalizeText = (value: unknown) =>
+    String(value || '')
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, ' ');
+
+  const normalizePhone = (value: unknown) =>
+    String(value || '').replace(/\D/g, '');
+
+  const parseDueTimestamp = (value: unknown): number => {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === 'string' && /^\d+$/.test(value.trim())) {
+      const num = Number(value.trim());
+      if (Number.isFinite(num)) {
+        return num;
+      }
+    }
+    if (typeof value !== 'string' || !value.trim()) {
+      return 0;
+    }
+    return parseDateStringToTimestamp(value, 0).timestamp;
+  };
+
+  const getDueDayTimestamp = (value: unknown): number => {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      const d = new Date(value);
+      d.setHours(0, 0, 0, 0);
+      return d.getTime();
+    }
+    if (typeof value === 'string' && /^\d+$/.test(value.trim())) {
+      const num = Number(value.trim());
+      if (Number.isFinite(num)) {
+        const d = new Date(num);
+        d.setHours(0, 0, 0, 0);
+        return d.getTime();
+      }
+    }
+    if (typeof value !== 'string' || !value.trim()) {
+      return 0;
+    }
+    const { date } = parseDateStringToTimestamp(value, 0);
+    const d = new Date(date);
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+  };
+
+  const result: OrderHistoryItem[] = [];
+
+  for (const item of items) {
+    if (!item || !item.id) continue;
+
+    const localState: Partial<AppState> = item.state || {};
+    const localId = String(localState.orderId || item.id || '');
+    const isLocalTemp = localId.startsWith('SYNC-') || localId.startsWith('draft_') || !localId;
+
+    // Check if there is an existing item in result that is a duplicate of this item
+    const duplicateIdx = result.findIndex(existing => {
+      const existingState: Partial<AppState> = existing.state || {};
+      const existingId = String(existingState.orderId || existing.id || '');
+      const isExistingTemp = existingId.startsWith('SYNC-') || existingId.startsWith('draft_') || !existingId;
+
+      // 1. Direct ID matching
+      if (
+        item.id === existing.id ||
+        (localState.orderId && localState.orderId === existing.id) ||
+        (existingState.orderId && existingState.orderId === item.id) ||
+        (localState.orderId && existingState.orderId && localState.orderId === existingState.orderId)
+      ) {
+        return true;
+      }
+
+      // 2. Fallback content matching (to prevent duplicate records on the same day)
+      const sameName =
+        normalizeText(localState.customerName) === normalizeText(existingState.customerName);
+      
+      const samePhone =
+        normalizePhone(localState.customerPhone) === normalizePhone(existingState.customerPhone);
+
+      const sameDueDay =
+        getDueDayTimestamp(localState.customerDue || localState.dueTimestamp) ===
+        getDueDayTimestamp(existingState.customerDue || existingState.dueTimestamp);
+
+      const sameOrder =
+        normalizeText(localState.customerOrder || localState.mainType) ===
+        normalizeText(existingState.customerOrder || existingState.mainType);
+
+      if (sameName && samePhone && sameDueDay && sameOrder) {
+        return true;
+      }
+
+      return false;
+    });
+
+    if (duplicateIdx !== -1) {
+      // We found a duplicate! Let's choose the better one to keep.
+      const existing = result[duplicateIdx];
+      const existingState: Partial<AppState> = existing.state || {};
+      const existingId = String(existingState.orderId || existing.id || '');
+      const isExistingTemp = existingId.startsWith('SYNC-') || existingId.startsWith('draft_') || !existingId;
+
+      let preferNew = false;
+      if (isExistingTemp && !isLocalTemp) {
+        preferNew = true;
+      } else if (isLocalTemp && !isExistingTemp) {
+        preferNew = false;
+      } else {
+        const existingSynced = existingState.syncStatus === 'synced';
+        const localSynced = localState.syncStatus === 'synced';
+        if (!existingSynced && localSynced) {
+          preferNew = true;
+        } else if (existingSynced && !localSynced) {
+          preferNew = false;
+        } else {
+          // If both have the same sync state, compare the due timestamps (prefer later/most updated due time)
+          const existingTime = parseDueTimestamp(existingState.customerDue || existingState.dueTimestamp);
+          const localTime = parseDueTimestamp(localState.customerDue || localState.dueTimestamp);
+          
+          if (localTime > existingTime) {
+            preferNew = true;
+          } else if (localTime < existingTime) {
+            preferNew = false;
+          } else {
+            const existingKeys = Object.keys(existingState).length;
+            const localKeys = Object.keys(localState).length;
+            if (localKeys > existingKeys) {
+              preferNew = true;
+            }
+          }
+        }
+      }
+
+      if (preferNew) {
+        result[duplicateIdx] = item;
+      }
+    } else {
+      result.push(item);
+    }
+  }
+
+  return result;
+};
 
 interface AppContextType {
   state: AppState;
@@ -43,6 +192,11 @@ interface AppContextType {
   setHistoryDeliveryFilter: (val: 'all' | 'delivered' | 'pending') => void;
   historyPendingTimeFilter: 'all' | 'today' | 'tomorrow' | '2days' | '3days';
   setHistoryPendingTimeFilter: (val: 'all' | 'today' | 'tomorrow' | '2days' | '3days') => void;
+  syncOrders: () => Promise<void>;
+  inAppNotifications: InAppNotification[];
+  markNotificationAsRead: (id: string) => void;
+  clearAllNotifications: () => void;
+  addInAppNotification: (title: string, body: string, type?: 'soon' | 'due' | 'sync' | 'status_query') => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -105,18 +259,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   });
 
-  const [history, setHistory] = useState<OrderHistoryItem[]>(() => {
+  const [history, setHistoryState] = useState<OrderHistoryItem[]>(() => {
     try {
       const saved = localStorage.getItem('orderHistory');
       if (saved) {
         const parsed = JSON.parse(saved);
-        return Array.isArray(parsed) ? parsed : [];
+        return Array.isArray(parsed) ? deduplicateHistory(parsed) : [];
       }
       return [];
     } catch {
       return [];
     }
   });
+
+  const setHistory = (value: React.SetStateAction<OrderHistoryItem[]>) => {
+    setHistoryState(prev => {
+      const next = typeof value === 'function' ? (value as any)(prev) : value;
+      return deduplicateHistory(next);
+    });
+  };
 
   const [deletedOrderIds, setDeletedOrderIds] = useState<string[]>(() => {
     try {
@@ -132,18 +293,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('deletedOrderIds', JSON.stringify(deletedOrderIds));
   }, [deletedOrderIds]);
 
-  const [drafts, setDrafts] = useState<OrderHistoryItem[]>(() => {
+  const [drafts, setDraftsState] = useState<OrderHistoryItem[]>(() => {
     try {
       const saved = localStorage.getItem('orderDrafts');
       if (saved) {
         const parsed = JSON.parse(saved);
-        return Array.isArray(parsed) ? parsed : [];
+        return Array.isArray(parsed) ? deduplicateHistory(parsed) : [];
       }
       return [];
     } catch {
       return [];
     }
   });
+
+  const setDrafts = (value: React.SetStateAction<OrderHistoryItem[]>) => {
+    setDraftsState(prev => {
+      const next = typeof value === 'function' ? (value as any)(prev) : value;
+      return deduplicateHistory(next);
+    });
+  };
 
   useEffect(() => {
     localStorage.setItem('appState', JSON.stringify(state));
@@ -180,7 +348,40 @@ export function AppProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('appLanguage', appLanguage);
   }, [appLanguage]);
 
+  const [inAppNotifications, setInAppNotifications] = useState<InAppNotification[]>(() => {
+    try {
+      const saved = localStorage.getItem('inAppNotifications');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
   useEffect(() => {
+    localStorage.setItem('inAppNotifications', JSON.stringify(inAppNotifications));
+  }, [inAppNotifications]);
+
+  const addInAppNotification = (title: string, body: string, type?: 'soon' | 'due' | 'sync' | 'status_query') => {
+    const newNotif: InAppNotification = {
+      id: `notif_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      title,
+      body,
+      timestamp: Date.now(),
+      isRead: false,
+      type
+    };
+    setInAppNotifications(prev => [newNotif, ...prev]);
+  };
+
+  const markNotificationAsRead = (id: string) => {
+    setInAppNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
+  };
+
+  const clearAllNotifications = () => {
+    setInAppNotifications([]);
+  };
+
+
     const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbw5KpBvJyFpIXmsHueg4XPSRkZ0mg6kxHqjMGp3WEs8Hx_JodvKSoKEg6RMsdH54iCa/exec';
 
     const extractId = (input: string) => {
@@ -251,11 +452,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
       });
     };
 
+  useEffect(() => {
     const checkAlerts = () => {
       const now = Date.now();
       const TWENTY_MINS = 20 * 60 * 1000;
       const THREE_HOURS = 3 * 60 * 60 * 1000;
       
+      const alertsToTrigger: Array<{ title: string; body: string; type: 'soon' | 'due' | 'status_query' }> = [];
+
       setHistory(prevHistory => {
         let updatedHistory = false;
         const newHistory = prevHistory.map(item => {
@@ -299,6 +503,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
                         const notifyTitle = appLanguage === 'ms' ? 'Status Tempahan' : 'Ask Order Status';
                         const notifyBody = `${customerName || 'Customer'} (${mainType || 'Tempahan'}) - Dah siap ke belum? Link masih belum dimasukkan.`;
                         
+                        addInAppNotification(notifyTitle, notifyBody, 'status_query');
                         try {
                           if ('Notification' in window && Notification.permission === 'granted') {
                             new Notification(notifyTitle, { body: notifyBody });
@@ -317,6 +522,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
                       const notifyTitle = appLanguage === 'ms' ? 'Status Tempahan' : 'Ask Order Status';
                       const notifyBody = `${customerName || 'Customer'} (${mainType || 'Tempahan'}) - Dah siap ke belum? Link masih belum dimasukkan.`;
                       
+                      addInAppNotification(notifyTitle, notifyBody, 'status_query');
                       try {
                         if ('Notification' in window && Notification.permission === 'granted') {
                           new Notification(notifyTitle, { body: notifyBody });
@@ -334,6 +540,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
                   const notifyTitle = appLanguage === 'ms' ? 'Status Tempahan' : 'Ask Order Status';
                   const notifyBody = `${customerName || 'Customer'} (${mainType || 'Tempahan'}) - Dah siap ke belum? Link masih belum dimasukkan.`;
                   
+                  alertsToTrigger.push({ title: notifyTitle, body: notifyBody, type: 'status_query' });
                   try {
                     if ('Notification' in window && Notification.permission === 'granted') {
                       new Notification(notifyTitle, { body: notifyBody });
@@ -351,6 +558,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
                 ? `Pesanan untuk ${customerName || 'Pelanggan'} (${mainType} ${subType}) berbaki kurang dari 20 minit!`
                 : `Order for ${customerName || 'Customer'} (${mainType} ${subType}) is due in less than 20 minutes!`;
               
+              alertsToTrigger.push({ title, body, type: 'soon' });
               try {
                 if ('Notification' in window && Notification.permission === 'granted') {
                   new Notification(title, { body });
@@ -367,6 +575,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
                 ? `Tempahan untuk ${customerName || 'Pelanggan'} (${mainType} ${subType}) sudah sampai tempoh sekarang!`
                 : `Order for ${customerName || 'Customer'} (${mainType} ${subType}) is due now!`;
               
+              alertsToTrigger.push({ title, body, type: 'due' });
               try {
                 if ('Notification' in window && Notification.permission === 'granted') {
                   new Notification(title, { body });
@@ -389,6 +598,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
         return updatedHistory ? newHistory : prevHistory;
       });
+
+      if (alertsToTrigger.length > 0) {
+        setInAppNotifications(prev => {
+          const newAlerts = alertsToTrigger.map(a => ({
+            id: `notif_${Date.now()}_${Math.round(Math.random() * 1000000)}`,
+            title: a.title,
+            body: a.body,
+            timestamp: Date.now(),
+            isRead: false,
+            type: a.type
+          }));
+          return [...newAlerts, ...prev];
+        });
+      }
     };
 
     // Ask for permission and trigger PWA/Web Push subscription registration if supported
@@ -526,13 +749,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setLastSyncTime(now);
       localStorage.setItem('db_last_sync_time', String(now));
 
+      const title = appLanguage === 'ms' ? 'Kemaskini Selesai' : 'Sync Completed';
+      const body = appLanguage === 'ms' 
+        ? `${processedCount} rekod luar talian telah berjaya dikemaskini.` 
+        : `${processedCount} records from queue synced.`;
+
+      addInAppNotification(title, body, 'sync');
+
       try {
         if ('Notification' in window && Notification.permission === 'granted') {
-          new Notification(appLanguage === 'ms' ? 'Kemaskini Selesai' : 'Sync Completed', { 
-            body: appLanguage === 'ms' 
-              ? `${processedCount} rekod luar talian telah berjaya dikemaskini.` 
-              : `${processedCount} records from queue synced.` 
-          });
+          new Notification(title, { body });
         }
       } catch(e) {}
     }
@@ -559,6 +785,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     // Initial check
     syncOfflineQueue();
+    syncOrders();
 
     return () => {
       window.removeEventListener('online', handleOnline);
@@ -566,6 +793,78 @@ export function AppProvider({ children }: { children: ReactNode }) {
       window.removeEventListener('storage', handleStorageChange);
     };
   }, [appLanguage]);
+
+  const syncOrders = async () => {
+    setIsSyncing(true);
+    try {
+      const savedSheets = localStorage.getItem('db_annual_sheets');
+      const annualSheets = savedSheets ? JSON.parse(savedSheets) : [
+        { year: '2024', spreadsheetId: '1B9zdWXVLnvj0jNNVnKxcb6cJnS1VLCIdB4j-RR3wOlg', scriptUrl: '' },
+        { year: '2025', spreadsheetId: '1myU9apnYWWtU3snnCw14qI6ZS05i4DY6oOswLz1sCwo', scriptUrl: '' },
+        { year: '2026', spreadsheetId: '1kUAJYUVhr9bPYErtpnohpvuGGyhBSvJyEOIyzEFivJo', scriptUrl: '' }
+      ];
+
+      const [operational, overdue, archived, ...sheetResults] = await Promise.all([
+        getOperationalOrders(),
+        getOverdueOrders(),
+        getArchivedOrders(),
+        ...annualSheets.map(async (sheet: any) => {
+          if (!sheet.spreadsheetId?.trim()) return [];
+          const url = new URL(sheet.scriptUrl?.trim() || 'https://script.google.com/macros/s/AKfycbw5KpBvJyFpIXmsHueg4XPSRkZ0mg6kxHqjMGp3WEs8Hx_JodvKSoKEg6RMsdH54iCa/exec');
+          url.searchParams.append('action', 'sync_recent');
+          url.searchParams.append('spreadsheetId', sheet.spreadsheetId.trim());
+          const callbackName = 'jsonp_callback_sync_' + Math.round(100000 * Math.random());
+          url.searchParams.append('callback', callbackName);
+          try {
+            const data = await jsonpRequest(url, callbackName);
+            return (data && data.status === 'success' && Array.isArray(data.orders)) ? data.orders : [];
+          } catch (e) {
+            console.error('Sheet sync failed', e);
+            return [];
+          }
+        })
+      ]);
+      
+      const allFirestoreOrders = [...operational, ...overdue, ...archived];
+      
+      const uniqueOrders = new Set<string>();
+      const filteredOrders: OrderHistoryItem[] = [];
+
+      const processOrder = (order: any, isFirestore: boolean) => {
+        if (order.status === 'draft') return;
+        
+        const id = order.orderId || order.historyId || `SYNC-${order.name || 'UNKNOWN'}-${order.phone || ''}-${order.due || ''}`.replace(/[^a-zA-Z0-9-]/g, '');
+        if (id && !uniqueOrders.has(id)) {
+          uniqueOrders.add(id);
+          filteredOrders.push({
+            id: id,
+            timestamp: order.timestamp || Date.now(),
+            state: {
+                ...order,
+                syncStatus: isFirestore ? order.syncStatus || 'synced' : 'synced'
+            },
+            messages: []
+          });
+        }
+      };
+
+      for (const order of allFirestoreOrders) {
+          processOrder(order, true);
+      }
+      
+      for (const sheetResult of sheetResults) {
+          for (const order of sheetResult) {
+              processOrder(order, false);
+          }
+      }
+
+      setHistory(filteredOrders);
+    } catch (e) {
+      console.error("Sync failed", e);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   const toggleTheme = () => setTheme(t => t === 'light' ? 'dark' : 'light');
   const toggleLanguage = () => setAppLanguage(l => l === 'ms' ? 'en' : 'ms');
@@ -807,7 +1106,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       resumeLangs: Array.isArray(s.resumeLangs) ? s.resumeLangs : INITIAL_STATE.resumeLangs,
       timestamp: item.timestamp,
       historyId: item.id,
-      isEditMode: true
+      isEditMode: s.isEditMode === true || s.customerOrder === 'Edit Resume'
     });
     setViewStack(['home', 'history', 'customer-info']);
   };
@@ -853,7 +1152,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AppContext.Provider value={{ state, setState, viewStack, pushView, changeTab, startNewOrder, popView, goHome, reset, generatedMessages, setGeneratedMessages, history, setHistory, saveOrderToHistory, updateOrderHistoryState, updateSpecificHistoryItem, deleteOrderFromHistory, restoreOrderFromHistory, permanentlyDeleteOrderFromHistory, clearHistory, loadOrder, drafts, saveAsDraft, deleteDraft, loadDraft, theme, toggleTheme, appLanguage, toggleLanguage, isOnline, isSyncing, queueSize, lastSyncTime, syncOfflineQueue, addToOfflineQueue, deletedOrderIds, historyDeliveryFilter, setHistoryDeliveryFilter, historyPendingTimeFilter, setHistoryPendingTimeFilter }}>
+    <AppContext.Provider value={{ state, setState, viewStack, pushView, changeTab, startNewOrder, popView, goHome, reset, generatedMessages, setGeneratedMessages, history, setHistory, saveOrderToHistory, updateOrderHistoryState, updateSpecificHistoryItem, deleteOrderFromHistory, restoreOrderFromHistory, permanentlyDeleteOrderFromHistory, clearHistory, loadOrder, drafts, saveAsDraft, deleteDraft, loadDraft, theme, toggleTheme, appLanguage, toggleLanguage, isOnline, isSyncing, queueSize, lastSyncTime, syncOfflineQueue, addToOfflineQueue, deletedOrderIds, historyDeliveryFilter, setHistoryDeliveryFilter, historyPendingTimeFilter, setHistoryPendingTimeFilter, syncOrders, inAppNotifications, markNotificationAsRead, clearAllNotifications, addInAppNotification }}>
       {children}
     </AppContext.Provider>
   );

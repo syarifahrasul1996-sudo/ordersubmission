@@ -1,0 +1,128 @@
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // -- 1. Global Catch-All Deny (at bottom, but helper functions first) --
+    
+    // -- 2. Reusable Helpers --
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner() {
+      return isSignedIn() && request.auth.uid == "HQbvTmFoJVVZYF73w026vh6wmPX2";
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    // -- 3. Entity Validation --
+    function isValidOrder(data, docId) {
+      let requiredFields = [
+        'documentId', 'originalOrderId', 'generatedOrderId',
+        'isDelivered', 'customerName', 'customerPhone', 'customerOrder', 
+        'customerTemplate', 'customerBahasa', 'customerAddOn', 'customerJenis',
+        'deliveryDate', 'originalDue', 'orderLink', 'price',
+        'source', 'sourceSpreadsheetId', 'sourceSpreadsheetYear', 
+        'sourceWorksheet', 'sourceRow', 'sourceKey', 'auditClassification',
+        'migrationVersion', 'migratedAt'
+      ];
+      
+      return data.keys().hasAll(requiredFields) &&
+      data.keys().hasOnly(requiredFields) &&
+      
+      data.documentId == docId &&
+      data.documentId is string && data.documentId.size() <= 128 &&
+      
+      (data.originalOrderId == null || (data.originalOrderId is string && data.originalOrderId.size() <= 128)) &&
+      data.generatedOrderId is bool &&
+      
+      data.isDelivered is bool &&
+      data.customerName is string && data.customerName.size() <= 256 &&
+      data.customerPhone is string && data.customerPhone.size() <= 64 &&
+      data.customerOrder is string && data.customerOrder.size() <= 256 &&
+      data.customerTemplate is string && data.customerTemplate.size() <= 128 &&
+      data.customerBahasa is string && data.customerBahasa.size() <= 64 &&
+      data.customerAddOn is string && data.customerAddOn.size() <= 256 &&
+      data.customerJenis is string && data.customerJenis.size() <= 128 &&
+      
+      (data.deliveryDate == null || data.deliveryDate is timestamp) &&
+      data.originalDue is string && data.originalDue.size() <= 128 &&
+      
+      data.orderLink is string && data.orderLink.size() <= 1024 &&
+      (data.price == null || data.price is number) &&
+      
+      data.source == 'google_sheets' &&
+      data.sourceSpreadsheetId is string && data.sourceSpreadsheetId.size() <= 128 &&
+      data.sourceSpreadsheetYear is string && data.sourceSpreadsheetYear.size() <= 8 &&
+      data.sourceWorksheet is string && data.sourceWorksheet.size() <= 128 &&
+      data.sourceRow is int &&
+      data.sourceKey is string && data.sourceKey.size() <= 256 &&
+      
+      data.auditClassification in [
+        'MIGRATABLE_GENERATED_ID', 'MIGRATABLE_SAFE_ID', 
+        'MIGRATABLE_PRICE_NULL', 'MIGRATABLE_GENERATED_ID_AND_PRICE_NULL',
+        'READY_WITH_EXISTING_ID'
+      ] &&
+      
+      data.migrationVersion == '1.0-production' &&
+      data.migratedAt is timestamp;
+    }
+    
+    function isUnchanged(field) {
+      return incoming()[field] == resource.data[field];
+    }
+    
+    function immutableFieldsUnchanged() {
+      return isUnchanged('documentId') &&
+             isUnchanged('originalOrderId') &&
+             isUnchanged('generatedOrderId') &&
+             isUnchanged('source') &&
+             isUnchanged('sourceSpreadsheetId') &&
+             isUnchanged('sourceSpreadsheetYear') &&
+             isUnchanged('sourceWorksheet') &&
+             isUnchanged('sourceRow') &&
+             isUnchanged('sourceKey') &&
+             isUnchanged('auditClassification') &&
+             isUnchanged('migrationVersion') &&
+             isUnchanged('migratedAt');
+    }
+
+    // -- 4. Collection-Specific Rules --
+
+    match /orders/{orderId} {
+      allow read: if isOwner();
+      allow create: if isOwner() && isValidId(orderId) && isValidOrder(incoming(), orderId);
+      allow update: if isOwner() && isValidId(orderId) && isValidOrder(incoming(), orderId) && immutableFieldsUnchanged();
+      allow delete: if isOwner() && isValidId(orderId);
+    }
+
+    match /orders_archive/{orderId} {
+      allow read: if isOwner();
+      allow write: if false; // Read-only for Client SDK users
+    }
+
+    // -- Canary Rules (Preserved during active testing) --
+    match /orders_canary/{orderId} {
+      allow read, write: if isOwner();
+    }
+    match /orders_archive_canary/{orderId} {
+      allow read: if isOwner();
+      allow write: if false;
+    }
+
+    // -- 5. Explicitly Denied Migration Collections --
+    match /orders_migration_staging/{doc=**} { allow read, write: if false; }
+
+    // -- 6. Global Catch-All Deny --
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
