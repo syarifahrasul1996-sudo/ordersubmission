@@ -309,10 +309,6 @@ export function HistoryView() {
       const aDelivered = isDeliveredState(a);
       const bDelivered = isDeliveredState(b);
 
-      // Pending orders appear above delivered orders
-      if (!aDelivered && bDelivered) return -1;
-      if (aDelivered && !bDelivered) return 1;
-
       const now = currentTime;
 
       // Read the visible due date again first.
@@ -327,6 +323,17 @@ export function HistoryView() {
         Number(b.state?.dueTimestamp) ||
         Number(b.timestamp) ||
         now;
+
+      const aOverdue = !aDelivered && aDue < now;
+      const bOverdue = !bDelivered && bDue < now;
+
+      // 1. Past due but not delivered (overdue pending) always appear on the very top
+      if (aOverdue && !bOverdue) return -1;
+      if (!aOverdue && bOverdue) return 1;
+
+      // 2. Standard pending orders appear above delivered orders
+      if (!aDelivered && bDelivered) return -1;
+      if (aDelivered && !bDelivered) return 1;
 
       if (!aDelivered) {
         // Pending orders nearest to the current time appear first

@@ -1,56 +1,115 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { useAppContext } from '../AppContext';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LabelList, CartesianGrid } from 'recharts';
-import { RefreshCcw, AlertCircle, Clock, X, ChevronDown } from 'lucide-react';
-import { calculateDeadline, generateMessages, parseDateStringToTimestamp } from '../utils';
+import { RefreshCcw, AlertCircle, X, ChevronDown } from 'lucide-react';
+import { parseDateStringToTimestamp } from '../utils';
 import { getOrderDueTimestamp } from '../utils/orderWindow';
 import { AppState } from '../types';
-import { getOperationalOrders, getOverdueOrders, getArchivedOrders, isFirestoreCanary } from '../services/firestoreOrders';
 
-
-const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbw5KpBvJyFpIXmsHueg4XPSRkZ0mg6kxHqjMGp3WEs8Hx_JodvKSoKEg6RMsdH54iCa/exec';
-
-const extractId = (input: string) => {
-  if (input.includes('docs.google.com/spreadsheets/d/')) {
-    const match = input.match(/\/d\/([a-zA-Z0-9-_]+)/);
-    return match ? match[1] : input;
-  }
-  return input.trim();
+// Pure helper functions
+const normalizeBoolean = (value: unknown): boolean => {
+  return (
+    value === true ||
+    value === 1 ||
+    value === '1' ||
+    String(value ?? '').trim().toLowerCase() === 'true'
+  );
 };
 
-const jsonpRequest = (url: URL, callbackName: string) => {
-  return new Promise<any>((resolve, reject) => {
-    const script = document.createElement('script');
-    script.src = url.toString();
-    script.async = true;
+const normalizePhone = (value: unknown): string => {
+  let phone = String(value ?? '').replace(/\D/g, '');
 
-    const timeoutId = setTimeout(() => {
-      cleanup();
-      reject(new Error('Request timed out'));
-    }, 45000);
+  if (phone.startsWith('60')) {
+    phone = `0${phone.slice(2)}`;
+  }
 
-    const cleanup = () => {
-      clearTimeout(timeoutId);
-      if (script.parentNode) script.parentNode.removeChild(script);
-      delete (window as any)[callbackName];
-    };
+  return phone;
+};
 
-    (window as any)[callbackName] = (data: any) => {
-      cleanup();
-      resolve(data);
-    };
+const normalizeName = (value: unknown): string => {
+  return String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+};
 
-    script.onerror = (event: any) => {
-      if (event && typeof event !== 'string') {
-        if (typeof (event as any).preventDefault === 'function') (event as any).preventDefault();
-        if (typeof (event as any).stopPropagation === 'function') (event as any).stopPropagation();
-      }
-      cleanup();
-      reject(new Error('JSONP request failed'));
-    };
+const parseMoney = (value: unknown): number => {
+  if (value === undefined || value === null) return 0;
+  let str = String(value).trim();
+  if (!str) return 0;
+  // Remove RM prefix (case-insensitive)
+  str = str.replace(/RM/gi, '');
+  // Remove commas used as thousands separators
+  str = str.replace(/,/g, '');
+  const parsed = parseFloat(str);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
 
-    document.body.appendChild(script);
-  });
+type UrgencyKey = 'normal' | 'semi' | 'urgent' | 'super';
+
+const getUrgencyKey = (value: unknown): UrgencyKey => {
+  const str = String(value ?? '').trim().toLowerCase();
+  if (
+    str === 'super' ||
+    str === 'super urgent' ||
+    str === 'super-urgent'
+  ) {
+    return 'super';
+  }
+  if (
+    str === 'semi' ||
+    str === 'semi urgent' ||
+    str === 'semi-urgent' ||
+    str === 'semu urgent'
+  ) {
+    return 'semi';
+  }
+  if (str === 'urgent') {
+    return 'urgent';
+  }
+  return 'normal';
+};
+
+const getCanonicalCustomerKey = (order: any): string | null => {
+  const phone = normalizePhone(order.customerPhone || order.phone);
+  if (phone) return `phone:${phone}`;
+
+  const name = normalizeName(order.customerName || order.name);
+  if (name) return `name:${name}`;
+
+  return null;
+};
+
+const getNormalizedCategory = (order: any): string => {
+  let cat = '';
+  if (order.mainType) {
+    cat = String(order.mainType).trim();
+  } else if (order.customerOrder) {
+    cat = String(order.customerOrder).trim();
+  } else if (order.order) {
+    cat = String(order.order).trim();
+  } else if (order.jenisTempahan) {
+    cat = String(order.jenisTempahan).trim();
+  }
+
+  if (!cat) return 'unknown';
+
+  const lowerCat = cat.toLowerCase();
+  if (['lain2', 'lain-lain', 'lain lain', 'others', 'other'].includes(lowerCat)) {
+    let customVal = '';
+    if (order.customerOrder && !['lain2', 'lain-lain', 'lain lain', 'others', 'other'].includes(String(order.customerOrder).trim().toLowerCase())) {
+      customVal = String(order.customerOrder).trim();
+    } else if (order.order && !['lain2', 'lain-lain', 'lain lain', 'others', 'other'].includes(String(order.order).trim().toLowerCase())) {
+      customVal = String(order.order).trim();
+    } else if (order.jenisTempahan && !['lain2', 'lain-lain', 'lain lain', 'others', 'other'].includes(String(order.jenisTempahan).trim().toLowerCase())) {
+      customVal = String(order.jenisTempahan).trim();
+    }
+    
+    if (customVal) return customVal;
+    return 'other';
+  }
+
+  return cat;
 };
 
 interface SafeResponsiveContainerProps {
@@ -147,80 +206,190 @@ export function DashboardView() {
   }, []);
 
   const stats = useMemo(() => {
-    // 1. Filter out deleted and draft orders exactly like in HistoryView to guarantee consistency
+    // 1. Remove deleted and draft orders first
     const activeHistoryItems = history.filter(Boolean).filter((item) => {
       if (!item || !item.state) return false;
-      
-      const isDeleted = item.state.isDeleted === true || item.state.isDeleted === 'true' || item.state.isDeleted === 1 || item.state.isDeleted === '1';
-      if (isDeleted) return false;
-      if (item.state.syncStatus === 'draft' || item.state.status === 'draft') return false;
+      const state = item.state;
+      if (normalizeBoolean(state.isDeleted)) return false;
+      if (state.syncStatus === 'draft' || state.status === 'draft') return false;
 
-      const orderId = item.state?.orderId;
-      const id = item.id;
-      if (deletedOrderIds && (deletedOrderIds.includes(id) || (orderId && deletedOrderIds.includes(orderId)))) {
-        return false;
+      if (deletedOrderIds) {
+        if (deletedOrderIds.includes(item.id)) return false;
+        if (state.orderId && deletedOrderIds.includes(state.orderId)) return false;
       }
       return true;
     });
 
-    // Build global customer maps to accurately detect Repeat Customers across all years
-    const globalCustomerPhoneCounts = new Map<string, number>();
-    const globalCustomerNameCounts = new Map<string, number>();
+    // 2. Deduplicate orders using Priority and Map
+    const deduplicatedMap = new Map<string, typeof history[0]>();
+    let duplicatesRemoved = 0;
 
     activeHistoryItems.forEach(item => {
-      if (!item || !item.state) return;
-      
-      let phone = item.state.customerPhone || '';
-      phone = String(phone).replace(/\D/g, '');
-      if (phone.startsWith('60')) phone = '0' + phone.substring(2);
-      if (phone) {
-        globalCustomerPhoneCounts.set(phone, (globalCustomerPhoneCounts.get(phone) || 0) + 1);
+      const state = item.state;
+      let key = '';
+      if (state.orderId) {
+        key = `orderId:${state.orderId}`;
+      } else if (item.id) {
+        key = `historyId:${item.id}`;
+      } else {
+        const phone = normalizePhone(state.customerPhone || state.phone);
+        const name = normalizeName(state.customerName || state.name);
+        const clientIdent = phone || name || 'unknown';
+        const dueVal = String(state.customerDue || state.due || '').trim();
+        const orderType = normalizeName(state.customerOrder || state.order || state.jenisTempahan || state.mainType || '');
+        key = `fallback:${clientIdent}_${dueVal}_${orderType}`;
       }
 
-      let name = String(item.state.customerName || '').trim().toLowerCase();
-      if (name) {
-        globalCustomerNameCounts.set(name, (globalCustomerNameCounts.get(name) || 0) + 1);
+      const existing = deduplicatedMap.get(key);
+      if (existing) {
+        duplicatesRemoved++;
+        if (import.meta.env.DEV) {
+          console.log(`[Deduplication] Duplicate key detected: "${key}". Retaining newest based on timestamp.`);
+        }
+        const currentTs = Number(item.timestamp) || 0;
+        const existingTs = Number(existing.timestamp) || 0;
+        if (currentTs > existingTs) {
+          deduplicatedMap.set(key, item);
+        }
+      } else {
+        deduplicatedMap.set(key, item);
       }
     });
 
-    const getBestDueTimestampLocal = (item: any): number => {
-      if (!item) return 0;
-      
-      const dueTimestamp = Number(item.state?.dueTimestamp);
-      if (Number.isFinite(dueTimestamp) && dueTimestamp > 0) {
-        return dueTimestamp;
-      }
-      
-      const customerDue = String(item.state?.customerDue ?? '').trim();
-      if (customerDue) {
-        const parsed = parseDateStringToTimestamp(customerDue, 0).timestamp;
-        if (parsed > 0) {
-          return parsed;
-        }
-      }
-      
-      return Number(item.timestamp) || 0;
-    };
+    // 3. Normalize each deduplicated order using one due-date source: getOrderDueTimestamp(item)
+    const normalizedOrders = Array.from(deduplicatedMap.values()).map(item => {
+      const state = item.state || {};
+      const result = getOrderDueTimestamp(item);
+      const isVal = result !== null && Number.isFinite(result) && result > 0;
+      const analysisDueTimestamp = isVal ? result : null;
+      const isDueInvalid = analysisDueTimestamp === null;
 
-    // Decorate each order with its exact best due timestamp to make filtering absolutely consistent
-    const orders = activeHistoryItems.map(item => {
-      const bestDue = getBestDueTimestampLocal(item);
-      const actualDue = getOrderDueTimestamp(item);
-      const isDueInvalid = actualDue === null;
       return {
-        ...item.state,
-        dueTimestamp: bestDue,
-        isDueInvalid: isDueInvalid
+        ...state,
+        historyId: item.id,
+        historyTimestamp: Number(item.timestamp) || 0,
+        analysisDueTimestamp,
+        isDueInvalid
       };
     });
-    
+
+    // 4. Separate valid and invalid orders
+    const validDateOrders = normalizedOrders.filter(order => !order.isDueInvalid);
+    const invalidDateOrders = normalizedOrders.filter(order => order.isDueInvalid);
+    const invalidDatesCount = invalidDateOrders.length;
+    const invalidOrdersList = invalidDateOrders;
+
+    // 5. Create one analysisOrders array used by all metrics
+    const analysisOrders = validDateOrders.filter(order => {
+      const timestamp = order.analysisDueTimestamp;
+      if (!timestamp) return false;
+
+      const date = new Date(timestamp);
+      if (filterYear !== 'all') {
+        if (String(date.getFullYear()) !== filterYear) return false;
+      }
+
+      if (filterMonth !== 'all') {
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        if (month !== filterMonth) return false;
+      }
+
+      return true;
+    });
+
+    // 6. Global repeat customer map built after deduplication of all active orders
+    const globalCustomerCounts = new Map<string, number>();
+    normalizedOrders.forEach(order => {
+      const key = getCanonicalCustomerKey(order);
+      if (key) {
+        globalCustomerCounts.set(key, (globalCustomerCounts.get(key) || 0) + 1);
+      }
+    });
+
+    const isGloballyRepeat = (key: string): boolean => {
+      return (globalCustomerCounts.get(key) || 0) >= 2;
+    };
+
+    // 7. Calculate customer metrics for the selected period
+    const periodCustomerKeys = new Set<string>();
+    analysisOrders.forEach(order => {
+      const key = getCanonicalCustomerKey(order);
+      if (key) {
+        periodCustomerKeys.add(key);
+      }
+    });
+
+    const totalUniqueCustomers = periodCustomerKeys.size;
+    let repeatCustomers = 0;
+    periodCustomerKeys.forEach(key => {
+      if (isGloballyRepeat(key)) {
+        repeatCustomers++;
+      }
+    });
+    const newCustomers = totalUniqueCustomers - repeatCustomers;
+
+    // 8. Correct Total Orders and Income
+    const totalOrders = analysisOrders.length;
+    const totalIncome = analysisOrders.reduce((sum, order) => sum + parseMoney(order.price), 0);
+
+    // 9. Correct Completed and Pending Totals
+    const completedOrders = analysisOrders.filter(order => normalizeBoolean(order.isDelivered)).length;
+    const pendingOrders = totalOrders - completedOrders;
+
+    // 10. Grouping Category and Urgency for charts
+    const categoryMap = new Map<string, number>();
+    analysisOrders.forEach(order => {
+      const cat = getNormalizedCategory(order);
+      categoryMap.set(cat, (categoryMap.get(cat) || 0) + 1);
+    });
+
+    const typesChart = Array.from(categoryMap.entries())
+      .map(([name, value]) => {
+        let displayName = name;
+        if (name === 'other') {
+          displayName = appLanguage === 'ms' ? 'Lain-lain' : 'Others';
+        } else if (name === 'unknown') {
+          displayName = appLanguage === 'ms' ? 'Tidak Diketahui' : 'Unknown';
+        }
+        return { name: displayName, value };
+      })
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 5);
+
+    const urgencyMap = new Map<UrgencyKey, number>();
+    urgencyMap.set('normal', 0);
+    urgencyMap.set('semi', 0);
+    urgencyMap.set('urgent', 0);
+    urgencyMap.set('super', 0);
+
+    analysisOrders.forEach(o => {
+      const uKey = getUrgencyKey(o.customerJenis || o.urgency);
+      urgencyMap.set(uKey, (urgencyMap.get(uKey) || 0) + 1);
+    });
+
+    const urgencyLabels: Record<UrgencyKey, { en: string; ms: string }> = {
+      normal: { en: 'Not Urgent', ms: 'Tak Urgent' },
+      semi: { en: 'Semi Urgent', ms: 'Semi Urgent' },
+      urgent: { en: 'Urgent', ms: 'Urgent' },
+      super: { en: 'Super Urgent', ms: 'Super Urgent' }
+    };
+
+    const urgencyChart = Object.entries(urgencyLabels)
+      .map(([key, labelObj]) => {
+        const uKey = key as UrgencyKey;
+        return {
+          name: appLanguage === 'ms' ? labelObj.ms : labelObj.en,
+          value: urgencyMap.get(uKey) || 0
+        };
+      })
+      .sort((a, b) => b.value - a.value);
+
+    // 11. Chart Aggregations
     const availableYearsSet = new Set<string>();
-    annualSheets.filter((s:any) => s.year).forEach((s:any) => availableYearsSet.add(s.year));
-    
-    // Add years from all orders
-    orders.forEach(order => {
-      if (order.dueTimestamp && order.dueTimestamp > 0) {
-        availableYearsSet.add(String(new Date(order.dueTimestamp).getFullYear()));
+    annualSheets.filter((s: any) => s.year).forEach((s: any) => availableYearsSet.add(s.year));
+    validDateOrders.forEach(order => {
+      if (order.analysisDueTimestamp) {
+        availableYearsSet.add(String(new Date(order.analysisDueTimestamp).getFullYear()));
       }
     });
 
@@ -232,7 +401,7 @@ export function DashboardView() {
     availableYearsSet.forEach(yr => {
       yearCounts.set(yr, 0);
     });
-    
+
     const monthCounts = new Map<string, number>();
     for (let i = 1; i <= 12; i++) {
       monthCounts.set(String(i).padStart(2, '0'), 0);
@@ -248,144 +417,25 @@ export function DashboardView() {
       }
     }
 
-    const filteredOrders = orders.filter(order => {
-      if (!order.dueTimestamp || order.dueTimestamp === 0) {
-        return filterYear === 'all';
-      }
-      const date = new Date(order.dueTimestamp);
-      
-      if (filterYear !== 'all') {
+    analysisOrders.forEach(order => {
+      const timestamp = order.analysisDueTimestamp;
+      if (timestamp) {
+        const date = new Date(timestamp);
         const yStr = String(date.getFullYear());
-        if (yStr !== filterYear) return false;
-      }
-      
-      if (filterMonth !== 'all') {
         const mStr = String(date.getMonth() + 1).padStart(2, '0');
-        if (mStr !== filterMonth) return false;
-      }
-      return true;
-    });
-
-    const isDelivered = (o: any) => {
-      const val = o.isDelivered;
-      return val === true || val === 'true' || val === 1 || val === '1';
-    };
-
-    let completedOrders = 0;
-    let pendingOrders = 0;
-
-    filteredOrders.forEach(o => {
-      if (isDelivered(o)) {
-        completedOrders++;
-      } else {
-        pendingOrders++;
-      }
-    });
-
-    // Robust validation helper
-    const sumStatus = completedOrders + pendingOrders;
-    const rawCount = filteredOrders.length;
-    console.log(`[Dashboard Validation] Filtered Orders Raw Count: ${rawCount}, Sum of Statuses (Completed: ${completedOrders}, Pending: ${pendingOrders}): ${sumStatus}`);
-    if (sumStatus !== rawCount) {
-      console.warn(`[Dashboard Validation DISCREPANCY] Sum of statuses (${sumStatus}) does not match raw count (${rawCount})!`);
-    } else {
-      console.log(`[Dashboard Validation OK] All ${rawCount} filtered orders are fully accounted for in status breakdown.`);
-    }
-
-    let totalOrders = 0;
-    let totalIncome = 0;
-    const customers = new Map<string, number>(); 
-    const typeCounts = new Map<string, number>();
-    const urgencyCounts = new Map<string, number>();
-    
-    let invalidDatesCount = 0;
-    const invalidOrdersList: any[] = [];
-
-    filteredOrders.forEach(order => {
-      // Order ID deduplication
-      if (String(order.customerName || '').trim() !== '') {
-        totalOrders++;
-        
-        // Income calculation
-        const remotePrice = parseFloat(String(order.price || 0)); 
-        if (!isNaN(remotePrice)) {
-          totalIncome += remotePrice;
-        }
-      }
-
-      // Customer Phone normalization
-      let phone = order.customerPhone || '';
-      phone = String(phone).replace(/\D/g, '');
-      if (phone.startsWith('60')) phone = '0' + phone.substring(2);
-      
-      let name = String(order.customerName || '').trim().toLowerCase();
-      const custKey = phone || name;
-      if (custKey) {
-        customers.set(custKey, (customers.get(custKey) || 0) + 1);
-      }
-
-      // Main Type - map cleanly using mainType and fall back to customerOrder for Custom/Lain-lain
-      const type = (order.mainType === 'Lain-lain' ? (order.customerOrder || 'Lain-lain') : (order.mainType || 'Resume')).trim();
-      typeCounts.set(type, (typeCounts.get(type) || 0) + 1);
-
-      // Urgency
-      const urgencyRaw = String(order.customerJenis || order.urgency || '')
-        .trim()
-        .toLowerCase();
-
-      let urgency = appLanguage === 'ms' ? 'Tak Urgent' : 'Not Urgent';
-
-      if (urgencyRaw === 'urgent') {
-        urgency = 'Urgent';
-      } else if (
-        urgencyRaw === 'semi urgent' ||
-        urgencyRaw === 'semi-urgent' ||
-        urgencyRaw === 'semu urgent'
-      ) {
-        urgency = 'Semi Urgent';
-      } else if (
-        urgencyRaw === 'super urgent' ||
-        urgencyRaw === 'super-urgent'
-      ) {
-        urgency = 'Super Urgent';
-      }
-
-      urgencyCounts.set(urgency, (urgencyCounts.get(urgency) || 0) + 1);
-
-      // Monthly chart aggregation (only if valid date)
-      if (!order.isDueInvalid && order.dueTimestamp && order.dueTimestamp > 0) {
-        const date = new Date(order.dueTimestamp);
-        const mStr = String(date.getMonth() + 1).padStart(2, '0');
-        const yStr = String(date.getFullYear());
         const dStr = String(date.getDate()).padStart(2, '0');
-        monthCounts.set(mStr, (monthCounts.get(mStr) || 0) + 1);
-        yearCounts.set(yStr, (yearCounts.get(yStr) || 0) + 1);
-        if (dayCounts.has(dStr)) {
-          dayCounts.set(dStr, (dayCounts.get(dStr) || 0) + 1);
+
+        if (filterYear === 'all') {
+          yearCounts.set(yStr, (yearCounts.get(yStr) || 0) + 1);
+        } else if (filterMonth === 'all') {
+          monthCounts.set(mStr, (monthCounts.get(mStr) || 0) + 1);
+        } else {
+          if (dayCounts.has(dStr)) {
+            dayCounts.set(dStr, (dayCounts.get(dStr) || 0) + 1);
+          }
         }
-      } else {
-        invalidDatesCount++;
-        invalidOrdersList.push(order);
       }
     });
-
-    let repeatCustomers = 0;
-    customers.forEach((count, key) => {
-      if (count > 1) {
-        repeatCustomers++;
-        return;
-      }
-      const hasGlobalPhoneRepeat = globalCustomerPhoneCounts.has(key) && (globalCustomerPhoneCounts.get(key) || 0) > 1;
-      const hasGlobalNameRepeat = globalCustomerNameCounts.has(key) && (globalCustomerNameCounts.get(key) || 0) > 1;
-      if (hasGlobalPhoneRepeat || hasGlobalNameRepeat) {
-        repeatCustomers++;
-      }
-    });
-
-    const totalUniqueCustomers = customers.size;
-    const repeatCustomerRate = totalUniqueCustomers > 0 
-      ? ((repeatCustomers / totalUniqueCustomers) * 100).toFixed(1) 
-      : '0.0';
 
     const monthNamesMs = ['Jan', 'Feb', 'Mac', 'Apr', 'Mei', 'Jun', 'Jul', 'Ogo', 'Sep', 'Okt', 'Nov', 'Dis'];
     const monthNamesEn = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -412,20 +462,41 @@ export function DashboardView() {
               value 
             }));
 
+    const chartTotal = ordersChartData.reduce((sum, entry) => sum + entry.value, 0);
+
+    // 12. Dev mode validation and logs
+    if (import.meta.env.DEV) {
+      const isTotalValid = totalOrders === analysisOrders.length;
+      const isStatusSumValid = completedOrders + pendingOrders === totalOrders;
+      const isCustomersSumValid = newCustomers + repeatCustomers === totalUniqueCustomers;
+      const isChartTotalValid = chartTotal === totalOrders;
+      const isIncomeFinite = Number.isFinite(totalIncome);
+
+      console.log('--- DASHBOARD DEVELOPMENT VALIDATION ---');
+      console.log(`totalOrders === analysisOrders.length: ${isTotalValid} (${totalOrders} vs ${analysisOrders.length})`);
+      console.log(`completedOrders + pendingOrders === totalOrders: ${isStatusSumValid} (${completedOrders + pendingOrders} vs ${totalOrders})`);
+      console.log(`newCustomers + repeatCustomers === totalUniqueCustomers: ${isCustomersSumValid} (${newCustomers + repeatCustomers} vs ${totalUniqueCustomers})`);
+      console.log(`chartTotal === totalOrders: ${isChartTotalValid} (${chartTotal} vs ${totalOrders})`);
+      console.log(`Number.isFinite(totalIncome): ${isIncomeFinite} (Value: ${totalIncome})`);
+      
+      console.log(`Active Records: ${activeHistoryItems.length}`);
+      console.log(`Deduplicated Records: ${deduplicatedMap.size}`);
+      console.log(`Duplicates Removed: ${duplicatesRemoved}`);
+      console.log(`Valid-Date Records: ${validDateOrders.length}`);
+      console.log(`Invalid-Date Records: ${invalidDatesCount}`);
+      console.log(`Selected Analysis Records: ${analysisOrders.length}`);
+      console.log('----------------------------------------');
+    }
+
     const customerTypes = [
-      { name: appLanguage === 'ms' ? 'Baru' : 'New', value: totalUniqueCustomers - repeatCustomers },
+      { name: appLanguage === 'ms' ? 'Baru' : 'New', value: newCustomers },
       { name: appLanguage === 'ms' ? 'Berulang' : 'Repeat', value: repeatCustomers }
     ];
 
-    const typesChart = Array.from(typeCounts.entries())
-      .map(([name, value]) => ({ name, value }))
-      .sort((a, b) => b.value - a.value).slice(0, 5);
-      
-    const urgencyChart = Array.from(urgencyCounts.entries())
-      .map(([name, value]) => ({ name, value }))
-      .sort((a, b) => b.value - a.value).slice(0, 5);
-
     const years = Array.from(availableYearsSet).sort().reverse();
+    const repeatCustomerRate = totalUniqueCustomers > 0 
+      ? ((repeatCustomers / totalUniqueCustomers) * 100).toFixed(1) 
+      : '0.0';
 
     return {
       totalUniqueOrders: totalOrders,
@@ -449,18 +520,30 @@ export function DashboardView() {
   const [showInvalidModal, setShowInvalidModal] = useState(false);
 
   const handleOrderClick = (order: any) => {
-    // Basic urgency mapping
-    const urgencyVal = (order.urgency || order.pakej || '').toLowerCase();
-    let urgency: AppState['urgency'] = 'normal';
-    if (urgencyVal.includes('super')) urgency = 'super';
-    else if (urgencyVal.includes('semi')) urgency = 'semi';
-    else if (urgencyVal.includes('urgent')) urgency = 'urgent';
+    const dueValue = String(
+      order.customerDue ||
+      order.due ||
+      ''
+    ).trim();
 
-    const orderType = (order.order || order.jenisTempahan || 'Resume').trim();
-    
-    // Parse due date for state
-    const { timestamp: dueTs } = parseDateStringToTimestamp(order.due || '', -1);
-    const isDueInvalid = dueTs === -1 || !(order.due || '').trim();
+    const { timestamp: parsedDueTimestamp } =
+      parseDateStringToTimestamp(dueValue, -1);
+
+    const isDueInvalid =
+      !dueValue ||
+      parsedDueTimestamp === -1 ||
+      !Number.isFinite(parsedDueTimestamp) ||
+      parsedDueTimestamp <= 0;
+
+    const orderType = (
+      order.customerOrder ||
+      order.order ||
+      order.jenisTempahan ||
+      order.mainType ||
+      ''
+    ).trim();
+
+    const normUrgency = getUrgencyKey(order.customerJenis || order.urgency);
 
     const updates: Partial<AppState> = {
       customerName: order.customerName || order.name || '',
@@ -473,8 +556,8 @@ export function DashboardView() {
       customerDue: order.customerDue || order.due || '',
       mainType: order.mainType || (orderType === 'Edit Resume' ? 'Resume' : orderType === 'Surat' ? 'Surat' : orderType === 'Edit PDF' ? 'Edit PDF' : orderType === 'Lain2' || orderType === 'Lain-lain' ? 'Lain-lain' : 'Resume'),
       subType: order.subType || order.pakej || '',
-      urgency: order.urgency || urgency,
-      dueTimestamp: dueTs === -1 ? Date.now() : dueTs,
+      urgency: normUrgency,
+      dueTimestamp: isDueInvalid ? 0 : parsedDueTimestamp,
       spreadsheetId: order.spreadsheetId || '',
       orderId: order.orderId || '',
       googleSheetLink: order.googleSheetLink || order.orderLink || order.link || '',
@@ -497,7 +580,7 @@ export function DashboardView() {
 
   return (
     <>
-      {/* Invalid Dates Modal - Placed at the top level to ensure correct fixed positioning */}
+      {/* Invalid Dates Modal */}
       {showInvalidModal && (
         <div className="fixed inset-0 z-[999] flex items-start justify-center p-4 pt-10 sm:pt-20">
           <div 
@@ -525,18 +608,20 @@ export function DashboardView() {
               <div className="divide-y divide-gray-100 border border-gray-200 rounded-xl overflow-hidden bg-white shadow-sm">
                 {stats.invalidOrdersList.map((order, idx) => (
                   <button 
-                    key={idx} 
+                    key={order.orderId || order.historyId || `${normalizePhone(order.customerPhone || order.phone)}-${idx}`} 
                     onClick={() => handleOrderClick(order)}
                     className="w-full text-left p-4 hover:bg-primary/5 transition-all group border-none outline-none"
                   >
                     <div className="flex justify-between items-start mb-1.5">
-                      <span className="font-bold text-sm text-text group-hover:text-primary transition-colors">{order.name || 'Anonymous'}</span>
+                      <span className="font-bold text-sm text-text group-hover:text-primary transition-colors">
+                        {order.customerName || order.name || 'Anonymous'}
+                      </span>
                       <span className="text-[10px] font-black text-primary bg-primary/10 px-2 py-0.5 rounded-full uppercase tracking-tighter">
-                        {order.order || order.jenisTempahan || '-'}
+                        {order.customerOrder || order.order || order.jenisTempahan || order.mainType || '-'}
                       </span>
                     </div>
                     <div className="flex justify-between items-center text-xs text-subtext">
-                      <span className="font-medium">{order.phone || '-'}</span>
+                      <span className="font-medium">{order.customerPhone || order.phone || '-'}</span>
                       <div className="flex items-center text-amber-600 font-bold uppercase tracking-tighter text-[10px]">
                         <AlertCircle className="w-3 h-3 mr-1" />
                         {appLanguage === 'ms' ? 'Format Tarikh Salah' : 'Wrong Date Format'}
@@ -559,194 +644,154 @@ export function DashboardView() {
       )}
 
       <div className="flex flex-col p-4 sm:p-6 space-y-6 pb-[calc(env(safe-area-inset-bottom)+6.5rem)] max-w-7xl mx-auto w-full">
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-2">
-        <div>
-          <h2 className="text-2xl font-black text-text tracking-tighter">
-            {appLanguage === 'ms' ? 'Tinjauan Perniagaan' : 'Business Overview'}
-          </h2>
-        </div>
-        
-        <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 w-full lg:w-auto">
-          <button
-            onClick={() => syncOrders()}
-            disabled={isSyncing}
-            className={`h-10 w-10 shrink-0 rounded-xl font-bold border border-gray-200 flex items-center justify-center transition-all ${
-              isSyncing ? 'opacity-50 cursor-not-allowed bg-gray-50' : 'bg-surface hover:bg-gray-50 active:scale-95 text-text'
-            }`}
-            title={appLanguage === 'ms' ? 'Muat Semula' : 'Refresh'}
-          >
-            <RefreshCcw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
-          </button>
-          
-          <div className="relative flex-1 sm:flex-none">
-            <select 
-              value={filterYear}
-              onChange={(e) => setFilterYear(e.target.value)}
-              className="w-full h-10 bg-surface border border-gray-100/50 text-text text-sm font-bold rounded-xl pl-3 pr-8 outline-none focus:border-primary/50 focus:ring-2 ring-primary/20 cursor-pointer shadow-sm appearance-none transition-all"
-            >
-              <option value="all">{appLanguage === 'ms' ? 'Semua Masa' : 'All Time'}</option>
-              {stats.years.map(year => (
-                <option key={year} value={year}>{year}</option>
-              ))}
-            </select>
-            <div className="absolute top-0 right-2.5 h-full flex items-center pointer-events-none">
-              <ChevronDown className="w-4 h-4 text-subtext" />
-            </div>
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-2">
+          <div>
+            <h2 className="text-2xl font-black text-text tracking-tighter">
+              {appLanguage === 'ms' ? 'Tinjauan Perniagaan' : 'Business Overview'}
+            </h2>
           </div>
           
-          {filterYear !== 'all' && (
-            <div className="relative w-full sm:w-auto sm:flex-none">
+          <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 w-full lg:w-auto">
+            <button
+              onClick={() => syncOrders()}
+              disabled={isSyncing}
+              className={`h-10 w-10 shrink-0 rounded-xl font-bold border border-gray-200 flex items-center justify-center transition-all ${
+                isSyncing ? 'opacity-50 cursor-not-allowed bg-gray-50' : 'bg-surface hover:bg-gray-50 active:scale-95 text-text'
+              }`}
+              title={appLanguage === 'ms' ? 'Muat Semula' : 'Refresh'}
+            >
+              <RefreshCcw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
+            </button>
+            
+            <div className="relative flex-1 sm:flex-none">
               <select 
-                value={filterMonth}
-                onChange={(e) => setFilterMonth(e.target.value)}
+                value={filterYear}
+                onChange={(e) => setFilterYear(e.target.value)}
                 className="w-full h-10 bg-surface border border-gray-100/50 text-text text-sm font-bold rounded-xl pl-3 pr-8 outline-none focus:border-primary/50 focus:ring-2 ring-primary/20 cursor-pointer shadow-sm appearance-none transition-all"
               >
-                <option value="all">{appLanguage === 'ms' ? 'Sepanjang Tahun' : 'Whole Year'}</option>
-                {stats.months.map((month, idx) => {
-                  const mVal = String(idx + 1).padStart(2, '0');
-                  return <option key={mVal} value={mVal}>{month}</option>;
-                })}
+                <option value="all">{appLanguage === 'ms' ? 'Semua Masa' : 'All Time'}</option>
+                {stats.years.map(year => (
+                  <option key={year} value={year}>{year}</option>
+                ))}
               </select>
               <div className="absolute top-0 right-2.5 h-full flex items-center pointer-events-none">
                 <ChevronDown className="w-4 h-4 text-subtext" />
               </div>
             </div>
-          )}
+            
+            {filterYear !== 'all' && (
+              <div className="relative w-full sm:w-auto sm:flex-none">
+                <select 
+                  value={filterMonth}
+                  onChange={(e) => setFilterMonth(e.target.value)}
+                  className="w-full h-10 bg-surface border border-gray-100/50 text-text text-sm font-bold rounded-xl pl-3 pr-8 outline-none focus:border-primary/50 focus:ring-2 ring-primary/20 cursor-pointer shadow-sm appearance-none transition-all"
+                >
+                  <option value="all">{appLanguage === 'ms' ? 'Sepanjang Tahun' : 'Whole Year'}</option>
+                  {stats.months.map((month, idx) => {
+                    const mVal = String(idx + 1).padStart(2, '0');
+                    return <option key={mVal} value={mVal}>{month}</option>;
+                  })}
+                </select>
+                <div className="absolute top-0 right-2.5 h-full flex items-center pointer-events-none">
+                  <ChevronDown className="w-4 h-4 text-subtext" />
+                </div>
+              </div>
+            )}
+          </div>
         </div>
-      </div>
-          <div className="grid grid-cols-2 gap-3 mb-3">
-            <div className="bg-surface border border-gray-100 rounded-xl p-3 shadow-sm flex flex-col justify-center">
-              <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-0.5 truncate">{appLanguage === 'ms' ? 'Pendapatan (RM)' : 'Total Income (RM)'}</p>
-              <p className="text-2xl font-black text-emerald-600">{stats.totalIncome.toFixed(2)}</p>
-            </div>
-            
-            <div className="bg-surface border border-gray-100 rounded-xl p-3 shadow-sm flex flex-col justify-center">
-              <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-0.5 truncate">{appLanguage === 'ms' ? 'Jumlah Order' : 'Total Orders'}</p>
-              <p className="text-2xl font-black text-text">{stats.totalUniqueOrders}</p>
-            </div>
+
+        <div className="grid grid-cols-2 gap-3 mb-3">
+          <div className="bg-surface border border-gray-100 rounded-xl p-3 shadow-sm flex flex-col justify-center">
+            <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-0.5 truncate">{appLanguage === 'ms' ? 'Pendapatan (RM)' : 'Total Income (RM)'}</p>
+            <p className="text-2xl font-black text-emerald-600">{stats.totalIncome.toFixed(2)}</p>
           </div>
-            
-          <div className="grid grid-cols-3 gap-3 mb-4">
-            <div className="bg-surface border border-gray-100 rounded-xl p-3 shadow-sm flex flex-col justify-center">
-              <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-0.5 truncate">{appLanguage === 'ms' ? 'Pelanggan Unik' : 'Unique Customers'}</p>
-              <p className="text-2xl font-black text-text">{stats.totalUniqueCustomers}</p>
-            </div>
-
-            <div className="bg-surface border border-gray-100 rounded-xl p-3 shadow-sm flex flex-col justify-center">
-              <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-0.5 truncate">{appLanguage === 'ms' ? 'Berulang' : 'Repeat Customers'}</p>
-              <p className="text-2xl font-black text-text">{stats.repeatCustomers}</p>
-            </div>
-
-            <div className="bg-surface border border-gray-100 rounded-xl p-3 shadow-sm flex flex-col justify-center relative overflow-hidden">
-              <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-0.5 truncate">{appLanguage === 'ms' ? 'Kadar Ulangan' : 'Repeat Rate'}</p>
-              <p className="text-2xl font-black text-primary">{stats.repeatCustomerRate}%</p>
-            </div>
+          
+          <div className="bg-surface border border-gray-100 rounded-xl p-3 shadow-sm flex flex-col justify-center">
+            <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-0.5 truncate">{appLanguage === 'ms' ? 'Jumlah Order' : 'Total Orders'}</p>
+            <p className="text-2xl font-black text-text">{stats.totalUniqueOrders}</p>
+          </div>
+        </div>
+          
+        <div className="grid grid-cols-3 gap-3 mb-4">
+          <div className="bg-surface border border-gray-100 rounded-xl p-3 shadow-sm flex flex-col justify-center">
+            <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-0.5 truncate">{appLanguage === 'ms' ? 'Pelanggan Unik' : 'Unique Customers'}</p>
+            <p className="text-2xl font-black text-text">{stats.totalUniqueCustomers}</p>
           </div>
 
-          <div className="grid grid-cols-2 gap-3 mb-4">
-            <div className="bg-surface border border-gray-100 rounded-xl p-3 shadow-sm flex flex-col justify-center">
-              <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-0.5 truncate">
-                {appLanguage === 'ms' ? 'Sudah Siap (Dihantar)' : 'Completed (Delivered)'}
-              </p>
-              <p className="text-2xl font-black text-emerald-600">{stats.completedOrders}</p>
-            </div>
-
-            <div className="bg-surface border border-gray-100 rounded-xl p-3 shadow-sm flex flex-col justify-center">
-              <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-0.5 truncate">
-                {appLanguage === 'ms' ? 'Belum Siap (Pending)' : 'Incomplete (Pending)'}
-              </p>
-              <p className="text-2xl font-black text-amber-500">{stats.pendingOrders}</p>
-            </div>
+          <div className="bg-surface border border-gray-100 rounded-xl p-3 shadow-sm flex flex-col justify-center">
+            <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-0.5 truncate">{appLanguage === 'ms' ? 'Berulang' : 'Repeat Customers'}</p>
+            <p className="text-2xl font-black text-text">{stats.repeatCustomers}</p>
           </div>
 
-          {stats.invalidDatesCount > 0 && (
-            <button 
-              onClick={() => setShowInvalidModal(true)}
-              className="w-full text-left bg-amber-50 text-amber-700 p-3 rounded-xl flex items-center border border-amber-100 shadow-sm text-xs font-medium cursor-pointer hover:bg-amber-100/50 transition-colors"
-            >
-              <AlertCircle className="w-4 h-4 mr-2 shrink-0" />
-              <p className="flex-1">
-                {appLanguage === 'ms' 
-                  ? `${stats.invalidDatesCount} order mempunyai tarikh yang tidak sah (tidak ditunjukkan dalam carta bulanan). Klik untuk lihat.`
-                  : `${stats.invalidDatesCount} orders have invalid dates (excluded from monthly chart). Click to view.`}
-              </p>
-            </button>
-          )}
+          <div className="bg-surface border border-gray-100 rounded-xl p-3 shadow-sm flex flex-col justify-center relative overflow-hidden">
+            <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-0.5 truncate">{appLanguage === 'ms' ? 'Kadar Ulangan' : 'Repeat Rate'}</p>
+            <p className="text-2xl font-black text-primary">{stats.repeatCustomerRate}%</p>
+          </div>
+        </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 pb-8">
-            <div className="bg-surface border border-gray-100 rounded-[20px] p-4 shadow-sm space-y-6">
-              <div>
-                <h3 className="text-sm font-bold text-text mb-4">
-                  {filterYear === 'all'
-                    ? (appLanguage === 'ms' ? 'Order Mengikut Tahun' : 'Orders By Year')
-                    : filterMonth === 'all'
-                      ? (appLanguage === 'ms' ? `Order Mengikut Bulan (${filterYear})` : `Orders By Month (${filterYear})`)
-                      : (appLanguage === 'ms' ? `Order Mengikut Hari (${stats.months[parseInt(filterMonth) - 1]} ${filterYear})` : `Orders By Day (${stats.months[parseInt(filterMonth) - 1]} ${filterYear})`)}
-                </h3>
-                <div className="h-[200px] w-full">
-                  <SafeResponsiveContainer>
-                    <LineChart data={stats.ordersByMonth} margin={{ top: 20, right: 10, left: -20, bottom: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
-                      <XAxis dataKey="name" tick={{fontSize: 10}} tickLine={false} axisLine={false} />
-                      <YAxis tick={{fontSize: 10}} tickLine={false} axisLine={false} allowDecimals={false} />
-                      <Tooltip cursor={{fill: 'rgba(0,0,0,0.05)'}} contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)'}} />
-                      <Line type="monotone" dataKey="value" stroke="#0A84FF" strokeWidth={3} dot={{ r: 4, strokeWidth: 2 }} activeDot={{ r: 6 }} >
-                        <LabelList dataKey="value" position="top" style={{ fontSize: '10px', fontWeight: 'bold', fill: '#636366' }} />
-                      </Line>
-                    </LineChart>
-                  </SafeResponsiveContainer>
-                </div>
-              </div>
+        <div className="grid grid-cols-2 gap-3 mb-4">
+          <div className="bg-surface border border-gray-100 rounded-xl p-3 shadow-sm flex flex-col justify-center">
+            <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-0.5 truncate">
+              {appLanguage === 'ms' ? 'Sudah Siap (Dihantar)' : 'Completed (Delivered)'}
+            </p>
+            <p className="text-2xl font-black text-emerald-600">{stats.completedOrders}</p>
+          </div>
 
-              <div>
-                <h3 className="text-sm font-bold text-text mb-4">{appLanguage === 'ms' ? 'Jenis Pelanggan' : 'Customer Types'}</h3>
-                <div className="h-[180px] w-full flex items-center justify-center">
-                  <div className="w-[180px] h-full relative">
-                    <SafeResponsiveContainer>
-                      <PieChart>
-                        <Pie
-                          data={stats.customerTypes}
-                          cx="50%"
-                          cy="50%"
-                          innerRadius={50}
-                          outerRadius={70}
-                          paddingAngle={5}
-                          dataKey="value"
-                          label={{ fontSize: '10px', fill: '#636366', fontWeight: 'bold' }}
-                        >
-                          {stats.customerTypes.map((entry, index) => (
-                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                          ))}
-                        </Pie>
-                        <Tooltip contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)'}} />
-                      </PieChart>
-                    </SafeResponsiveContainer>
-                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none flex-col">
-                      <span className="text-xl font-black text-text">{stats.totalUniqueCustomers}</span>
-                      <span className="text-[10px] font-bold text-gray-400 uppercase">{appLanguage === 'ms' ? 'Jumlah' : 'Total'}</span>
-                    </div>
-                  </div>
-                  <div className="flex flex-col justify-center space-y-2 ml-4">
-                    {stats.customerTypes.map((entry, index) => (
-                      <div key={entry.name} className="flex items-center text-xs">
-                        <div className="w-3 h-3 rounded-full mr-2" style={{ backgroundColor: COLORS[index % COLORS.length] }}></div>
-                        <span className="text-gray-500 mr-2">{entry.name}</span>
-                        <span className="font-bold text-text">{entry.value}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+          <div className="bg-surface border border-gray-100 rounded-xl p-3 shadow-sm flex flex-col justify-center">
+            <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-0.5 truncate">
+              {appLanguage === 'ms' ? 'Belum Siap (Pending)' : 'Incomplete (Pending)'}
+            </p>
+            <p className="text-2xl font-black text-amber-500">{stats.pendingOrders}</p>
+          </div>
+        </div>
+
+        {stats.invalidDatesCount > 0 && (
+          <button 
+            onClick={() => setShowInvalidModal(true)}
+            className="w-full text-left bg-amber-50 text-amber-700 p-3 rounded-xl flex items-center border border-amber-100 shadow-sm text-xs font-medium cursor-pointer hover:bg-amber-100/50 transition-colors"
+          >
+            <AlertCircle className="w-4 h-4 mr-2 shrink-0" />
+            <p className="flex-1">
+              {appLanguage === 'ms' 
+                ? `${stats.invalidDatesCount} order mempunyai tarikh yang tidak sah (tidak ditunjukkan dalam carta bulanan). Klik untuk lihat.`
+                : `${stats.invalidDatesCount} orders have invalid dates (excluded from monthly chart). Click to view.`}
+            </p>
+          </button>
+        )}
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 pb-8">
+          <div className="bg-surface border border-gray-100 rounded-[20px] p-4 shadow-sm space-y-6">
+            <div>
+              <h3 className="text-sm font-bold text-text mb-4">
+                {filterYear === 'all'
+                  ? (appLanguage === 'ms' ? 'Order Mengikut Tahun' : 'Orders By Year')
+                  : filterMonth === 'all'
+                    ? (appLanguage === 'ms' ? `Order Mengikut Bulan (${filterYear})` : `Orders By Month (${filterYear})`)
+                    : (appLanguage === 'ms' ? `Order Mengikut Hari (${stats.months[parseInt(filterMonth) - 1]} ${filterYear})` : `Orders By Day (${stats.months[parseInt(filterMonth) - 1]} ${filterYear})`)}
+              </h3>
+              <div className="h-[200px] w-full">
+                <SafeResponsiveContainer>
+                  <LineChart data={stats.ordersByMonth} margin={{ top: 20, right: 10, left: -20, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
+                    <XAxis dataKey="name" tick={{fontSize: 10}} tickLine={false} axisLine={false} />
+                    <YAxis tick={{fontSize: 10}} tickLine={false} axisLine={false} allowDecimals={false} />
+                    <Tooltip cursor={{fill: 'rgba(0,0,0,0.05)'}} contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)'}} />
+                    <Line type="monotone" dataKey="value" stroke="#0A84FF" strokeWidth={3} dot={{ r: 4, strokeWidth: 2 }} activeDot={{ r: 6 }} >
+                      <LabelList dataKey="value" position="top" style={{ fontSize: '10px', fontWeight: 'bold', fill: '#636366' }} />
+                    </Line>
+                  </LineChart>
+                </SafeResponsiveContainer>
               </div>
             </div>
 
-            <div className="bg-surface border border-gray-100 rounded-[20px] p-4 shadow-sm space-y-6">
-              <div>
-                <h3 className="text-sm font-bold text-text mb-4">{appLanguage === 'ms' ? 'Kategori Tempahan' : 'Order Categories'}</h3>
-                <div className="h-[200px] w-full">
+            <div>
+              <h3 className="text-sm font-bold text-text mb-4">{appLanguage === 'ms' ? 'Jenis Pelanggan' : 'Customer Types'}</h3>
+              <div className="h-[180px] w-full flex items-center justify-center">
+                <div className="w-[180px] h-full relative">
                   <SafeResponsiveContainer>
                     <PieChart>
                       <Pie
-                        data={stats.typesChart}
+                        data={stats.customerTypes}
                         cx="50%"
                         cy="50%"
                         innerRadius={50}
@@ -755,50 +800,91 @@ export function DashboardView() {
                         dataKey="value"
                         label={{ fontSize: '10px', fill: '#636366', fontWeight: 'bold' }}
                       >
-                        {stats.typesChart.map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={COLORS[(index + 2) % COLORS.length]} />
+                        {stats.customerTypes.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                         ))}
                       </Pie>
                       <Tooltip contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)'}} />
                     </PieChart>
                   </SafeResponsiveContainer>
+                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none flex-col">
+                    <span className="text-xl font-black text-text">{stats.totalUniqueCustomers}</span>
+                    <span className="text-[10px] font-bold text-gray-400 uppercase">{appLanguage === 'ms' ? 'Jumlah' : 'Total'}</span>
+                  </div>
                 </div>
-                <div className="flex flex-wrap justify-center gap-3 mt-2">
-                  {stats.typesChart.map((entry, index) => (
-                    <div key={entry.name} className="flex items-center text-[10px]">
-                      <div className="w-2 h-2 rounded-full mr-1" style={{ backgroundColor: COLORS[(index + 2) % COLORS.length] }}></div>
-                      <span className="text-gray-500 mr-1 truncate max-w-[80px]">{entry.name}</span>
+                <div className="flex flex-col justify-center space-y-2 ml-4">
+                  {stats.customerTypes.map((entry, index) => (
+                    <div key={entry.name} className="flex items-center text-xs">
+                      <div className="w-3 h-3 rounded-full mr-2" style={{ backgroundColor: COLORS[index % COLORS.length] }}></div>
+                      <span className="text-gray-500 mr-2">{entry.name}</span>
                       <span className="font-bold text-text">{entry.value}</span>
                     </div>
                   ))}
                 </div>
               </div>
+            </div>
+          </div>
 
-              <div>
-                <h3 className="text-sm font-bold text-text mb-4">{appLanguage === 'ms' ? 'Prioriti (Tahap Urgency)' : 'Priority (Urgency Level)'}</h3>
-                <div className="h-[160px] w-full">
-                  <SafeResponsiveContainer>
-                    <BarChart data={stats.urgencyChart} layout="vertical" margin={{ top: 0, right: 30, left: 10, bottom: 0 }}>
-                      <XAxis type="number" hide />
-                      <YAxis dataKey="name" type="category" tick={{fontSize: 10}} tickLine={false} axisLine={false} width={80} />
-                      <Tooltip cursor={{fill: 'rgba(0,0,0,0.05)'}} contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)'}} />
-                      <Bar dataKey="value" radius={[0, 4, 4, 0]}>
-                        {stats.urgencyChart.map((entry, index) => {
-                          let color = '#059669'; // default Tak Urgent
-                          if (entry.name === 'Super Urgent') color = '#E11D48';
-                          else if (entry.name === 'Urgent') color = '#EA580C';
-                          else if (entry.name === 'Semi Urgent') color = '#D97706';
-                          return <Cell key={`cell-${index}`} fill={color} />;
-                        })}
-                        <LabelList dataKey="value" position="right" style={{ fontSize: '10px', fontWeight: 'bold', fill: '#636366' }} />
-                      </Bar>
-                    </BarChart>
-                  </SafeResponsiveContainer>
-                </div>
+          <div className="bg-surface border border-gray-100 rounded-[20px] p-4 shadow-sm space-y-6">
+            <div>
+              <h3 className="text-sm font-bold text-text mb-4">{appLanguage === 'ms' ? 'Kategori Tempahan' : 'Order Categories'}</h3>
+              <div className="h-[200px] w-full">
+                <SafeResponsiveContainer>
+                  <PieChart>
+                    <Pie
+                      data={stats.typesChart}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={50}
+                      outerRadius={70}
+                      paddingAngle={5}
+                      dataKey="value"
+                      label={{ fontSize: '10px', fill: '#636366', fontWeight: 'bold' }}
+                    >
+                      {stats.typesChart.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={COLORS[(index + 2) % COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)'}} />
+                  </PieChart>
+                </SafeResponsiveContainer>
+              </div>
+              <div className="flex flex-wrap justify-center gap-3 mt-2">
+                {stats.typesChart.map((entry, index) => (
+                  <div key={entry.name} className="flex items-center text-[10px]">
+                    <div className="w-2 h-2 rounded-full mr-1" style={{ backgroundColor: COLORS[(index + 2) % COLORS.length] }}></div>
+                    <span className="text-gray-500 mr-1 truncate max-w-[80px]">{entry.name}</span>
+                    <span className="font-bold text-text">{entry.value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <h3 className="text-sm font-bold text-text mb-4">{appLanguage === 'ms' ? 'Prioriti (Tahap Urgency)' : 'Priority (Urgency Level)'}</h3>
+              <div className="h-[160px] w-full">
+                <SafeResponsiveContainer>
+                  <BarChart data={stats.urgencyChart} layout="vertical" margin={{ top: 0, right: 30, left: 10, bottom: 0 }}>
+                    <XAxis type="number" hide />
+                    <YAxis dataKey="name" type="category" tick={{fontSize: 10}} tickLine={false} axisLine={false} width={80} />
+                    <Tooltip cursor={{fill: 'rgba(0,0,0,0.05)'}} contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)'}} />
+                    <Bar dataKey="value" radius={[0, 4, 4, 0]}>
+                      {stats.urgencyChart.map((entry, index) => {
+                        let color = '#059669'; // default Tak Urgent / Not Urgent
+                        if (entry.name === 'Super Urgent') color = '#E11D48';
+                        else if (entry.name === 'Urgent') color = '#EA580C';
+                        else if (entry.name === 'Semi Urgent') color = '#D97706';
+                        return <Cell key={`cell-${index}`} fill={color} />;
+                      })}
+                      <LabelList dataKey="value" position="right" style={{ fontSize: '10px', fontWeight: 'bold', fill: '#636366' }} />
+                    </Bar>
+                  </BarChart>
+                </SafeResponsiveContainer>
               </div>
             </div>
           </div>
         </div>
+      </div>
     </>
   );
 }
