@@ -600,7 +600,6 @@ export function HistoryView() {
       url.searchParams.append('callback', callbackName);
 
       const triggerPostFallback = () => {
-        console.log("Executing no-cors POST update_delivered fallback...");
         fetch(activeUrl, {
           method: 'POST',
           mode: 'no-cors',
@@ -614,7 +613,6 @@ export function HistoryView() {
             isDelivered: newStatus
           })
         }).then(() => {
-          console.log("no-cors POST delivered fallback succeeded!");
           updateSpecificHistoryItem(item.id, {
             syncStatus: 'synced',
             syncLastSuccess: Date.now(),
@@ -668,7 +666,6 @@ export function HistoryView() {
       url.searchParams.append('callback', callbackName);
 
       const triggerPostFallback = async () => {
-        console.log("Executing no-cors POST delete_order fallback...");
         try {
           await fetch(activeUrl, {
             method: 'POST',
@@ -682,7 +679,6 @@ export function HistoryView() {
               orderId: orderId
             })
           });
-          console.log("no-cors POST delete fallback succeeded!");
         } catch (postErr) {
           console.error("POST delete fallback failed, queuing for offline:", postErr);
           addToOfflineQueue({
@@ -696,7 +692,6 @@ export function HistoryView() {
       try {
         const resp = await jsonpRequest(url, callbackName);
         if (resp && resp.status === 'success') {
-          console.log('Successfully deleted order from cloud:', resp);
         } else {
           console.warn('JSONP deletion failed, attempting POST fallback:', resp);
           await triggerPostFallback();
@@ -1355,7 +1350,6 @@ const existingIdx = updatedHistory.findIndex((item) => {
       if (result.status !== 'success') {
         console.warn('Synced status check warning:', result.message || 'Update failed');
           // Try POST fallback
-          console.log("Executing no-cors POST update_delivered fallback from remote...");
           fetch(scriptUrl, {
             method: 'POST',
             mode: 'no-cors',
@@ -1369,7 +1363,6 @@ const existingIdx = updatedHistory.findIndex((item) => {
               isDelivered: newStatus
             })
           }).then(() => {
-             console.log("no-cors POST delivered fallback succeeded!");
              setRemoteResults((prev) =>
               prev.map((item, idx) => (idx === index ? { 
                 ...item, 
@@ -1430,7 +1423,6 @@ const existingIdx = updatedHistory.findIndex((item) => {
     } catch (err) {
       console.warn('Failed to sync delivered status update in background:', err);
       // Try POST fallback
-      console.log("Executing no-cors POST update_delivered fallback from remote catch...");
       fetch(scriptUrl, {
         method: 'POST',
         mode: 'no-cors',
@@ -1444,7 +1436,6 @@ const existingIdx = updatedHistory.findIndex((item) => {
           isDelivered: newStatus
         })
       }).then(() => {
-         console.log("no-cors POST delivered fallback succeeded!");
          setRemoteResults((prev) =>
           prev.map((item, idx) => (idx === index ? { 
             ...item, 

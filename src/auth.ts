@@ -61,7 +61,6 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
     console.error('Sign in error:', error);
     if (error.code === 'auth/popup-blocked' || error.code === 'auth/cancelled-query' || error.code === 'auth/popup-closed-by-user') {
       // Fallback to redirect if popup is blocked or closed prematurely
-      console.log('Popup issue detected, trying redirect...');
       await signInWithRedirect(auth, provider);
       return null;
     }

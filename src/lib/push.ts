@@ -65,7 +65,6 @@ export async function syncPushNotifications(item: OrderHistoryItem, language: 'm
   try {
     const subscription = await getSubscription();
     if (!subscription) {
-      console.log('Skipping syncPushNotifications: No push subscription acquired.');
       return;
     }
 

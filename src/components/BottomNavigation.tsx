@@ -192,7 +192,8 @@ export function BottomNavigation() {
               <button
                 onClick={() => {
                   setShowAddMenu(false);
-                  startNewCustomer();
+                  localStorage.removeItem('customer_form_progress');
+                  startNewOrder('customer-info', {});
                 }}
                 className="flex items-center gap-3.5 p-2.5 bg-gray-50/50 hover:bg-gray-50 dark:bg-zinc-900/40 dark:hover:bg-zinc-900/70 border border-gray-100 dark:border-zinc-800/80 rounded-2xl text-left transition-all active:scale-[0.98] cursor-pointer group"
               >

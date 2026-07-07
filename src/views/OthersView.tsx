@@ -63,9 +63,6 @@ export function OthersView() {
 
   useEffect(() => {
     getRedirectResult(auth).then((result) => {
-      if (result) {
-        console.log('Firebase user from redirect:', result.user);
-      }
     }).catch((error) => {
       console.error('Redirect error:', error);
       setAuthError(error.code);

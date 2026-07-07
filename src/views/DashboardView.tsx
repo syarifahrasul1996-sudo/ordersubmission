@@ -222,8 +222,7 @@ export function DashboardView() {
 
     // 2. Deduplicate orders using Priority and Map
     const deduplicatedMap = new Map<string, typeof history[0]>();
-    let duplicatesRemoved = 0;
-
+    
     activeHistoryItems.forEach(item => {
       const state = item.state;
       let key = '';
@@ -242,10 +241,6 @@ export function DashboardView() {
 
       const existing = deduplicatedMap.get(key);
       if (existing) {
-        duplicatesRemoved++;
-        if (import.meta.env.DEV) {
-          console.log(`[Deduplication] Duplicate key detected: "${key}". Retaining newest based on timestamp.`);
-        }
         const currentTs = Number(item.timestamp) || 0;
         const existingTs = Number(existing.timestamp) || 0;
         if (currentTs > existingTs) {
@@ -256,264 +251,149 @@ export function DashboardView() {
       }
     });
 
-    // 3. Normalize each deduplicated order using one due-date source: getOrderDueTimestamp(item)
+    // 3. Normalize orders
     const normalizedOrders = Array.from(deduplicatedMap.values()).map(item => {
       const state = item.state || {};
-      const result = getOrderDueTimestamp(item);
-      const isVal = result !== null && Number.isFinite(result) && result > 0;
-      const analysisDueTimestamp = isVal ? result : null;
-      const isDueInvalid = analysisDueTimestamp === null;
-
+      const dueResult = getOrderDueTimestamp(item);
+      const isDueVal = dueResult !== null && Number.isFinite(dueResult) && dueResult > 0;
+      
       return {
         ...state,
         historyId: item.id,
         historyTimestamp: Number(item.timestamp) || 0,
-        analysisDueTimestamp,
-        isDueInvalid
+        analysisDueTimestamp: isDueVal ? dueResult : null,
+        isDueInvalid: !isDueVal
       };
     });
 
-    // 4. Separate valid and invalid orders
-    const validDateOrders = normalizedOrders.filter(order => !order.isDueInvalid);
-    const invalidDateOrders = normalizedOrders.filter(order => order.isDueInvalid);
-    const invalidDatesCount = invalidDateOrders.length;
-    const invalidOrdersList = invalidDateOrders;
+    // 4. Create analysis datasets
+    const filterByDate = (orders: typeof normalizedOrders, useDue: boolean) => {
+      return orders.filter(order => {
+        const timestamp = useDue ? order.analysisDueTimestamp : order.historyTimestamp;
+        if (!timestamp) return false;
 
-    // 5. Create one analysisOrders array used by all metrics
-    const analysisOrders = validDateOrders.filter(order => {
-      const timestamp = order.analysisDueTimestamp;
-      if (!timestamp) return false;
+        const date = new Date(timestamp);
+        if (filterYear !== 'all' && String(date.getFullYear()) !== filterYear) return false;
+        if (filterMonth !== 'all' && String(date.getMonth() + 1).padStart(2, '0') !== filterMonth) return false;
+        return true;
+      });
+    };
 
-      const date = new Date(timestamp);
-      if (filterYear !== 'all') {
-        if (String(date.getFullYear()) !== filterYear) return false;
-      }
+    const businessOrders = filterByDate(normalizedOrders, false); // By Order Date
+    const workloadOrders = filterByDate(normalizedOrders, true);   // By Due Date
 
-      if (filterMonth !== 'all') {
-        const month = String(date.getMonth() + 1).padStart(2, '0');
-        if (month !== filterMonth) return false;
-      }
-
-      return true;
-    });
-
-    // 6. Global repeat customer map built after deduplication of all active orders
+    // 5. Calculate Metrics (Business by Order Date)
     const globalCustomerCounts = new Map<string, number>();
     normalizedOrders.forEach(order => {
       const key = getCanonicalCustomerKey(order);
-      if (key) {
-        globalCustomerCounts.set(key, (globalCustomerCounts.get(key) || 0) + 1);
-      }
+      if (key) globalCustomerCounts.set(key, (globalCustomerCounts.get(key) || 0) + 1);
     });
 
-    const isGloballyRepeat = (key: string): boolean => {
-      return (globalCustomerCounts.get(key) || 0) >= 2;
-    };
+    const isGloballyRepeat = (key: string): boolean => (globalCustomerCounts.get(key) || 0) >= 2;
 
-    // 7. Calculate customer metrics for the selected period
     const periodCustomerKeys = new Set<string>();
-    analysisOrders.forEach(order => {
+    businessOrders.forEach(order => {
       const key = getCanonicalCustomerKey(order);
-      if (key) {
-        periodCustomerKeys.add(key);
-      }
+      if (key) periodCustomerKeys.add(key);
     });
 
     const totalUniqueCustomers = periodCustomerKeys.size;
     let repeatCustomers = 0;
-    periodCustomerKeys.forEach(key => {
-      if (isGloballyRepeat(key)) {
-        repeatCustomers++;
-      }
-    });
+    periodCustomerKeys.forEach(key => { if (isGloballyRepeat(key)) repeatCustomers++; });
     const newCustomers = totalUniqueCustomers - repeatCustomers;
 
-    // 8. Correct Total Orders and Income
-    const totalOrders = analysisOrders.length;
-    const totalIncome = analysisOrders.reduce((sum, order) => sum + parseMoney(order.price), 0);
+    const totalOrders = businessOrders.length;
+    const totalIncome = businessOrders.reduce((sum, order) => sum + parseMoney(order.price), 0);
 
-    // 9. Correct Completed and Pending Totals
-    const completedOrders = analysisOrders.filter(order => normalizeBoolean(order.isDelivered)).length;
-    const pendingOrders = totalOrders - completedOrders;
+    // 6. Metrics (Workload by Due Date)
+    const completedOrdersWorkload = workloadOrders.filter(order => normalizeBoolean(order.isDelivered)).length;
+    const pendingOrdersWorkload = workloadOrders.length - completedOrdersWorkload;
 
-    // 10. Grouping Category and Urgency for charts
+    // 7. Categories & Urgency (By Order Date)
     const categoryMap = new Map<string, number>();
-    analysisOrders.forEach(order => {
+    businessOrders.forEach(order => {
       const cat = getNormalizedCategory(order);
       categoryMap.set(cat, (categoryMap.get(cat) || 0) + 1);
     });
 
     const typesChart = Array.from(categoryMap.entries())
-      .map(([name, value]) => {
-        let displayName = name;
-        if (name === 'other') {
-          displayName = appLanguage === 'ms' ? 'Lain-lain' : 'Others';
-        } else if (name === 'unknown') {
-          displayName = appLanguage === 'ms' ? 'Tidak Diketahui' : 'Unknown';
-        }
-        return { name: displayName, value };
-      })
+      .map(([name, value]) => ({
+        name: name === 'other' ? (appLanguage === 'ms' ? 'Lain-lain' : 'Others') : name === 'unknown' ? (appLanguage === 'ms' ? 'Tidak Diketahui' : 'Unknown') : name,
+        value
+      }))
       .sort((a, b) => b.value - a.value)
       .slice(0, 5);
 
     const urgencyMap = new Map<UrgencyKey, number>();
-    urgencyMap.set('normal', 0);
-    urgencyMap.set('semi', 0);
-    urgencyMap.set('urgent', 0);
-    urgencyMap.set('super', 0);
-
-    analysisOrders.forEach(o => {
+    ['normal', 'semi', 'urgent', 'super'].forEach(k => urgencyMap.set(k as UrgencyKey, 0));
+    businessOrders.forEach(o => {
       const uKey = getUrgencyKey(o.customerJenis || o.urgency);
       urgencyMap.set(uKey, (urgencyMap.get(uKey) || 0) + 1);
     });
 
-    const urgencyLabels: Record<UrgencyKey, { en: string; ms: string }> = {
+    const urgencyChart = Object.entries({
       normal: { en: 'Not Urgent', ms: 'Tak Urgent' },
       semi: { en: 'Semi Urgent', ms: 'Semi Urgent' },
       urgent: { en: 'Urgent', ms: 'Urgent' },
       super: { en: 'Super Urgent', ms: 'Super Urgent' }
-    };
+    }).map(([key, labelObj]) => ({
+      name: appLanguage === 'ms' ? labelObj.ms : labelObj.en,
+      value: urgencyMap.get(key as UrgencyKey) || 0
+    })).sort((a, b) => b.value - a.value);
 
-    const urgencyChart = Object.entries(urgencyLabels)
-      .map(([key, labelObj]) => {
-        const uKey = key as UrgencyKey;
-        return {
-          name: appLanguage === 'ms' ? labelObj.ms : labelObj.en,
-          value: urgencyMap.get(uKey) || 0
-        };
-      })
-      .sort((a, b) => b.value - a.value);
-
-    // 11. Chart Aggregations
+    // 8. Order Chart Data (By Order Date)
     const availableYearsSet = new Set<string>();
-    annualSheets.filter((s: any) => s.year).forEach((s: any) => availableYearsSet.add(s.year));
-    validDateOrders.forEach(order => {
-      if (order.analysisDueTimestamp) {
-        availableYearsSet.add(String(new Date(order.analysisDueTimestamp).getFullYear()));
-      }
-    });
-
-    if (filterYear !== 'all' && !availableYearsSet.has(filterYear)) {
-      availableYearsSet.add(filterYear);
-    }
+    annualSheets.forEach((s: any) => s.year && availableYearsSet.add(s.year));
+    normalizedOrders.forEach(order => availableYearsSet.add(String(new Date(order.historyTimestamp).getFullYear())));
+    if (filterYear !== 'all') availableYearsSet.add(filterYear);
 
     const yearCounts = new Map<string, number>();
-    availableYearsSet.forEach(yr => {
-      yearCounts.set(yr, 0);
-    });
-
     const monthCounts = new Map<string, number>();
-    for (let i = 1; i <= 12; i++) {
-      monthCounts.set(String(i).padStart(2, '0'), 0);
-    }
-
+    for (let i = 1; i <= 12; i++) monthCounts.set(String(i).padStart(2, '0'), 0);
     const dayCounts = new Map<string, number>();
     if (filterYear !== 'all' && filterMonth !== 'all') {
-      const d = parseInt(filterYear);
-      const m = parseInt(filterMonth);
-      const numDays = new Date(d, m, 0).getDate();
-      for (let i = 1; i <= numDays; i++) {
-        dayCounts.set(String(i).padStart(2, '0'), 0);
-      }
+      const numDays = new Date(parseInt(filterYear), parseInt(filterMonth), 0).getDate();
+      for (let i = 1; i <= numDays; i++) dayCounts.set(String(i).padStart(2, '0'), 0);
     }
 
-    analysisOrders.forEach(order => {
-      const timestamp = order.analysisDueTimestamp;
-      if (timestamp) {
-        const date = new Date(timestamp);
-        const yStr = String(date.getFullYear());
-        const mStr = String(date.getMonth() + 1).padStart(2, '0');
-        const dStr = String(date.getDate()).padStart(2, '0');
+    businessOrders.forEach(order => {
+      const date = new Date(order.historyTimestamp);
+      const yStr = String(date.getFullYear());
+      const mStr = String(date.getMonth() + 1).padStart(2, '0');
+      const dStr = String(date.getDate()).padStart(2, '0');
 
-        if (filterYear === 'all') {
-          yearCounts.set(yStr, (yearCounts.get(yStr) || 0) + 1);
-        } else if (filterMonth === 'all') {
-          monthCounts.set(mStr, (monthCounts.get(mStr) || 0) + 1);
-        } else {
-          if (dayCounts.has(dStr)) {
-            dayCounts.set(dStr, (dayCounts.get(dStr) || 0) + 1);
-          }
-        }
-      }
+      if (filterYear === 'all') yearCounts.set(yStr, (yearCounts.get(yStr) || 0) + 1);
+      else if (filterMonth === 'all') monthCounts.set(mStr, (monthCounts.get(mStr) || 0) + 1);
+      else if (dayCounts.has(dStr)) dayCounts.set(dStr, (dayCounts.get(dStr) || 0) + 1);
     });
 
-    const monthNamesMs = ['Jan', 'Feb', 'Mac', 'Apr', 'Mei', 'Jun', 'Jul', 'Ogo', 'Sep', 'Okt', 'Nov', 'Dis'];
-    const monthNamesEn = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    const months = appLanguage === 'ms' ? monthNamesMs : monthNamesEn;
-
+    const months = appLanguage === 'ms' ? ['Jan', 'Feb', 'Mac', 'Apr', 'Mei', 'Jun', 'Jul', 'Ogo', 'Sep', 'Okt', 'Nov', 'Dis'] : ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    
     const ordersChartData = filterYear === 'all'
-      ? Array.from(yearCounts.entries())
-          .sort((a, b) => a[0].localeCompare(b[0]))
-          .map(([yStr, value]) => ({ 
-            name: yStr, 
-            value 
-          }))
+      ? Array.from(yearCounts.entries()).sort((a, b) => a[0].localeCompare(b[0])).map(([name, value]) => ({ name, value }))
       : filterMonth === 'all'
-        ? Array.from(monthCounts.entries())
-            .sort((a, b) => a[0].localeCompare(b[0]))
-            .map(([mStr, value]) => ({ 
-              name: months[parseInt(mStr, 10) - 1], 
-              value 
-            }))
-        : Array.from(dayCounts.entries())
-            .sort((a, b) => a[0].localeCompare(b[0]))
-            .map(([dStr, value]) => ({ 
-              name: dStr, 
-              value 
-            }));
-
-    const chartTotal = ordersChartData.reduce((sum, entry) => sum + entry.value, 0);
-
-    // 12. Dev mode validation and logs
-    if (import.meta.env.DEV) {
-      const isTotalValid = totalOrders === analysisOrders.length;
-      const isStatusSumValid = completedOrders + pendingOrders === totalOrders;
-      const isCustomersSumValid = newCustomers + repeatCustomers === totalUniqueCustomers;
-      const isChartTotalValid = chartTotal === totalOrders;
-      const isIncomeFinite = Number.isFinite(totalIncome);
-
-      console.log('--- DASHBOARD DEVELOPMENT VALIDATION ---');
-      console.log(`totalOrders === analysisOrders.length: ${isTotalValid} (${totalOrders} vs ${analysisOrders.length})`);
-      console.log(`completedOrders + pendingOrders === totalOrders: ${isStatusSumValid} (${completedOrders + pendingOrders} vs ${totalOrders})`);
-      console.log(`newCustomers + repeatCustomers === totalUniqueCustomers: ${isCustomersSumValid} (${newCustomers + repeatCustomers} vs ${totalUniqueCustomers})`);
-      console.log(`chartTotal === totalOrders: ${isChartTotalValid} (${chartTotal} vs ${totalOrders})`);
-      console.log(`Number.isFinite(totalIncome): ${isIncomeFinite} (Value: ${totalIncome})`);
-      
-      console.log(`Active Records: ${activeHistoryItems.length}`);
-      console.log(`Deduplicated Records: ${deduplicatedMap.size}`);
-      console.log(`Duplicates Removed: ${duplicatesRemoved}`);
-      console.log(`Valid-Date Records: ${validDateOrders.length}`);
-      console.log(`Invalid-Date Records: ${invalidDatesCount}`);
-      console.log(`Selected Analysis Records: ${analysisOrders.length}`);
-      console.log('----------------------------------------');
-    }
-
-    const customerTypes = [
-      { name: appLanguage === 'ms' ? 'Baru' : 'New', value: newCustomers },
-      { name: appLanguage === 'ms' ? 'Berulang' : 'Repeat', value: repeatCustomers }
-    ];
-
-    const years = Array.from(availableYearsSet).sort().reverse();
-    const repeatCustomerRate = totalUniqueCustomers > 0 
-      ? ((repeatCustomers / totalUniqueCustomers) * 100).toFixed(1) 
-      : '0.0';
+        ? Array.from(monthCounts.entries()).sort((a, b) => a[0].localeCompare(b[0])).map(([mStr, value]) => ({ name: months[parseInt(mStr, 10) - 1], value }))
+        : Array.from(dayCounts.entries()).sort((a, b) => a[0].localeCompare(b[0])).map(([name, value]) => ({ name, value }));
 
     return {
       totalUniqueOrders: totalOrders,
       totalIncome,
       totalUniqueCustomers,
       repeatCustomers,
-      repeatCustomerRate,
-      completedOrders,
-      pendingOrders,
+      repeatCustomerRate: totalUniqueCustomers > 0 ? ((repeatCustomers / totalUniqueCustomers) * 100).toFixed(1) : '0.0',
+      completedOrdersWorkload,
+      pendingOrdersWorkload,
       ordersByMonth: ordersChartData,
-      customerTypes,
+      customerTypes: [
+        { name: appLanguage === 'ms' ? 'Baru' : 'New', value: newCustomers },
+        { name: appLanguage === 'ms' ? 'Berulang' : 'Repeat', value: repeatCustomers }
+      ],
       typesChart,
       urgencyChart,
-      years,
+      years: Array.from(availableYearsSet).sort().reverse(),
       months,
-      invalidDatesCount,
-      invalidOrdersList
+      invalidDatesCount: normalizedOrders.filter(o => o.isDueInvalid).length,
+      invalidOrdersList: normalizedOrders.filter(o => o.isDueInvalid)
     };
   }, [appLanguage, filterYear, filterMonth, annualSheets, history, deletedOrderIds]);
 
@@ -647,10 +527,11 @@ export function DashboardView() {
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-2">
           <div>
             <h2 className="text-2xl font-black text-text tracking-tighter">
-              {appLanguage === 'ms' ? 'Tinjauan Perniagaan' : 'Business Overview'}
+              {appLanguage === 'ms' ? 'Tinjauan Perniagaan (Ikut Tarikh Order)' : 'Business Overview (By Order Date)'}
             </h2>
           </div>
           
+          {/* ... (keep refresh/select) ... */}
           <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 w-full lg:w-auto">
             <button
               onClick={() => syncOrders()}
@@ -698,6 +579,7 @@ export function DashboardView() {
               </div>
             )}
           </div>
+
         </div>
 
         <div className="grid grid-cols-2 gap-3 mb-3">
@@ -712,7 +594,7 @@ export function DashboardView() {
           </div>
         </div>
           
-        <div className="grid grid-cols-3 gap-3 mb-4">
+        <div className="grid grid-cols-3 gap-3 mb-8">
           <div className="bg-surface border border-gray-100 rounded-xl p-3 shadow-sm flex flex-col justify-center">
             <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-0.5 truncate">{appLanguage === 'ms' ? 'Pelanggan Unik' : 'Unique Customers'}</p>
             <p className="text-2xl font-black text-text">{stats.totalUniqueCustomers}</p>
@@ -729,16 +611,31 @@ export function DashboardView() {
           </div>
         </div>
 
+        <h3 className="text-xl font-black text-text tracking-tighter mb-4">
+          {appLanguage === 'ms' ? 'Tinjauan Beban Kerja (Ikut Tarikh Tamat)' : 'Workload Overview (By Due Date)'}
+        </h3>
+        <div className="grid grid-cols-2 gap-3 mb-8">
+          <div className="bg-surface border border-gray-100 rounded-xl p-3 shadow-sm flex flex-col justify-center">
+            <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-0.5 truncate">{appLanguage === 'ms' ? 'Selesai' : 'Completed'}</p>
+            <p className="text-2xl font-black text-emerald-600">{stats.completedOrdersWorkload}</p>
+          </div>
+          
+          <div className="bg-surface border border-gray-100 rounded-xl p-3 shadow-sm flex flex-col justify-center">
+            <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-0.5 truncate">{appLanguage === 'ms' ? 'Pending' : 'Pending'}</p>
+            <p className="text-2xl font-black text-amber-600">{stats.pendingOrdersWorkload}</p>
+          </div>
+        </div>
+        
         {stats.invalidDatesCount > 0 && (
           <button 
             onClick={() => setShowInvalidModal(true)}
-            className="w-full text-left bg-amber-50 text-amber-700 p-3 rounded-xl flex items-center border border-amber-100 shadow-sm text-xs font-medium cursor-pointer hover:bg-amber-100/50 transition-colors"
+            className="w-full text-left bg-amber-50 text-amber-700 p-3 rounded-xl flex items-center border border-amber-100 shadow-sm text-xs font-medium cursor-pointer hover:bg-amber-100/50 transition-colors mb-4"
           >
             <AlertCircle className="w-4 h-4 mr-2 shrink-0" />
             <p className="flex-1">
               {appLanguage === 'ms' 
-                ? `${stats.invalidDatesCount} order mempunyai tarikh yang tidak sah (tidak ditunjukkan dalam carta bulanan). Klik untuk lihat.`
-                : `${stats.invalidDatesCount} orders have invalid dates (excluded from monthly chart). Click to view.`}
+                ? `${stats.invalidDatesCount} order mempunyai tarikh tamat yang tidak sah. Klik untuk lihat.`
+                : `${stats.invalidDatesCount} orders have invalid due dates. Click to view.`}
             </p>
           </button>
         )}

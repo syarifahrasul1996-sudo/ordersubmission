@@ -57,6 +57,7 @@ export interface InAppNotification {
   timestamp: number;
   isRead: boolean;
   type?: 'soon' | 'due' | 'sync' | 'status_query';
+  dedupeKey?: string;
 }
 
 export interface OrderHistoryItem {

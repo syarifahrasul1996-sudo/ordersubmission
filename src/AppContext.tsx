@@ -7,6 +7,14 @@ import { parseDateStringToTimestamp } from './utils';
 const deduplicateHistory = (items: OrderHistoryItem[]): OrderHistoryItem[] => {
   if (!Array.isArray(items)) return [];
 
+  const isTemp = (item: OrderHistoryItem) => {
+    const state: Partial<AppState> = item.state || {};
+    const id = String(state.orderId || item.id || '');
+    const markers = ['SYNC-', 'draft_', 'saved_locally', 'syncing', 'failed', 'sent_unverified'];
+    return markers.some(marker => id.includes(marker)) || 
+           markers.some(marker => String(state.syncStatus).includes(marker));
+  };
+
   const normalizeText = (value: unknown) =>
     String(value || '')
       .trim()
@@ -61,14 +69,10 @@ const deduplicateHistory = (items: OrderHistoryItem[]): OrderHistoryItem[] => {
     if (!item || !item.id) continue;
 
     const localState: Partial<AppState> = item.state || {};
-    const localId = String(localState.orderId || item.id || '');
-    const isLocalTemp = localId.startsWith('SYNC-') || localId.startsWith('draft_') || !localId;
-
+    
     // Check if there is an existing item in result that is a duplicate of this item
     const duplicateIdx = result.findIndex(existing => {
       const existingState: Partial<AppState> = existing.state || {};
-      const existingId = String(existingState.orderId || existing.id || '');
-      const isExistingTemp = existingId.startsWith('SYNC-') || existingId.startsWith('draft_') || !existingId;
 
       // 1. Direct ID matching
       if (
@@ -81,6 +85,22 @@ const deduplicateHistory = (items: OrderHistoryItem[]): OrderHistoryItem[] => {
       }
 
       // 2. Fallback content matching (to prevent duplicate records on the same day)
+      // Only use content fallback matching when at least one record is temporary or unsynced.
+      if (!isTemp(item) && !isTemp(existing)) {
+        return false;
+      }
+
+      // Require non-empty customerName, non-empty customerPhone, valid due date, and non-empty order type for fallback matching.
+      const itemDue = parseDueTimestamp(localState.customerDue || localState.dueTimestamp);
+      const existingDue = parseDueTimestamp(existingState.customerDue || existingState.dueTimestamp);
+      
+      if (!localState.customerName || !localState.customerPhone || itemDue <= 0 || !localState.customerOrder) {
+        return false;
+      }
+      if (!existingState.customerName || !existingState.customerPhone || existingDue <= 0 || !existingState.customerOrder) {
+        return false;
+      }
+
       const sameName =
         normalizeText(localState.customerName) === normalizeText(existingState.customerName);
       
@@ -95,19 +115,15 @@ const deduplicateHistory = (items: OrderHistoryItem[]): OrderHistoryItem[] => {
         normalizeText(localState.customerOrder || localState.mainType) ===
         normalizeText(existingState.customerOrder || existingState.mainType);
 
-      if (sameName && samePhone && sameDueDay && sameOrder) {
-        return true;
-      }
-
-      return false;
+      return (sameName && samePhone && sameDueDay && sameOrder);
     });
 
     if (duplicateIdx !== -1) {
       // We found a duplicate! Let's choose the better one to keep.
       const existing = result[duplicateIdx];
       const existingState: Partial<AppState> = existing.state || {};
-      const existingId = String(existingState.orderId || existing.id || '');
-      const isExistingTemp = existingId.startsWith('SYNC-') || existingId.startsWith('draft_') || !existingId;
+      const isExistingTemp = isTemp(existing);
+      const isLocalTemp = isTemp(item);
 
       let preferNew = false;
       if (isExistingTemp && !isLocalTemp) {
@@ -122,7 +138,7 @@ const deduplicateHistory = (items: OrderHistoryItem[]): OrderHistoryItem[] => {
         } else if (existingSynced && !localSynced) {
           preferNew = false;
         } else {
-          // If both have the same sync state, compare the due timestamps (prefer later/most updated due time)
+          // If both have the same sync state, compare the due timestamps
           const existingTime = parseDueTimestamp(existingState.customerDue || existingState.dueTimestamp);
           const localTime = parseDueTimestamp(localState.customerDue || localState.dueTimestamp);
           
@@ -198,7 +214,7 @@ interface AppContextType {
   inAppNotifications: InAppNotification[];
   markNotificationAsRead: (id: string) => void;
   clearAllNotifications: () => void;
-  addInAppNotification: (title: string, body: string, type?: 'soon' | 'due' | 'sync' | 'status_query') => void;
+  addInAppNotification: (title: string, body: string, type?: 'soon' | 'due' | 'sync' | 'status_query', dedupeKey?: string) => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -363,16 +379,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('inAppNotifications', JSON.stringify(inAppNotifications));
   }, [inAppNotifications]);
 
-  const addInAppNotification = (title: string, body: string, type?: 'soon' | 'due' | 'sync' | 'status_query') => {
-    const newNotif: InAppNotification = {
-      id: `notif_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      title,
-      body,
-      timestamp: Date.now(),
-      isRead: false,
-      type
-    };
-    setInAppNotifications(prev => [newNotif, ...prev]);
+  const addInAppNotification = (title: string, body: string, type?: 'soon' | 'due' | 'sync' | 'status_query', dedupeKey?: string) => {
+    setInAppNotifications(prev => {
+        if (dedupeKey) {
+            const exists = prev.some(n => n.dedupeKey === dedupeKey && !n.isRead);
+            if (exists) return prev;
+        }
+        const newNotif: InAppNotification = {
+          id: `notif_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          title,
+          body,
+          timestamp: Date.now(),
+          isRead: false,
+          type,
+          dedupeKey
+        };
+        return [newNotif, ...prev];
+    });
   };
 
   const markNotificationAsRead = (id: string) => {
@@ -460,7 +483,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const TWENTY_MINS = 20 * 60 * 1000;
       const THREE_HOURS = 3 * 60 * 60 * 1000;
       
-      const alertsToTrigger: Array<{ title: string; body: string; type: 'soon' | 'due' | 'status_query' }> = [];
+      const alertsToTrigger: Array<{ title: string; body: string; type: 'soon' | 'due' | 'status_query'; dedupeKey: string }> = [];
 
       setHistory(prevHistory => {
         let updatedHistory = false;
@@ -505,7 +528,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
                         const notifyTitle = appLanguage === 'ms' ? 'Status Tempahan' : 'Ask Order Status';
                         const notifyBody = `${customerName || 'Customer'} (${mainType || 'Tempahan'}) - Dah siap ke belum? Link masih belum dimasukkan.`;
                         
-                        addInAppNotification(notifyTitle, notifyBody, 'status_query');
+                        addInAppNotification(notifyTitle, notifyBody, 'status_query', `status_query_${item.id}`);
                         try {
                           if ('Notification' in window && Notification.permission === 'granted') {
                             new Notification(notifyTitle, { body: notifyBody });
@@ -524,7 +547,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
                       const notifyTitle = appLanguage === 'ms' ? 'Status Tempahan' : 'Ask Order Status';
                       const notifyBody = `${customerName || 'Customer'} (${mainType || 'Tempahan'}) - Dah siap ke belum? Link masih belum dimasukkan.`;
                       
-                      addInAppNotification(notifyTitle, notifyBody, 'status_query');
+                      addInAppNotification(notifyTitle, notifyBody, 'status_query', `status_query_${item.id}`);
                       try {
                         if ('Notification' in window && Notification.permission === 'granted') {
                           new Notification(notifyTitle, { body: notifyBody });
@@ -542,7 +565,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
                   const notifyTitle = appLanguage === 'ms' ? 'Status Tempahan' : 'Ask Order Status';
                   const notifyBody = `${customerName || 'Customer'} (${mainType || 'Tempahan'}) - Dah siap ke belum? Link masih belum dimasukkan.`;
                   
-                  alertsToTrigger.push({ title: notifyTitle, body: notifyBody, type: 'status_query' });
+                  alertsToTrigger.push({ title: notifyTitle, body: notifyBody, type: 'status_query', dedupeKey: `status_query_${item.id}` });
                   try {
                     if ('Notification' in window && Notification.permission === 'granted') {
                       new Notification(notifyTitle, { body: notifyBody });
@@ -560,7 +583,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
                 ? `Pesanan untuk ${customerName || 'Pelanggan'} (${mainType} ${subType}) berbaki kurang dari 20 minit!`
                 : `Order for ${customerName || 'Customer'} (${mainType} ${subType}) is due in less than 20 minutes!`;
               
-              alertsToTrigger.push({ title, body, type: 'soon' });
+              alertsToTrigger.push({ title, body, type: 'soon', dedupeKey: `soon_${item.id}` });
               try {
                 if ('Notification' in window && Notification.permission === 'granted') {
                   new Notification(title, { body });
@@ -577,7 +600,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
                 ? `Tempahan untuk ${customerName || 'Pelanggan'} (${mainType} ${subType}) sudah sampai tempoh sekarang!`
                 : `Order for ${customerName || 'Customer'} (${mainType} ${subType}) is due now!`;
               
-              alertsToTrigger.push({ title, body, type: 'due' });
+              alertsToTrigger.push({ title, body, type: 'due', dedupeKey: `due_${item.id}` });
               try {
                 if ('Notification' in window && Notification.permission === 'granted') {
                   new Notification(title, { body });
@@ -603,13 +626,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       if (alertsToTrigger.length > 0) {
         setInAppNotifications(prev => {
-          const newAlerts = alertsToTrigger.map(a => ({
+          const filteredAlerts = alertsToTrigger.filter(a => {
+            if (a.dedupeKey) {
+                const exists = prev.some(n => n.dedupeKey === a.dedupeKey && !n.isRead);
+                return !exists;
+            }
+            return true;
+          });
+
+          const newAlerts = filteredAlerts.map(a => ({
             id: `notif_${Date.now()}_${Math.round(Math.random() * 1000000)}`,
             title: a.title,
             body: a.body,
             timestamp: Date.now(),
             isRead: false,
-            type: a.type
+            type: a.type as any,
+            dedupeKey: a.dedupeKey
           }));
           return [...newAlerts, ...prev];
         });
@@ -625,9 +657,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
 
     const interval = setInterval(checkAlerts, 60000); // Check every minute
+    const syncInterval = setInterval(syncOrders, 60000); // Sync every minute
     checkAlerts(); // Check right away
     
-    return () => clearInterval(interval);
+    return () => {
+        clearInterval(interval);
+        clearInterval(syncInterval);
+    };
   }, [appLanguage]);
 
   const [isOnline, setIsOnline] = useState<boolean>(() => typeof navigator !== 'undefined' ? navigator.onLine : true);
@@ -757,7 +793,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         ? `${processedCount} rekod luar talian telah berjaya dikemaskini.` 
         : `${processedCount} records from queue synced.`;
 
-      addInAppNotification(title, body, 'sync');
+      addInAppNotification(title, body, 'sync', 'sync_offline_queue');
 
       try {
         if ('Notification' in window && Notification.permission === 'granted') {

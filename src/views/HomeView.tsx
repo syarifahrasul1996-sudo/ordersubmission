@@ -24,13 +24,18 @@ export function HomeView() {
     setHistoryDeliveryFilter, 
     setHistoryPendingTimeFilter,
     deletedOrderIds,
-    isHistoryReady
+    isHistoryReady,
+    syncOrders
   } = useAppContext();
   const [calcUrgency, setCalcUrgency] = useState<string>('all');
   const [superHours, setSuperHours] = useState<number>(2);
   const [eta, setEta] = useState<string>('');
   const [copied, setCopied] = useState(false);
   const copyTimeout = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    syncOrders();
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -146,7 +151,6 @@ export function HomeView() {
       document.body.removeChild(ta);
       return successful;
     } catch (e) {
-      console.error('Failed to copy: ', e);
       return false;
     }
   };

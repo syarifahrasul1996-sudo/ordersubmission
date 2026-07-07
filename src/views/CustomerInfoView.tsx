@@ -708,7 +708,6 @@ let finalOrderId = orderId;
 if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-") === 0) {
   finalOrderId = generateOrderId();
   setOrderId(finalOrderId);
-  console.log("Pre-upgraded ID client-side:", oldIdToSend, "->", finalOrderId);
 
   // 1. Rename existing history item in local memory (so updateOrderHistoryState updates it instead of duplicating)
   setHistory(prev => {
@@ -816,8 +815,6 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
         spreadsheetId: resolvedSpreadsheetId
       };
       
-      console.log("Submitting payload to Google Apps Script:", JSON.stringify(payload, null, 2));
-
       // Offline check & queue
       if (!navigator.onLine) {
         try {
@@ -859,7 +856,6 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
       };
 
       const triggerPostFallback = () => {
-        console.log("Executing no-cors POST update_order fallback...");
         fetch(resolvedWebhookUrl, {
           method: 'POST',
           mode: 'no-cors',
@@ -872,7 +868,6 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
   oldOrderId: oldIdToSend || '',
 })
         }).then(() => {
-          console.log("no-cors POST fallback succeeded!");
           updateOrderHistoryState({
             syncStatus: 'synced',
             syncLastSuccess: Date.now(),
@@ -891,10 +886,8 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
       jsonpRequest<{status: string; message?: string; orderId?: string; isUpgraded?: boolean}>(resolvedWebhookUrl, jsonpParams)
         .then((resp) => {
           if (resp && resp.status === 'success') {
-            console.log("JSONP update_order successful:", resp);
             const returnedId = resp.orderId || finalOrderId;
             if (returnedId && returnedId !== finalOrderId) {
-              console.log("Upgraded orderId from", finalOrderId, "to", returnedId);
               
               // Update matching history item's ID & internal state
               setHistory(prev => {
