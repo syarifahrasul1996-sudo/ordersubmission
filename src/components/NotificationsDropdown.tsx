@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Bell, Clock, RefreshCw, HelpCircle, CheckCircle2, Trash2, Eye } from 'lucide-react';
+import { Bell, Clock, RefreshCw, HelpCircle, Trash2, Eye } from 'lucide-react';
 import { useAppContext } from '../AppContext';
 import { cn } from '../cn';
 
@@ -62,6 +62,7 @@ export function NotificationsDropdown() {
   return (
     <div className="relative" ref={dropdownRef}>
       <button
+        type="button"
         onClick={() => setIsOpen(!isOpen)}
         className={cn(
           "w-10 h-10 flex items-center justify-center rounded-full active:scale-95 transition-all text-text relative bg-surface hover:bg-gray-200/50 dark:hover:bg-gray-800/50",
@@ -74,10 +75,10 @@ export function NotificationsDropdown() {
         <Bell className={cn("w-5 h-5 transition-transform duration-500", isOpen && "scale-110")} />
         
         {unreadCount > 0 && (
-          <span className="absolute top-1.5 right-1.5 flex h-3 w-3">
+          <span className="absolute top-1 right-1 flex min-h-[16px]">
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-3 w-3 bg-rose-500 text-[8px] font-black text-white items-center justify-center">
-              {unreadCount}
+            <span className="relative inline-flex rounded-full px-1 min-w-[16px] h-4 bg-rose-500 text-[10px] font-black text-white items-center justify-center">
+              {unreadCount > 99 ? '99+' : unreadCount}
             </span>
           </span>
         )}
@@ -100,6 +101,7 @@ export function NotificationsDropdown() {
             
             {inAppNotifications.length > 0 && (
               <button
+                type="button"
                 onClick={clearAllNotifications}
                 className="text-xs text-rose-500 hover:text-rose-600 font-bold flex items-center space-x-1 hover:underline"
                 title={appLanguage === 'ms' ? 'Padam Semua' : 'Clear All'}
@@ -129,11 +131,12 @@ export function NotificationsDropdown() {
               </div>
             ) : (
               inAppNotifications.map((notif) => (
-                <div
+                <button
                   key={notif.id}
+                  type="button"
                   onClick={() => handleNotificationClick(notif.id)}
                   className={cn(
-                    "p-4 flex items-start space-x-3 transition-colors cursor-pointer text-left hover:bg-gray-50/80 dark:hover:bg-gray-800/30",
+                    "p-4 flex items-start space-x-3 transition-colors cursor-pointer text-left w-full hover:bg-gray-50/80 dark:hover:bg-gray-800/30",
                     !notif.isRead && "bg-blue-50/30 dark:bg-blue-950/10"
                   )}
                   id={`notif-item-${notif.id}`}
@@ -165,7 +168,7 @@ export function NotificationsDropdown() {
                       </div>
                     )}
                   </div>
-                </div>
+                </button>
               ))
             )}
           </div>

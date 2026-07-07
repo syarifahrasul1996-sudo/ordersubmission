@@ -729,22 +729,6 @@ export function DashboardView() {
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-3 mb-4">
-          <div className="bg-surface border border-gray-100 rounded-xl p-3 shadow-sm flex flex-col justify-center">
-            <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-0.5 truncate">
-              {appLanguage === 'ms' ? 'Sudah Siap (Dihantar)' : 'Completed (Delivered)'}
-            </p>
-            <p className="text-2xl font-black text-emerald-600">{stats.completedOrders}</p>
-          </div>
-
-          <div className="bg-surface border border-gray-100 rounded-xl p-3 shadow-sm flex flex-col justify-center">
-            <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-0.5 truncate">
-              {appLanguage === 'ms' ? 'Belum Siap (Pending)' : 'Incomplete (Pending)'}
-            </p>
-            <p className="text-2xl font-black text-amber-500">{stats.pendingOrders}</p>
-          </div>
-        </div>
-
         {stats.invalidDatesCount > 0 && (
           <button 
             onClick={() => setShowInvalidModal(true)}

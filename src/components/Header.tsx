@@ -25,7 +25,17 @@ export function Header() {
   const title = titles[currentView]?.[appLanguage] || (appLanguage === 'ms' ? 'Butiran' : 'Details');
   const isPrimaryTab = ['home', 'history', 'dashboard', 'others'].includes(currentView);
   const showBack = !isPrimaryTab;
-  const showCounter = state.extraHours > 0 && !['confirmation', 'output'].includes(currentView);
+  const newOrderViews = [
+    'resume-type',
+    'resume-form-fields',
+    'general-form',
+    'customer-info'
+  ];
+
+  const showCounter =
+    state.extraHours > 0 &&
+    !state.isEditMode &&
+    newOrderViews.includes(currentView);
 
   return (
     <header className="sticky top-0 bg-white/80 backdrop-blur-xl border-b border-gray-100 px-4 sm:px-5 h-[calc(3.5rem+env(safe-area-inset-top))] sm:h-[calc(4rem+env(safe-area-inset-top))] pt-[env(safe-area-inset-top)] flex items-center justify-between shrink-0 z-40">

@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Copy, Check } from 'lucide-react';
 import { useAppContext } from '../AppContext';
 import { calculateDeadline, generateMessages, toProperCase } from '../utils';
@@ -6,60 +6,155 @@ import { calculateDeadline, generateMessages, toProperCase } from '../utils';
 export function ConfirmationView({ onGenerated }: { onGenerated: () => void }) {
   const { state, pushView, popView, setGeneratedMessages, saveOrderToHistory, appLanguage } = useAppContext();
   const [copied, setCopied] = useState(false);
+  const [srStatus, setSrStatus] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const submitLockRef = useRef(false);
+
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+    };
+  }, []);
 
   const isE = state.isEditMode;
-  let raw = state.mainType === 'Lain-lain' ? ((state.customDoc || '').trim() || 'Dokumen') : state.mainType;
-  const typeTextHead = raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase();
-  const typeText = `${typeTextHead} ${state.subType ? '(' + state.subType + ')' : ''}`;
+  let raw = '';
+  const mainTypeStr = String(state.mainType ?? '').trim();
+  if (mainTypeStr === 'Lain-lain') {
+    raw = String(state.customDoc ?? '').trim() || 'Dokumen';
+  } else {
+    raw = mainTypeStr || 'Dokumen';
+  }
+  const trimmedRaw = raw.trim();
+  const typeTextHead = trimmedRaw ? (trimmedRaw.charAt(0).toUpperCase() + trimmedRaw.slice(1)) : '';
+  const subTypeStr = String(state.subType ?? '').trim();
+  const typeText = subTypeStr ? `${typeTextHead} (${subTypeStr})` : typeTextHead;
 
-  const langText = (!isE && state.resumeLangs && state.resumeLangs.length > 0) ? state.resumeLangs.join(' & ') : '-';
+  const isResume = mainTypeStr === 'Resume';
+  let langText = '';
+  let showLangSection = false;
+
+  if (isResume) {
+    if (!isE) {
+      if (Array.isArray(state.resumeLangs) && state.resumeLangs.length > 0) {
+        langText = state.resumeLangs.join(' & ');
+        showLangSection = true;
+      } else {
+        const cb = String(state.customerBahasa ?? '').trim();
+        if (cb) {
+          langText = cb;
+          showLangSection = true;
+        }
+      }
+    } else {
+      const cb = String(state.customerBahasa ?? '').trim();
+      if (cb) {
+        langText = cb;
+        showLangSection = true;
+      }
+    }
+  } else {
+    const cb = String(state.customerBahasa ?? '').trim();
+    if (cb) {
+      langText = cb;
+      showLangSection = true;
+    }
+  }
+
   const dlInfo = calculateDeadline(state, appLanguage);
 
   let adds: string[] = [];
-  if (state.customerAddOn && String(state.customerAddOn).trim()) {
-    adds = String(state.customerAddOn)
+  if (state.customerAddOn !== undefined && state.customerAddOn !== null && String(state.customerAddOn).trim()) {
+    const rawList = String(state.customerAddOn)
       .split(',')
-      .map((s: string) => toProperCase(s))
+      .map((s: string) => s.trim())
       .filter(Boolean);
+
+    const seen = new Set<string>();
+    const uniqueList: string[] = [];
+    for (const item of rawList) {
+      const lower = item.toLowerCase();
+      if (!seen.has(lower)) {
+        seen.add(lower);
+        uniqueList.push(toProperCase(item));
+      }
+    }
+    adds = uniqueList;
   } else {
-    adds = (state.addons || []).map(a => {
-        if (a === 'Soft Copy Word') return `Soft Copy Word (${state.softcopyLang})`;
-        if (a === 'Cover Letter') {
-            const clText = ['Melayu', 'English'].filter(l => state.clLangs && state.clLangs.includes(l)).join(' & ');
-            return `Cover Letter (${clText})`;
+    adds = (state.addons || [])
+      .map((a: unknown) => String(a ?? '').trim())
+      .filter(Boolean)
+      .map((a: string) => {
+        if (a === 'Soft Copy Word') {
+          const lang = String(state.softcopyLang ?? '').trim();
+          return lang ? `Soft Copy Word (${lang})` : 'Soft Copy Word';
         }
-        if (a === 'Custom') return toProperCase(state.customDoc || '').trim() || 'Custom';
+        if (a === 'Cover Letter') {
+          const clText = ['Melayu', 'English']
+            .filter(l => Array.isArray(state.clLangs) && state.clLangs.includes(l))
+            .join(' & ');
+          return clText ? `Cover Letter (${clText})` : 'Cover Letter';
+        }
+        if (a === 'Custom') {
+          return toProperCase(state.customDoc || '').trim() || 'Custom';
+        }
         return a;
-    });
+      })
+      .map((s: string) => s.trim())
+      .filter(Boolean);
   }
 
-  const handleGenerate = () => {
-    const finalDlInfo = calculateDeadline(state, appLanguage);
-    const messages = generateMessages(state, finalDlInfo, appLanguage);
-    setGeneratedMessages(messages);
-    saveOrderToHistory(messages);
-    pushView('output');
-    onGenerated();
+  const handleGenerate = async () => {
+    if (submitLockRef.current) return;
+    submitLockRef.current = true;
+    setIsSubmitting(true);
+    try {
+      try {
+        await handleCopy();
+      } catch (e) {
+        // Continue generating even if clipboard access fails, prevent unhandled promise errors
+      }
+      const finalDlInfo = calculateDeadline(state, appLanguage);
+      const messages = generateMessages(state, finalDlInfo, appLanguage);
+      setGeneratedMessages(messages);
+      saveOrderToHistory(messages);
+      pushView('output');
+      onGenerated();
+    } catch (err) {
+      submitLockRef.current = false;
+      setIsSubmitting(false);
+    }
   };
 
-  const urgencyLabels: Record<string, string> = {
+  const urgencyLabels: Record<string, string> = appLanguage === 'ms' ? {
+    'super': 'Sangat Segera',
+    'urgent': 'Segera',
+    'semi': 'Separuh Segera',
+    'noturgent': 'Tidak Segera'
+  } : {
     'super': 'Super Urgent',
     'urgent': 'Urgent',
     'semi': 'Semi Urgent',
-    'noturgent': appLanguage === 'ms' ? 'Tak Urgent' : 'Not Urgent'
+    'noturgent': 'Not Urgent'
   };
   const urgencyLabel = urgencyLabels[state.urgency || ''] || '';
   
-  const priceDocLabel = state.mainType === 'Resume' ? 'Resume' : raw;
+  const priceDocLabel = isResume ? 'Resume' : trimmedRaw;
 
-  const langTextRaw = (!isE && state.resumeLangs && state.resumeLangs.length > 0) ? state.resumeLangs.join(' & ') : '';
-  const docPart = [priceDocLabel, langTextRaw].filter(Boolean).join(' ');
+  const langTextRaw = showLangSection ? langText : '';
+  const docPart = [priceDocLabel, langTextRaw].map(s => s.trim()).filter(Boolean).join(' ');
   const addonsPart = adds.length > 0 ? '+ ' + adds.join(' + ') : '';
 
-  const mainPart = [docPart, addonsPart, urgencyLabel].filter(Boolean).join(' ');
+  const mainPart = [docPart, addonsPart, urgencyLabel].map(s => s.trim()).filter(Boolean).join(' ');
 
   const isDays = state.urgency === 'semi' || state.urgency === 'noturgent';
-  const displayVal = isDays ? Math.round(dlInfo.total / 24) : dlInfo.total;
+  const rawTotal = (dlInfo && typeof dlInfo.total === 'number' && !isNaN(dlInfo.total)) ? dlInfo.total : 0;
+  const safeTotal = rawTotal > 0 ? rawTotal : 0;
+  const displayVal = isDays ? Math.ceil(safeTotal / 24) : safeTotal;
+
+  const template = String(state.template ?? '').trim();
 
   let priceMsg = '';
   if (appLanguage === 'en') {
@@ -67,23 +162,52 @@ export function ConfirmationView({ onGenerated }: { onGenerated: () => void }) {
     priceMsg = `${mainPart} RM XX, ready in ${duration} after payment.`;
   } else {
     const duration = isDays ? `${displayVal} hari` : `${displayVal} jam`;
-    priceMsg = `${mainPart} RM XX, siap ${duration} lepas payment.`;
+    priceMsg = `${mainPart} RM XX, siap ${duration} selepas pembayaran.`;
   }
+  priceMsg = priceMsg.trim();
 
-  const handleCopy = async () => {
+  const handleCopy = async (): Promise<boolean> => {
+    let success = false;
     try {
-      await navigator.clipboard.writeText(priceMsg);
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        await navigator.clipboard.writeText(priceMsg);
+        success = true;
+      } else {
+        throw new Error('Clipboard API not supported');
+      }
     } catch (e) {
-      const ta = document.createElement("textarea");
-      ta.value = priceMsg;
-      ta.style.position = "fixed";
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand('copy');
-      document.body.removeChild(ta);
+      let ta: HTMLTextAreaElement | null = null;
+      try {
+        ta = document.createElement("textarea");
+        ta.value = priceMsg;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        ta.style.pointerEvents = "none";
+        document.body.appendChild(ta);
+        ta.select();
+        success = document.execCommand('copy');
+      } catch (err) {
+        success = false;
+      } finally {
+        if (ta && ta.parentNode) {
+          ta.parentNode.removeChild(ta);
+        }
+      }
     }
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+
+    if (success) {
+      setCopied(true);
+      setSrStatus(appLanguage === 'ms' ? 'Ringkasan harga disalin!' : 'Price summary copied successfully!');
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+      timeoutRef.current = setTimeout(() => {
+        setCopied(false);
+      }, 2000);
+    } else {
+      setSrStatus(appLanguage === 'ms' ? 'Gagal menyalin ringkasan harga.' : 'Failed to copy price summary.');
+    }
+    return success;
   };
 
   return (
@@ -94,7 +218,7 @@ export function ConfirmationView({ onGenerated }: { onGenerated: () => void }) {
                 <p className="text-[10px] font-black text-subtext uppercase tracking-widest mb-1">{appLanguage === 'ms' ? 'Dokumen' : 'Document'}</p>
                 <p className="text-lg font-black text-text tracking-tight leading-none">{typeText}</p>
             </div>
-            {(!isE) && (
+            {showLangSection && (
               <div className="text-right">
                   <p className="text-[10px] font-black text-subtext uppercase tracking-widest mb-1">{appLanguage === 'ms' ? 'Bahasa' : 'Language'}</p>
                   <p className="font-bold text-text leading-none">{langText}</p>
@@ -109,17 +233,17 @@ export function ConfirmationView({ onGenerated }: { onGenerated: () => void }) {
             </div>
         </div>
 
-        {state.mainType === 'Resume' && (
+        {mainTypeStr === 'Resume' && (
           <div className="space-y-4 pt-1">
-              {state.template.trim() ? (
+              {template ? (
                 <div>
-                    <p className="text-[10px] font-black text-subtext uppercase tracking-widest mb-1">Template</p>
-                    <p className="font-bold text-text text-sm uppercase tracking-wider">{state.template.trim().toUpperCase()}</p>
+                    <p className="text-[10px] font-black text-subtext uppercase tracking-widest mb-1">{appLanguage === 'ms' ? 'Templat' : 'Template'}</p>
+                    <p className="font-bold text-text text-sm uppercase tracking-wider">{template.toUpperCase()}</p>
                 </div>
               ) : null}
               {!isE && (
                 <div>
-                    <p className="text-[10px] font-black text-subtext uppercase tracking-widest mb-1">Add-ons</p>
+                    <p className="text-[10px] font-black text-subtext uppercase tracking-widest mb-1">{appLanguage === 'ms' ? 'Add-on' : 'Add-ons'}</p>
                     <p className="font-bold text-text text-sm leading-tight">{adds.length ? adds.join(', ') : (appLanguage === 'ms' ? 'Tiada' : 'None')}</p>
                 </div>
               )}
@@ -143,26 +267,50 @@ export function ConfirmationView({ onGenerated }: { onGenerated: () => void }) {
           {appLanguage === 'ms' ? 'Ringkasan Harga' : 'Price Summary'}
         </span>
         <button 
+          type="button"
           onClick={handleCopy}
           className="absolute top-2 right-2 w-8 h-8 bg-surface border border-gray-100 rounded-full flex items-center justify-center text-primary shadow-sm active:scale-90 transition-all md:hover:bg-gray-200"
+          aria-label={
+            appLanguage === 'ms'
+              ? (copied ? 'Ringkasan harga disalin' : 'Salin ringkasan harga')
+              : (copied ? 'Price summary copied' : 'Copy price summary')
+          }
+          title={
+            appLanguage === 'ms'
+              ? (copied ? 'Ringkasan harga disalin' : 'Salin ringkasan harga')
+              : (copied ? 'Price summary copied' : 'Copy price summary')
+          }
         >
-          {copied ? <Check className="w-3.5 h-3.5 text-secondary" /> : <Copy className="w-3.5 h-3.5" />}
+          {copied ? (
+            <Check className="w-3.5 h-3.5 text-secondary" aria-hidden="true" />
+          ) : (
+            <Copy className="w-3.5 h-3.5" aria-hidden="true" />
+          )}
         </button>
       </div>
 
       <div className="space-y-2.5">
         <button 
+          type="button"
           onClick={handleGenerate} 
-          className="w-full h-[58px] bg-primary text-white font-black text-base sm:text-base rounded-2xl shadow-lg shadow-primary/20 hover:shadow-primary/30 active:scale-[0.98] transition-all"
+          disabled={isSubmitting}
+          className="w-full h-[58px] bg-primary text-white font-black text-base sm:text-base rounded-2xl shadow-lg shadow-primary/20 hover:shadow-primary/30 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none"
         >
-          Submit & Copy
+          {isSubmitting 
+            ? (appLanguage === 'ms' ? 'Menghantar...' : 'Submitting...') 
+            : (appLanguage === 'ms' ? 'Hantar & Salin' : 'Submit & Copy')}
         </button>
         <button 
+          type="button"
           onClick={popView} 
           className="w-full h-[44px] text-text/60 hover:text-text font-black rounded-xl active:bg-surface transition-all text-xs"
         >
           {appLanguage === 'ms' ? 'Kembali & Edit' : 'Back & Edit'}
         </button>
+      </div>
+
+      <div className="sr-only" aria-live="polite" role="status">
+        {srStatus}
       </div>
     </div>
   );

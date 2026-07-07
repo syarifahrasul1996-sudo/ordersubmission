@@ -2,7 +2,12 @@ export function calculateDeadline(state: any, appLanguage: string) {
   const now = state.timestamp ? new Date(state.timestamp) : new Date();
   const isSuperUrgent = state.urgency === 'super';
   const addonHours = (state.mainType === 'Resume' && !state.isEditMode && isSuperUrgent && state.addons) ? state.addons.length : 0;
-  const total = (state.baseHours || 0) + (state.extraHours || 0) + addonHours;
+  let rawTotal = (state.baseHours || 0) + (state.extraHours || 0) + addonHours;
+  
+  if (typeof rawTotal !== 'number' || isNaN(rawTotal) || rawTotal < 0) {
+    rawTotal = 0;
+  }
+  const total = rawTotal;
   
   const dl = new Date(now.getTime() + total * 3600000);
   const timeStr = dl.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
@@ -12,11 +17,11 @@ export function calculateDeadline(state: any, appLanguage: string) {
   const diff = Math.round((new Date(dl.toDateString()).getTime() - new Date(now.toDateString()).getTime()) / 86400000);
   
   let dateStr = '';
-  if (diff === 0) {
+  if (diff <= 0) {
     dateStr = appLanguage === 'ms' ? `hari ini ${timeStr}` : `today at ${timeStr}`;
   } else if (diff === 1) {
     dateStr = appLanguage === 'ms' ? `esok ${timeStr}` : `tomorrow at ${timeStr}`;
-  } else if (diff > 1) {
+  } else {
     if (appLanguage === 'ms') {
       dateStr = `pada hari ${daysMs[dl.getDay()]} (${String(dl.getDate()).padStart(2,'0')}/${String(dl.getMonth()+1).padStart(2,'0')}) ${timeStr}`;
     } else {
@@ -24,7 +29,10 @@ export function calculateDeadline(state: any, appLanguage: string) {
     }
   }
   
-  return { formatted: dateStr, total };
+  const isDays = state.urgency === 'semi' || state.urgency === 'noturgent';
+  const displayDuration = total > 0 ? (isDays ? Math.ceil(total / 24) : total) : 0;
+  
+  return { formatted: dateStr, total, displayDuration };
 }
 
 export function toProperCase(str: string): string {
