@@ -611,20 +611,7 @@ export function DashboardView() {
           </div>
         </div>
 
-        <h3 className="text-xl font-black text-text tracking-tighter mb-4">
-          {appLanguage === 'ms' ? 'Tinjauan Beban Kerja (Ikut Tarikh Tamat)' : 'Workload Overview (By Due Date)'}
-        </h3>
-        <div className="grid grid-cols-2 gap-3 mb-8">
-          <div className="bg-surface border border-gray-100 rounded-xl p-3 shadow-sm flex flex-col justify-center">
-            <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-0.5 truncate">{appLanguage === 'ms' ? 'Selesai' : 'Completed'}</p>
-            <p className="text-2xl font-black text-emerald-600">{stats.completedOrdersWorkload}</p>
-          </div>
-          
-          <div className="bg-surface border border-gray-100 rounded-xl p-3 shadow-sm flex flex-col justify-center">
-            <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-0.5 truncate">{appLanguage === 'ms' ? 'Pending' : 'Pending'}</p>
-            <p className="text-2xl font-black text-amber-600">{stats.pendingOrdersWorkload}</p>
-          </div>
-        </div>
+
         
         {stats.invalidDatesCount > 0 && (
           <button 
