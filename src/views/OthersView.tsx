@@ -21,7 +21,8 @@ import {
 } from 'lucide-react';
 import { useAppContext } from '../AppContext';
 import { cn } from '../cn';
-import { auth } from '../lib/firebase';
+import { getAuth } from '../lib/firebase';
+const auth = getAuth();
 import { 
   GoogleAuthProvider, 
   signInWithPopup, 

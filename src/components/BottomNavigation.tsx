@@ -19,6 +19,7 @@ export function BottomNavigation() {
     changeTab,
     pushView,
     startNewOrder,
+    startNewCustomer,
     appLanguage 
   } = useAppContext();
   
@@ -191,7 +192,7 @@ export function BottomNavigation() {
               <button
                 onClick={() => {
                   setShowAddMenu(false);
-                  pushView('customer-info');
+                  startNewCustomer();
                 }}
                 className="flex items-center gap-3.5 p-2.5 bg-gray-50/50 hover:bg-gray-50 dark:bg-zinc-900/40 dark:hover:bg-zinc-900/70 border border-gray-100 dark:border-zinc-800/80 rounded-2xl text-left transition-all active:scale-[0.98] cursor-pointer group"
               >

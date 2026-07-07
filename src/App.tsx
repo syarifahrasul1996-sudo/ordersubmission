@@ -19,7 +19,8 @@ const ContactsSyncView = lazy(() => import('./views/ContactsSyncView').then(m =>
 const OthersView = lazy(() => import('./views/OthersView').then(m => ({ default: m.OthersView })));
 
 import { BottomNavigation } from './components/BottomNavigation';
-import { auth } from './lib/firebase';
+import { getAuth } from './lib/firebase';
+const auth = getAuth();
 import { onAuthStateChanged } from 'firebase/auth';
 
 

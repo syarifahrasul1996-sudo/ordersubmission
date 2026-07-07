@@ -40,7 +40,8 @@ window.addEventListener('unhandledrejection', (event) => {
   }
 });
 
-import { auth } from './lib/firebase';
+import { getAuth } from './lib/firebase';
+const auth = getAuth();
 import { onAuthStateChanged } from 'firebase/auth';
 
 createRoot(document.getElementById('root')!).render(

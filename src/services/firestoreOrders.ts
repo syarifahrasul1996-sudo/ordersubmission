@@ -1,4 +1,5 @@
-import { db } from '../lib/firebase';
+import { getDb } from '../lib/firebase';
+const db = getDb();
 import { 
     collection, 
     query, 

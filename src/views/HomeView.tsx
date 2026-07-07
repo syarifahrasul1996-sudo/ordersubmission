@@ -1,9 +1,4 @@
-import React, { useState, useEffect } from 'react';
-import {
-  getActiveOrderWindow,
-  getOrderDueTimestamp,
-  isActivePendingOrder,
-} from '../utils/orderWindow';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   Calculator, 
   Clock, 
@@ -19,6 +14,7 @@ import {
 import { useAppContext } from '../AppContext';
 import { cn } from '../cn';
 import { parseDateStringToTimestamp } from '../utils';
+import { isActivePendingOrder } from '../utils/orderWindow';
 
 export function HomeView() {
   const { 
@@ -27,32 +23,43 @@ export function HomeView() {
     changeTab, 
     setHistoryDeliveryFilter, 
     setHistoryPendingTimeFilter,
-    deletedOrderIds
+    deletedOrderIds,
+    isHistoryReady
   } = useAppContext();
   const [calcUrgency, setCalcUrgency] = useState<string>('all');
   const [superHours, setSuperHours] = useState<number>(2);
   const [eta, setEta] = useState<string>('');
   const [copied, setCopied] = useState(false);
+  const copyTimeout = useRef<NodeJS.Timeout | null>(null);
 
-  // Helper to parse due timestamp
-  const parseDueTimestamp = (value: unknown): number => {
-    if (typeof value === 'number' && Number.isFinite(value)) {
-      return value;
-    }
+  useEffect(() => {
+    return () => {
+      if (copyTimeout.current) clearTimeout(copyTimeout.current);
+    };
+  }, []);
 
-    if (typeof value === 'string' && /^\d+$/.test(value.trim())) {
-      const num = Number(value.trim());
-      if (Number.isFinite(num)) {
-        return num;
+  const deduplicatedHistory = useMemo(() => {
+    const map = new Map();
+    history.forEach(item => {
+      const orderId = item.state?.orderId;
+      const historyId = item.state?.historyId;
+      const id = item.id;
+      
+      const key = orderId || historyId || id;
+      
+      if (!map.has(key)) {
+        map.set(key, item);
+      } else {
+        const existing = map.get(key);
+        const getPriority = (it: any) => (it.state?.orderId ? 3 : (it.state?.historyId ? 2 : 1));
+        
+        if (getPriority(item) > getPriority(existing)) {
+          map.set(key, item);
+        }
       }
-    }
-
-    if (typeof value !== 'string' || !value.trim()) {
-      return 0;
-    }
-
-    return parseDateStringToTimestamp(value, 0).timestamp;
-  };
+    });
+    return Array.from(map.values());
+  }, [history]);
 
   const getBestDueTimestamp = (item: any): number => {
     if (!item) return 0;
@@ -123,20 +130,25 @@ export function HomeView() {
     return () => clearInterval(interval);
   }, [calcUrgency, superHours, appLanguage]);
 
-  const handleCopy = async () => {
+  const handleCopy = async (): Promise<boolean> => {
     try {
-      await navigator.clipboard.writeText(eta);
-    } catch (e) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(eta);
+        return true;
+      }
       const ta = document.createElement("textarea");
       ta.value = eta;
       ta.style.position = "fixed";
       document.body.appendChild(ta);
+      ta.focus();
       ta.select();
-      document.execCommand('copy');
+      const successful = document.execCommand('copy');
       document.body.removeChild(ta);
+      return successful;
+    } catch (e) {
+      console.error('Failed to copy: ', e);
+      return false;
     }
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
   };
 
   const urgencyOptions = [
@@ -146,39 +158,12 @@ export function HomeView() {
     { id: 'super', label: 'Super Urgent' },
   ];
 
-const activeWindow = getActiveOrderWindow();
 
-console.log('Active order window:', {
-  start: new Date(
-    activeWindow.startTimestamp
-  ).toLocaleString(),
-  end: new Date(
-    activeWindow.endTimestamp
-  ).toLocaleString(),
-});
-
-console.log(
-  'Orders inside active window:',
-  history.filter(order =>
-    isActivePendingOrder(order)
-  ).map(order => ({
-    orderId: order.state?.orderId,
-    customerName: order.state?.customerName,
-    customerDue: order.state?.customerDue,
-    dueTimestamp: getOrderDueTimestamp(order),
-  }))
-);
   // Derive statistics
-  const activeOrders = history.filter(o => {
-    if (!o || !o.state) return false;
-    // whatever only saved locally, that is a draft. dont take into account
-    if (o.state.syncStatus === 'draft' || o.state.status === 'draft') return false;
-    
-    const isDelivered = o.state.isDelivered === true || o.state.isDelivered === 'true' || o.state.isDelivered === 1 || o.state.isDelivered === '1';
-    const isDeleted = o.state.isDeleted === true || o.state.isDeleted === 'true' || o.state.isDeleted === 1 || o.state.isDeleted === '1';
-    
-    if (isDelivered || isDeleted) return false;
-    const orderId = o.state.orderId;
+  const activeOrders = deduplicatedHistory.filter(o => {
+    if (!isActivePendingOrder(o)) return false;
+
+    const orderId = o.state?.orderId;
     const id = o.id;
     if (deletedOrderIds && (deletedOrderIds.includes(id) || (orderId && deletedOrderIds.includes(orderId)))) {
       return false;
@@ -223,89 +208,100 @@ console.log(
       </div>
 
       {/* 2. Order Statistics Overview - 3-Column Compact Card Grid */}
-      <div className="grid grid-cols-3 gap-2">
-        {/* Card 1: All Pending */}
-        <button
-          onClick={() => {
-            setHistoryDeliveryFilter('pending');
-            setHistoryPendingTimeFilter('all');
-            changeTab('history');
-          }}
-          className="w-full text-left bg-primary/10 dark:bg-primary/5 border border-primary/15 dark:border-primary/950 rounded-xl p-2.5 flex flex-col justify-between h-20 relative overflow-hidden hover:scale-[1.02] active:scale-95 transition-all cursor-pointer"
-        >
-          <div className="flex items-center gap-1">
-            <Hourglass className="w-3 h-3 text-primary shrink-0" />
-            <span className="text-[9px] font-black uppercase tracking-wider text-primary truncate">
-              {appLanguage === 'ms' ? 'Belum Siap' : 'Pending'}
-            </span>
-          </div>
-          <div>
-            <span className="font-mono font-black text-2xl text-primary block leading-none">
-              {totalPendingCount}
-            </span>
-            <span className="text-[8px] text-subtext/70 font-semibold block mt-0.5 leading-none">
-              {appLanguage === 'ms' ? 'aktif' : 'active'}
-            </span>
-          </div>
-        </button>
+      {isHistoryReady ? (
+        <div className="grid grid-cols-3 gap-2">
+          {/* Card 1: All Pending */}
+          <button
+            type="button"
+            onClick={() => {
+              setHistoryDeliveryFilter('pending');
+              setHistoryPendingTimeFilter('all');
+              changeTab('history');
+            }}
+            className="w-full text-left bg-primary/10 dark:bg-primary/5 border border-primary/15 dark:border-primary/950 rounded-xl p-2.5 flex flex-col justify-between h-20 relative overflow-hidden hover:scale-[1.02] active:scale-95 transition-all cursor-pointer"
+          >
+            <div className="flex items-center gap-1">
+              <Hourglass aria-hidden="true" className="w-3 h-3 text-primary shrink-0" />
+              <span className="text-[9px] font-black uppercase tracking-wider text-primary truncate">
+                {appLanguage === 'ms' ? 'Belum Siap' : 'Pending'}
+              </span>
+            </div>
+            <div>
+              <span className="font-mono font-black text-2xl text-primary block leading-none">
+                {totalPendingCount}
+              </span>
+              <span className="text-[8px] text-subtext/70 font-semibold block mt-0.5 leading-none">
+                {appLanguage === 'ms' ? 'aktif' : 'active'}
+              </span>
+            </div>
+          </button>
 
-        {/* Card 2: Due Today */}
-        <button
-          onClick={() => {
-            setHistoryDeliveryFilter('pending');
-            setHistoryPendingTimeFilter('today');
-            changeTab('history');
-          }}
-          className="w-full text-left bg-rose-500/10 dark:bg-rose-500/5 border border-rose-100 dark:border-rose-950/50 rounded-xl p-2.5 flex flex-col justify-between h-20 relative overflow-hidden hover:scale-[1.02] active:scale-95 transition-all cursor-pointer"
-        >
-          <div className="flex items-center gap-1">
-            <AlertCircle className="w-3 h-3 text-rose-500 shrink-0" />
-            <span className="text-[9px] font-black uppercase tracking-wider text-rose-600 dark:text-rose-400 truncate">
-              {appLanguage === 'ms' ? 'Hari Ini' : 'Today'}
-            </span>
-          </div>
-          <div>
-            <span className="font-mono font-black text-2xl text-rose-600 dark:text-rose-400 block leading-none">
-              {todayPendingCount}
-            </span>
-            <span className="text-[8px] text-subtext/70 font-semibold block mt-0.5 leading-none">
-              {appLanguage === 'ms' ? 'tempahan' : 'orders'}
-            </span>
-          </div>
-        </button>
+          {/* Card 2: Due Today */}
+          <button
+            type="button"
+            onClick={() => {
+              setHistoryDeliveryFilter('pending');
+              setHistoryPendingTimeFilter('today');
+              changeTab('history');
+            }}
+            className="w-full text-left bg-rose-500/10 dark:bg-rose-500/5 border border-rose-100 dark:border-rose-950/50 rounded-xl p-2.5 flex flex-col justify-between h-20 relative overflow-hidden hover:scale-[1.02] active:scale-95 transition-all cursor-pointer"
+          >
+            <div className="flex items-center gap-1">
+              <AlertCircle aria-hidden="true" className="w-3 h-3 text-rose-500 shrink-0" />
+              <span className="text-[9px] font-black uppercase tracking-wider text-rose-600 dark:text-rose-400 truncate">
+                {appLanguage === 'ms' ? 'Hari Ini' : 'Today'}
+              </span>
+            </div>
+            <div>
+              <span className="font-mono font-black text-2xl text-rose-600 dark:text-rose-400 block leading-none">
+                {todayPendingCount}
+              </span>
+              <span className="text-[8px] text-subtext/70 font-semibold block mt-0.5 leading-none">
+                {appLanguage === 'ms' ? 'tempahan' : 'orders'}
+              </span>
+            </div>
+          </button>
 
-        {/* Card 3: Due Tomorrow */}
-        <button
-          onClick={() => {
-            setHistoryDeliveryFilter('pending');
-            setHistoryPendingTimeFilter('tomorrow');
-            changeTab('history');
-          }}
-          className="w-full text-left bg-amber-500/10 dark:bg-amber-500/5 border border-amber-100 dark:border-amber-950/50 rounded-xl p-2.5 flex flex-col justify-between h-20 relative overflow-hidden hover:scale-[1.02] active:scale-95 transition-all cursor-pointer"
-        >
-          <div className="flex items-center gap-1">
-            <Calendar className="w-3 h-3 text-amber-500 shrink-0" />
-            <span className="text-[9px] font-black uppercase tracking-wider text-amber-600 dark:text-amber-400 truncate">
-              {appLanguage === 'ms' ? 'Esok' : 'Tomorrow'}
-            </span>
-          </div>
-          <div>
-            <span className="font-mono font-black text-2xl text-amber-600 dark:text-amber-400 block leading-none">
-              {tomorrowPendingCount}
-            </span>
-            <span className="text-[8px] text-subtext/70 font-semibold block mt-0.5 leading-none">
-              {appLanguage === 'ms' ? 'tempahan' : 'orders'}
-            </span>
-          </div>
-        </button>
-      </div>
+          {/* Card 3: Due Tomorrow */}
+          <button
+            type="button"
+            onClick={() => {
+              setHistoryDeliveryFilter('pending');
+              setHistoryPendingTimeFilter('tomorrow');
+              changeTab('history');
+            }}
+            className="w-full text-left bg-amber-500/10 dark:bg-amber-500/5 border border-amber-100 dark:border-amber-950/50 rounded-xl p-2.5 flex flex-col justify-between h-20 relative overflow-hidden hover:scale-[1.02] active:scale-95 transition-all cursor-pointer"
+          >
+            <div className="flex items-center gap-1">
+              <Calendar aria-hidden="true" className="w-3 h-3 text-amber-500 shrink-0" />
+              <span className="text-[9px] font-black uppercase tracking-wider text-amber-600 dark:text-amber-400 truncate">
+                {appLanguage === 'ms' ? 'Esok' : 'Tomorrow'}
+              </span>
+            </div>
+            <div>
+              <span className="font-mono font-black text-2xl text-amber-600 dark:text-amber-400 block leading-none">
+                {tomorrowPendingCount}
+              </span>
+              <span className="text-[8px] text-subtext/70 font-semibold block mt-0.5 leading-none">
+                {appLanguage === 'ms' ? 'tempahan' : 'orders'}
+              </span>
+            </div>
+          </button>
+        </div>
+      ) : (
+        <div className="grid grid-cols-3 gap-2 animate-pulse">
+            {[1, 2, 3].map(i => (
+                <div key={i} className="bg-gray-100 dark:bg-zinc-800 rounded-xl h-20" />
+            ))}
+        </div>
+      )}
 
       {/* 3. Re-designed ETA Calculator Card (Highly Compact) */}
       <div className="bg-surface rounded-2xl p-3.5 border border-gray-100/60 shadow-sm space-y-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center text-text gap-1.5">
             <div className="p-1 bg-primary/10 rounded text-primary">
-              <Calculator className="w-4 h-4 text-primary" />
+              <Calculator aria-hidden="true" className="w-4 h-4 text-primary" />
             </div>
             <h3 className="font-black tracking-tight text-[10px] sm:text-xs text-text uppercase">
               {appLanguage === 'ms' ? 'Kira Anggaran Masa Siap' : 'Calculate Ready Time'}
@@ -313,14 +309,16 @@ console.log(
           </div>
           {(calcUrgency !== 'all' || superHours !== 2) && (
             <button
+              type="button"
               onClick={() => {
                 setCalcUrgency('all');
                 setSuperHours(2);
               }}
               className="flex items-center justify-center p-1 text-primary bg-primary/5 hover:bg-primary/10 rounded-full active:scale-95 transition-all cursor-pointer"
-              title="Reset"
+              title={appLanguage === 'ms' ? 'Tetapkan Semula' : 'Reset'}
+              aria-label={appLanguage === 'ms' ? 'Tetapkan Semula' : 'Reset'}
             >
-              <RefreshCcw className="w-3 h-3" />
+              <RefreshCcw aria-hidden="true" className="w-3 h-3" />
             </button>
           )}
         </div>
@@ -338,6 +336,7 @@ console.log(
             }
             return (
               <button
+                type="button"
                 key={opt.id}
                 onClick={() => setCalcUrgency(prev => prev === opt.id ? 'all' : opt.id)}
                 className={cn(
@@ -360,20 +359,22 @@ console.log(
         )}>
           <div className="flex justify-center items-center gap-3 bg-gray-50/50 dark:bg-zinc-900/20 p-1.5 rounded-xl border border-gray-100/50">
             <button 
+              type="button"
               onClick={() => setSuperHours(h => Math.max(1, h - 1))}
               className="w-7 h-7 bg-white dark:bg-zinc-800 rounded-full flex items-center justify-center shadow-sm text-text border border-gray-100/50 active:scale-95 transition-transform cursor-pointer"
             >
-              <Minus className="w-3.5 h-3.5 stroke-[2.5]" />
+              <Minus aria-hidden="true" className="w-3.5 h-3.5 stroke-[2.5]" />
             </button>
             <div className="flex items-center gap-1">
                <span className="font-black text-base text-primary">{superHours}</span>
                <span className="text-[9px] font-black tracking-widest uppercase text-subtext">{appLanguage === 'ms' ? 'Jam' : 'Hours'}</span>
             </div>
             <button 
+              type="button"
               onClick={() => setSuperHours(h => h + 1)}
               className="w-7 h-7 bg-white dark:bg-zinc-800 rounded-full flex items-center justify-center shadow-sm text-text border border-gray-100/50 active:scale-95 transition-transform cursor-pointer"
             >
-              <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
+              <Plus aria-hidden="true" className="w-3.5 h-3.5 stroke-[2.5]" />
             </button>
           </div>
         </div>
@@ -381,7 +382,7 @@ console.log(
         {/* Output Area */}
         <div className="relative">
           <span className="absolute top-2 left-2.5 text-[8px] font-black uppercase tracking-widest text-subtext/75 flex items-center">
-            <Clock className="w-3 h-3 mr-1 text-primary" />
+            <Clock aria-hidden="true" className="w-3 h-3 mr-1 text-primary" />
             {appLanguage === 'ms' ? 'Format Anggaran Siap' : 'Formatted Ready Times'}
           </span>
           <div 
@@ -391,11 +392,23 @@ console.log(
             {eta}
           </div>
           <button 
-            onClick={handleCopy}
-            className="absolute top-1.5 right-1.5 w-6.5 h-6.5 bg-surface hover:bg-gray-200 border border-gray-100 dark:border-zinc-800 rounded-full flex items-center justify-center text-primary shadow-sm active:scale-90 transition-all cursor-pointer"
-            title="Copy"
+            type="button"
+            onClick={async () => {
+              if (await handleCopy()) {
+                setCopied(true);
+                if (copyTimeout.current) clearTimeout(copyTimeout.current);
+                copyTimeout.current = setTimeout(() => setCopied(false), 2000);
+              }
+            }}
+            className="absolute top-1.5 right-1.5 w-7 h-7 bg-surface hover:bg-gray-200 border border-gray-100 dark:border-zinc-800 rounded-full flex items-center justify-center text-primary shadow-sm active:scale-90 transition-all cursor-pointer"
+            title={appLanguage === 'ms' ? 'Salin anggaran masa siap' : 'Copy ready time estimate'}
+            aria-label={
+              copied 
+                ? (appLanguage === 'ms' ? 'Disalin!' : 'Copied!')
+                : (appLanguage === 'ms' ? 'Salin anggaran masa siap' : 'Copy ready time estimate')
+            }
           >
-            {copied ? <Check className="w-3 text-emerald-500" /> : <Copy className="w-3" />}
+            {copied ? <Check aria-hidden="true" className="w-3 text-emerald-500" /> : <Copy aria-hidden="true" className="w-3" />}
           </button>
         </div>
       </div>

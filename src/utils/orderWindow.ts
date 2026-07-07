@@ -118,9 +118,12 @@ export function isActivePendingOrder(
     return false;
   }
 
+  const isTruthy = (value: any): boolean => 
+    value === true || value === 'true' || value === 1 || value === '1';
+
   if (
-    item.state.isDelivered === true ||
-    item.state.isDeleted === true
+    isTruthy(item.state.isDelivered) ||
+    isTruthy(item.state.isDeleted)
   ) {
     return false;
   }

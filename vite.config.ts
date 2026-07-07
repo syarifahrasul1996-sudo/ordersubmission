@@ -10,7 +10,7 @@ const __dirname = path.dirname(__filename);
 export default defineConfig(() => {
   return {
     build: {
-      outDir: 'dist',
+      outDir: 'dist/client',
       emptyOutDir: true,
       target: 'esnext',
       rollupOptions: {

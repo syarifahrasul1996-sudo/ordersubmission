@@ -158,6 +158,7 @@ interface AppContextType {
   pushView: (view: ViewType, updates?: Partial<AppState>) => void;
   changeTab: (tab: ViewType) => void;
   startNewOrder: (view: ViewType, updates: Partial<AppState>) => void;
+  startNewCustomer: () => void;
   popView: () => void;
   goHome: () => void;
   reset: () => void;
@@ -183,6 +184,7 @@ interface AppContextType {
   toggleLanguage: () => void;
   isOnline: boolean;
   isSyncing: boolean;
+  isHistoryReady: boolean;
   queueSize: number;
   lastSyncTime: number | null;
   syncOfflineQueue: () => Promise<void>;
@@ -632,6 +634,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [historyDeliveryFilter, setHistoryDeliveryFilter] = useState<'all' | 'delivered' | 'pending'>('all');
   const [historyPendingTimeFilter, setHistoryPendingTimeFilter] = useState<'all' | 'today' | 'tomorrow' | '2days' | '3days'>('all');
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const [isHistoryReady, setIsHistoryReady] = useState<boolean>(false);
   const [queueSize, setQueueSize] = useState<number>(() => {
     try {
       const q = localStorage.getItem('db_offline_sync_queue');
@@ -863,6 +866,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       console.error("Sync failed", e);
     } finally {
       setIsSyncing(false);
+      setIsHistoryReady(true);
     }
   };
 
@@ -1111,6 +1115,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setViewStack(['home', 'history', 'customer-info']);
   };
 
+  const startNewCustomer = () => {
+    localStorage.removeItem('customer_form_progress');
+    setState(prev => ({
+      ...INITIAL_STATE,
+      spreadsheetId: prev.spreadsheetId
+    }));
+    setViewStack(['home', 'customer-info']);
+  };
+
   const startNewOrder = (view: ViewType, updates: Partial<AppState>) => {
     setState({ ...INITIAL_STATE, ...updates });
     setViewStack(['home', view]);
@@ -1152,7 +1165,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AppContext.Provider value={{ state, setState, viewStack, pushView, changeTab, startNewOrder, popView, goHome, reset, generatedMessages, setGeneratedMessages, history, setHistory, saveOrderToHistory, updateOrderHistoryState, updateSpecificHistoryItem, deleteOrderFromHistory, restoreOrderFromHistory, permanentlyDeleteOrderFromHistory, clearHistory, loadOrder, drafts, saveAsDraft, deleteDraft, loadDraft, theme, toggleTheme, appLanguage, toggleLanguage, isOnline, isSyncing, queueSize, lastSyncTime, syncOfflineQueue, addToOfflineQueue, deletedOrderIds, historyDeliveryFilter, setHistoryDeliveryFilter, historyPendingTimeFilter, setHistoryPendingTimeFilter, syncOrders, inAppNotifications, markNotificationAsRead, clearAllNotifications, addInAppNotification }}>
+    <AppContext.Provider value={{ state, setState, viewStack, pushView, changeTab, startNewOrder, startNewCustomer, popView, goHome, reset, generatedMessages, setGeneratedMessages, history, setHistory, saveOrderToHistory, updateOrderHistoryState, updateSpecificHistoryItem, deleteOrderFromHistory, restoreOrderFromHistory, permanentlyDeleteOrderFromHistory, clearHistory, loadOrder, drafts, saveAsDraft, deleteDraft, loadDraft, theme, toggleTheme, appLanguage, toggleLanguage, isOnline, isSyncing, isHistoryReady, queueSize, lastSyncTime, syncOfflineQueue, addToOfflineQueue, deletedOrderIds, historyDeliveryFilter, setHistoryDeliveryFilter, historyPendingTimeFilter, setHistoryPendingTimeFilter, syncOrders, inAppNotifications, markNotificationAsRead, clearAllNotifications, addInAppNotification }}>
       {children}
     </AppContext.Provider>
   );
