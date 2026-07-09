@@ -112,8 +112,15 @@ export function isActivePendingOrder(
     return false;
   }
 
-  // whatever only saved locally, that is a draft. dont take into account
+  // Filter out empty orders
   const stateVal = item.state as any;
+  const hasName = String(stateVal?.customerName || stateVal?.name || '').trim();
+  const hasTimestamp = Boolean(item.timestamp || stateVal?.timestamp);
+  if (!hasName || hasName === 'undefined' || hasName === 'null' || !hasTimestamp) {
+    return false;
+  }
+
+  // whatever only saved locally, that is a draft. dont take into account
   if (stateVal.syncStatus === 'draft' || stateVal.status === 'draft') {
     return false;
   }

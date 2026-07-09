@@ -138,13 +138,13 @@ function ensureSheetSetup(sheet) {
 function findRowByOrderId(sheet, orderId) {
   var lastRow = sheet.getLastRow();
 
-  if (lastRow < 3) return null;
+  if (lastRow < 2) return null;
 
-  var values = sheet.getRange(3, 11, lastRow - 2, 1).getValues();
+  var values = sheet.getRange(2, 11, lastRow - 1, 1).getValues();
 
   for (var i = 0; i < values.length; i++) {
     if (String(values[i][0] || "").trim() === orderId) {
-      return i + 3;
+      return i + 2;
     }
   }
 
@@ -243,8 +243,8 @@ function doGet(e) {
         var sheet = sheets[s];
         if (targetSheets.indexOf(sheet.getName()) !== -1) {
           var lastRow = sheet.getLastRow();
-          if (lastRow >= 3) {
-            var values = sheet.getRange(3, 1, lastRow - 2, 11).getValues();
+          if (lastRow >= 2) {
+            var values = sheet.getRange(2, 1, lastRow - 1, 11).getValues();
             for (var r = 0; r < values.length; r++) {
               var rowData = values[r];
               var doneVal = String(rowData[0]).toLowerCase();

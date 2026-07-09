@@ -531,7 +531,6 @@ export function DashboardView() {
             </h2>
           </div>
           
-          {/* ... (keep refresh/select) ... */}
           <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 w-full lg:w-auto">
             <button
               onClick={() => syncOrders()}

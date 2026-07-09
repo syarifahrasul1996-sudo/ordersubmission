@@ -25,6 +25,7 @@ export function HomeView() {
     setHistoryPendingTimeFilter,
     deletedOrderIds,
     isHistoryReady,
+    isSyncing,
     syncOrders
   } = useAppContext();
   const [calcUrgency, setCalcUrgency] = useState<string>('all');
@@ -33,9 +34,46 @@ export function HomeView() {
   const [copied, setCopied] = useState(false);
   const copyTimeout = useRef<NodeJS.Timeout | null>(null);
 
+  const [pullProgress, setPullProgress] = useState(0);
+  const [startY, setStartY] = useState(0);
+  const [isPulling, setIsPulling] = useState(false);
+
   useEffect(() => {
-    syncOrders();
-  }, []);
+    if (!isSyncing) {
+      setPullProgress(0);
+    }
+  }, [isSyncing]);
+
+  const onTouchStart = (e: React.TouchEvent) => {
+    if (window.scrollY <= 0) {
+      setStartY(e.touches[0].clientY);
+      setIsPulling(true);
+    }
+  };
+
+  const onTouchMove = (e: React.TouchEvent) => {
+    if (!isPulling || isSyncing) return;
+
+    const currentY = e.touches[0].clientY;
+    const diff = currentY - startY;
+
+    if (diff > 0) {
+      setPullProgress(Math.min(diff * 0.5, 80));
+    } else {
+      setPullProgress(0);
+    }
+  };
+
+  const onTouchEnd = () => {
+    if (!isPulling) return;
+    setIsPulling(false);
+
+    if (pullProgress >= 60) {
+      syncOrders();
+    } else {
+      setPullProgress(0);
+    }
+  };
 
   useEffect(() => {
     return () => {
@@ -199,7 +237,30 @@ export function HomeView() {
   }).length;
 
   return (
-    <div className="flex flex-col p-3.5 sm:p-4 space-y-3.5 pb-[calc(env(safe-area-inset-bottom)+6.5rem)] animate-fade-in">
+    <div 
+      className="flex flex-col p-3.5 sm:p-4 space-y-3.5 pb-[calc(env(safe-area-inset-bottom)+6.5rem)] animate-fade-in overscroll-y-contain"
+      onTouchStart={onTouchStart}
+      onTouchMove={onTouchMove}
+      onTouchEnd={onTouchEnd}
+    >
+      {/* Pull-to-Refresh indicator */}
+      <div
+        className="w-full flex items-center justify-center overflow-hidden"
+        style={{
+          height: `${pullProgress}px`,
+          transition: isPulling && !isSyncing ? 'none' : 'height 0.3s ease-out'
+        }}
+      >
+        <div
+          className="flex items-center justify-center w-8 h-8 rounded-full bg-surface shadow-sm text-subtext animate-fade-in"
+          style={{
+            transform: isSyncing ? 'none' : `rotate(${pullProgress * 4}deg)`,
+            opacity: pullProgress / 40 > 1 ? 1 : pullProgress / 40
+          }}
+        >
+          <RefreshCcw className={`w-4 h-4 ${isSyncing ? 'animate-spin text-primary' : ''}`} />
+        </div>
+      </div>
       
       {/* 1. Header & Welcome Area */}
       <div className="flex items-baseline justify-between">

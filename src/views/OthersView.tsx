@@ -22,6 +22,7 @@ import {
 import { useAppContext } from '../AppContext';
 import { cn } from '../cn';
 import { getAuth } from '../lib/firebase';
+import { SyncDiagnostics } from '../components/SyncDiagnostics';
 const auth = getAuth();
 import { 
   GoogleAuthProvider, 
@@ -457,6 +458,8 @@ export function OthersView() {
           </div>
         )}
       </div>
+
+      <SyncDiagnostics />
 
       {/* Diagnostics / Connection Health */}
       <div className="space-y-2">

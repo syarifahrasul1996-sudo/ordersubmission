@@ -5,7 +5,7 @@ import { Clock, Trash2, Calendar, AlertCircle, RefreshCcw, Save, Bell, Check, Se
 import { useAppContext } from '../AppContext';
 import { OrderHistoryItem } from '../types';
 import { formatPhoneUniversal, parseDateStringToTimestamp } from '../utils';
-import { getOperationalOrders, getOverdueOrders, getArchivedOrders, isFirestoreCanary } from '../services/firestoreOrders';
+import { getOperationalOrders, getOverdueOrders, getArchivedOrders, isFirestoreCanary, saveOrderToFirestore, deleteOrderFromFirestore } from '../services/firestoreOrders';
 
 
 const GOOGLE_SCRIPT_URL =
@@ -140,7 +140,10 @@ export function HistoryView() {
     historyDeliveryFilter,
     setHistoryDeliveryFilter,
     historyPendingTimeFilter,
-    setHistoryPendingTimeFilter
+    setHistoryPendingTimeFilter,
+    setLastSyncTime,
+    setLastSyncFetchedCount,
+    setSyncError
   } = useAppContext();
   const historyRef = useRef(history);
   const deletedOrderIdsRef = useRef(deletedOrderIds);
@@ -229,8 +232,32 @@ export function HistoryView() {
     ];
   });
 
+  const deduplicatedHistory = useMemo(() => {
+    const map = new Map();
+    history.forEach(item => {
+      const state = item.state as any;
+      if (!state) return;
+      const orderId = state.orderId;
+      const historyId = state.historyId;
+      const id = item.id;
+      
+      const key = orderId || historyId || id;
+      if (!key) return;
+      
+      if (!map.has(key)) {
+        map.set(key, item);
+      } else {
+        const existing = map.get(key);
+        if (Number(item.timestamp) > Number(existing.timestamp)) {
+          map.set(key, item);
+        }
+      }
+    });
+    return Array.from(map.values());
+  }, [history]);
+
   const localizedHistoryItems = useMemo(() => {
-    return history.filter(Boolean).filter((item) => {
+    return deduplicatedHistory.filter(Boolean).filter((item) => {
       if (!item || !item.state) return false;
       
       const isDelivered = isDeliveredState(item);
@@ -239,6 +266,12 @@ export function HistoryView() {
       if (isDeleted) return false;
       // whatever only saved locally, that is a draft. dont take into account
       if (item.state.syncStatus === 'draft') return false;
+
+      // Filter out "empty" orders
+      const state = item.state as any;
+      const hasName = String(state?.customerName || state?.name || '').trim();
+      const hasTimestamp = Boolean(item.timestamp || state?.timestamp);
+      if (!hasName || hasName === 'undefined' || hasName === 'null' || !hasTimestamp) return false;
 
       const orderId = item.state?.orderId;
       const id = item.id;
@@ -361,7 +394,7 @@ export function HistoryView() {
         (Number(a.timestamp) || 0)
       );
     });
-  }, [history, deliveryFilter, searchQuery, currentTime]);
+  }, [deduplicatedHistory, deliveryFilter, searchQuery, currentTime]);
 
   const filteredDrafts = useMemo(() => {
     // Combine drafts and unsynced history items (which are drafts/saved locally only)
@@ -425,12 +458,19 @@ export function HistoryView() {
     let day3Count = 0;
 
     // Use full history for stats, not just filtered results
-    history.forEach(item => {
+    deduplicatedHistory.forEach(item => {
       if (!item || !item.state) return;
       if (item.state.syncStatus === 'draft' || item.state.status === 'draft') return; // whatever only saved locally, that is a draft. dont take into account
       
+      // Filter out empty orders from counts
+      const state = item.state as any;
+      const hasName = String(state?.customerName || state?.name || '').trim();
+      const hasTimestamp = Boolean(item.timestamp || state?.timestamp);
+      if (!hasName || hasName === 'undefined' || hasName === 'null' || !hasTimestamp) return;
+
       const isDelivered = item.state.isDelivered === true || item.state.isDelivered === 'true' || item.state.isDelivered === 1 || item.state.isDelivered === '1';
       const isDeleted = item.state.isDeleted === true || item.state.isDeleted === 'true' || item.state.isDeleted === 1 || item.state.isDeleted === '1';
+
       
       if (isDeleted || isDelivered) return;
       const orderId = item.state?.orderId;
@@ -453,7 +493,7 @@ export function HistoryView() {
     });
 
     return { today: todayCount, tomorrow: tomorrowCount, day2: day2Count, day3: day3Count };
-  }, [history, currentTime, deletedOrderIds]);
+  }, [deduplicatedHistory, currentTime, deletedOrderIds]);
 
   const extractId = (input: string) => {
     const trimmed = input.trim();
@@ -482,7 +522,38 @@ export function HistoryView() {
     return GOOGLE_SCRIPT_URL;
   };
 
-  const jsonpRequest = (url: URL, callbackName: string) => {
+  const jsonpRequest = async (url: URL, callbackName: string) => {
+    // Try standard fetch GET first as it is much more robust against ad-blockers and CSP that block dynamic scripts
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout for fetch
+      const response = await fetch(url.toString(), {
+        method: 'GET',
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+      if (response.ok) {
+        const text = await response.text();
+        const match = text.match(/^[a-zA-Z0-9_]+\(([\s\S]*)\);?\s*$/);
+        if (match) {
+          try {
+            return JSON.parse(match[1]);
+          } catch (err) {
+            console.warn('JSONP regex match parse failed', err);
+          }
+        } else {
+          try {
+            return JSON.parse(text);
+          } catch (err) {
+            console.warn('JSONP response body raw parse failed', err);
+          }
+        }
+      }
+    } catch (fetchErr) {
+      console.warn('Fetch JSONP fallback failed, trying dynamic script injection:', fetchErr);
+    }
+
+    // Fallback to traditional script injection JSONP
     return new Promise<any>((resolve, reject) => {
       const script = document.createElement('script');
       script.src = url.toString();
@@ -587,7 +658,38 @@ export function HistoryView() {
       }),
     });
 
-    // 2. If spreadsheetId and orderId are configured, gently sync update with Google Sheets in background
+    // 2. If Firestore is active, save to Firestore and return
+    if (isFirestoreCanary) {
+      try {
+        const updatedState = {
+          ...item.state,
+          isDelivered: newStatus,
+          lastModifiedLocally: now,
+          syncStatus: 'synced' as const,
+          syncLastSuccess: now,
+          syncFailCount: 0
+        };
+        await saveOrderToFirestore(updatedState);
+        updateSpecificHistoryItem(item.id, {
+          isDelivered: newStatus,
+          syncStatus: 'synced',
+          syncLastSuccess: now,
+          syncFailCount: 0
+        });
+        handleGlobalSync(true);
+      } catch (err) {
+        console.error("Failed to save delivery toggle in Firestore:", err);
+        updateSpecificHistoryItem(item.id, {
+          isDelivered: newStatus,
+          syncStatus: 'failed',
+          syncFailCount: (item.state?.syncFailCount || 0) + 1,
+          syncLastAttempt: now,
+        });
+      }
+      return;
+    }
+
+    // 3. If spreadsheetId and orderId are configured, gently sync update with Google Sheets in background
     if (spreadsheetId && orderId) {
       const activeUrl = getActiveScriptUrl(spreadsheetId);
       const callbackName = 'jsonp_callback_delivered_' + Math.round(Math.random() * 100000);
@@ -655,6 +757,12 @@ export function HistoryView() {
   };
 
   const deleteOrderFromCloud = async (spreadsheetId: string, orderId: string) => {
+    if (isFirestoreCanary) {
+      if (orderId) {
+        await deleteOrderFromFirestore(orderId);
+      }
+      return;
+    }
     if (spreadsheetId && orderId) {
       const activeUrl = getActiveScriptUrl(spreadsheetId);
       const callbackName = 'jsonp_callback_delete_' + Math.round(Math.random() * 100000);
@@ -704,23 +812,6 @@ export function HistoryView() {
   };
 
   const handleGlobalSync = async (silent = false) => {
-    // Collect all active annual sheets
-    const activeConfigs = annualSheets.filter(
-      sheet => sheet.spreadsheetId && sheet.spreadsheetId.trim() !== ''
-    );
-
-    if (activeConfigs.length === 0) {
-      if (!silent) {
-        setAlertMsg({
-          type: 'error',
-          message: appLanguage === 'ms'
-            ? 'Sila konfigurasikan sekurang-kurangnya satu spreadsheet ID di bahagian Tetapan Database terlebih dahulu.'
-            : 'Please configure at least one spreadsheet ID in Database Settings first.'
-        });
-      }
-      return;
-    }
-
     setRefreshing(true);
     setSyncErrorToast(null);
 
@@ -728,6 +819,101 @@ export function HistoryView() {
     await syncOfflineQueue();
 
     try {
+      if (isFirestoreCanary) {
+        const [op, ov, arch] = await Promise.all([
+          getOperationalOrders().catch(() => []),
+          getOverdueOrders().catch(() => []),
+          getArchivedOrders().catch(() => [])
+        ]);
+
+        const allFirestoreOrders = [...op, ...ov, ...arch];
+        
+        setHistory(prevHistory => {
+          let updatedHistory = [...prevHistory];
+          
+          for (const order of allFirestoreOrders) {
+            const generatedOrderId = order.orderId || order.historyId;
+            if (!generatedOrderId) continue;
+            
+            // Skip if deleted locally
+            if (deletedOrderIdsRef.current.includes(generatedOrderId)) {
+              continue;
+            }
+
+            const existingIdx = updatedHistory.findIndex(item => item.id === generatedOrderId || item.state?.orderId === generatedOrderId);
+
+            const newState = {
+              ...order,
+              syncStatus: 'synced' as const,
+              mainType: order.customerOrder === 'Resume' ? 'Resume' : (order.customerOrder === 'Surat' ? 'Surat' : order.customerOrder || 'Lain-lain'),
+              subType: ''
+            };
+
+            if (existingIdx !== -1) {
+              const existingItem = updatedHistory[existingIdx];
+              if (isDeletedState(existingItem)) {
+                continue;
+              }
+              updatedHistory[existingIdx] = {
+                ...existingItem,
+                state: {
+                  ...existingItem.state,
+                  ...newState,
+                  syncStatus: 'synced'
+                }
+              };
+            } else {
+              updatedHistory.push({
+                id: generatedOrderId,
+                timestamp: Date.now(),
+                state: newState,
+                messages: []
+              });
+            }
+          }
+          return updatedHistory;
+        });
+
+        const firestoreCount = allFirestoreOrders.length;
+        setLastSyncTime(Date.now());
+        localStorage.setItem('db_last_sync_time', String(Date.now()));
+        setLastSyncFetchedCount(firestoreCount);
+        localStorage.setItem('db_sync_total_items', String(firestoreCount));
+        setSyncError(null);
+        localStorage.removeItem('db_sync_error');
+
+        if (!silent) {
+          setAlertMsg({
+            type: 'success',
+            message: appLanguage === 'ms'
+              ? 'Penyelarasan Firestore Canary berjaya!'
+              : 'Firestore Canary sync complete!'
+          });
+        }
+        setRefreshing(false);
+        setPullProgress(0);
+        return;
+      }
+
+      // Collect all active annual sheets
+      const activeConfigs = annualSheets.filter(
+        sheet => sheet.spreadsheetId && sheet.spreadsheetId.trim() !== ''
+      );
+
+      if (activeConfigs.length === 0) {
+        if (!silent) {
+          setAlertMsg({
+            type: 'error',
+            message: appLanguage === 'ms'
+              ? 'Sila konfigurasikan sekurang-kurangnya satu spreadsheet ID di bahagian Tetapan Database terlebih dahulu.'
+              : 'Please configure at least one spreadsheet ID in Database Settings first.'
+          });
+        }
+        setRefreshing(false);
+        setPullProgress(0);
+        return;
+      }
+
       const currentNow = Date.now();
       let totalNewCou = 0;
       let totalUpdCou = 0;
@@ -1006,19 +1192,33 @@ const existingIdx = updatedHistory.findIndex((item) => {
         return updatedHistory;
       });
 
+      const successfulFetchCount = results.reduce((acc, res) => acc + (res.success ? res.orders.length : 0), 0);
+      setLastSyncTime(currentNow);
+      localStorage.setItem('db_last_sync_time', String(currentNow));
+      setLastSyncFetchedCount(successfulFetchCount);
+      localStorage.setItem('db_sync_total_items', String(successfulFetchCount));
+
       const failed = results.filter(r => !r.success);
 
       if (failed.length > 0) {
+        const failedYears = failed.map(f => f.year || 'UNKNOWN').join(', ');
+        const sheetSyncError = appLanguage === 'ms'
+          ? `Gagal menyelaraskan database bagi tahun: ${failedYears}`
+          : `Failed to sync database for years: ${failedYears}`;
+        
+        setSyncError(sheetSyncError);
+        localStorage.setItem('db_sync_error', sheetSyncError);
+
         if (!silent) {
-          const failedYears = failed.map(f => f.year || 'UNKNOWN').join(', ');
           setSyncErrorToast({
-            message: appLanguage === 'ms'
-              ? `Gagal menyelaraskan database bagi tahun: ${failedYears}`
-              : `Failed to sync database for years: ${failedYears}`,
+            message: sheetSyncError,
             visible: true
           });
         }
       } else {
+        setSyncError(null);
+        localStorage.removeItem('db_sync_error');
+
         if (!silent) {
           setAlertMsg({
             type: 'success',
@@ -1029,11 +1229,15 @@ const existingIdx = updatedHistory.findIndex((item) => {
         }
       }
     } catch (e) {
+      const errMsg = String(e);
+      setSyncError(errMsg);
+      localStorage.setItem('db_sync_error', errMsg);
+
       if (!silent) {
         setSyncErrorToast({
           message: appLanguage === 'ms'
-            ? 'Penyelarasan gagal: ' + String(e)
-            : 'Sync failed: ' + String(e),
+            ? 'Penyelarasan gagal: ' + errMsg
+            : 'Sync failed: ' + errMsg,
           visible: true
         });
       }

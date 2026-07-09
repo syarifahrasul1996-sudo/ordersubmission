@@ -46,6 +46,7 @@ export interface AppState {
   ENABLE_CANARY_FIRESTORE?: boolean;
   status?: string;
   type?: string;
+  syncedAt?: number;
 }
 
 export type ViewType = 'home' | 'resume-type' | 'resume-form-fields' | 'general-form' | 'confirmation' | 'output' | 'history' | 'customer-info' | 'dashboard' | 'contacts-sync' | 'others';

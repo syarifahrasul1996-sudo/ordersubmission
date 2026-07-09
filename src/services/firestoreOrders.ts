@@ -10,13 +10,15 @@ import {
     doc, 
     setDoc, 
     getDoc,
+    deleteDoc,
     Timestamp 
 } from 'firebase/firestore';
 import { AppState } from '../types';
 import { handleFirestoreError, OperationType } from './firestoreUtils';
 
 export const orderDataSource = import.meta.env.VITE_ORDER_DATA_SOURCE ?? 'sheets';
-export const isFirestoreCanary = orderDataSource === 'firestore-canary';
+// Explicitly disabled per user instruction: "do not migrate to canary yet"
+export const isFirestoreCanary = false;
 
 /**
  * Maps a Firestore document to AppState structure.
@@ -185,8 +187,10 @@ export async function saveOrderToFirestore(state: AppState): Promise<void> {
 
     const isDelivered = state.isDelivered || false;
     const collectionName = isDelivered ? 'orders_archive_canary' : 'orders_canary';
+    const altCollectionName = isDelivered ? 'orders_canary' : 'orders_archive_canary';
 
     const docRef = doc(db, collectionName, docId);
+    const altDocRef = doc(db, altCollectionName, docId);
     
     try {
         // Check if document already exists to preserve migratedAt
@@ -201,8 +205,25 @@ export async function saveOrderToFirestore(state: AppState): Promise<void> {
         }
 
         await setDoc(docRef, docData);
+        await deleteDoc(altDocRef).catch(() => {});
     } catch (error) {
         handleFirestoreError(error, OperationType.WRITE, collectionName);
+    }
+}
+
+/**
+ * Deletes an order from both Canary collections in Firestore.
+ */
+export async function deleteOrderFromFirestore(orderId: string): Promise<void> {
+    const activeRef = doc(db, 'orders_canary', orderId);
+    const archiveRef = doc(db, 'orders_archive_canary', orderId);
+    try {
+        await Promise.all([
+            deleteDoc(activeRef).catch(() => {}),
+            deleteDoc(archiveRef).catch(() => {})
+        ]);
+    } catch (error) {
+        handleFirestoreError(error, OperationType.WRITE, 'orders_canary/archive_canary');
     }
 }
 

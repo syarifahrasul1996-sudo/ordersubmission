@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
 import { AppState, INITIAL_STATE, ViewType, OrderHistoryItem, InAppNotification } from './types';
 import { getSubscription, syncPushNotifications, clearPushNotifications } from './lib/push';
-import { getOperationalOrders, getOverdueOrders, getArchivedOrders } from './services/firestoreOrders';
+import { getOperationalOrders, getOverdueOrders, getArchivedOrders, isFirestoreCanary } from './services/firestoreOrders';
 import { parseDateStringToTimestamp } from './utils';
 
 const deduplicateHistory = (items: OrderHistoryItem[]): OrderHistoryItem[] => {
@@ -167,6 +167,124 @@ const deduplicateHistory = (items: OrderHistoryItem[]): OrderHistoryItem[] => {
   return result;
 };
 
+export function mergeSyncedOrders(
+  prevHistory: OrderHistoryItem[],
+  syncedOrders: OrderHistoryItem[]
+): OrderHistoryItem[] {
+  console.log(`[Sync Debug] Merging orders. Local items before sync: ${prevHistory.length}. Remote fetched: ${syncedOrders.length}.`);
+
+  const mergedMap = new Map<string, OrderHistoryItem>();
+  
+  // First, populate with all existing local history items
+  for (const localItem of prevHistory) {
+    if (localItem && localItem.id) {
+      // Filter out empty local orders
+      const state = localItem.state as any;
+      const hasName = String(state?.customerName || state?.name || '').trim();
+      const hasTimestamp = Boolean(localItem.timestamp || state?.timestamp);
+      
+      if (!hasName || !hasTimestamp) {
+        console.warn(`[Sync Debug] Filtering out invalid LOCAL order (ID: ${localItem.id}): name="${hasName}", hasTimestamp=${hasTimestamp}`);
+        continue;
+      }
+      mergedMap.set(localItem.id, { ...localItem });
+    }
+  }
+
+  let newOrdersAddedCount = 0;
+  let existingOrdersUpdatedCount = 0;
+  let duplicatesSkippedCount = 0;
+
+  // Now, merge with remote synced orders
+  for (const remoteItem of syncedOrders) {
+    // Filter out orders missing mandatory fields
+    const state = remoteItem.state as any;
+    const hasName = String(state?.customerName || state?.name || '').trim();
+    const hasTimestamp = Boolean(remoteItem.timestamp || state?.timestamp);
+    
+    if (!hasName || !hasTimestamp) {
+      console.warn(`[Sync Debug] Filtering out invalid REMOTE order (ID: ${remoteItem.id}): name="${hasName}", hasTimestamp=${hasTimestamp}`);
+      continue;
+    }
+
+    const id = remoteItem.id;
+    if (!id) continue;
+
+    const existingItem = mergedMap.get(id);
+
+    if (existingItem) {
+      // The order already exists locally! We need to merge them carefully.
+      const localState: AppState = (existingItem.state || {}) as AppState;
+      const remoteState: AppState = (remoteItem.state || {}) as AppState;
+
+      const localModified = Number(localState.lastModifiedLocally) || 0;
+      const remoteModified = Number(remoteState.lastModifiedLocally) || 0;
+
+      // Determine which state's values to prioritize for status fields
+      const isLocalNewer = localModified > remoteModified;
+
+      // Build the merged state
+      const mergedState: AppState = {
+        ...remoteState, // Remote fields
+        ...localState,  // Local fields take precedence if they are not provided by remote, or if local is newer
+      };
+
+      // Specifically check each important field:
+      // "Preserve local delivered/deleted/edited state if it is newer or only exists locally"
+      if (localState.isDelivered !== undefined && (isLocalNewer || remoteState.isDelivered === undefined)) {
+        mergedState.isDelivered = localState.isDelivered;
+      }
+      if (localState.isDeleted !== undefined && (isLocalNewer || remoteState.isDeleted === undefined)) {
+        mergedState.isDeleted = localState.isDeleted;
+      }
+      if (localState.status !== undefined && (isLocalNewer || remoteState.status === undefined)) {
+        mergedState.status = localState.status;
+      }
+
+      // Preserve other local fields that remote does not provide
+      for (const key of Object.keys(localState)) {
+        const typedKey = key as keyof AppState;
+        if (remoteState[typedKey] === undefined || remoteState[typedKey] === null || remoteState[typedKey] === '') {
+          (mergedState as any)[typedKey] = localState[typedKey];
+        }
+      }
+
+      // Preserve existing timestamp instead of replacing it
+      const finalTimestamp = Number(existingItem.timestamp) || Number(remoteItem.timestamp) || 0;
+
+      mergedMap.set(id, {
+        ...existingItem,
+        timestamp: finalTimestamp,
+        state: {
+          ...mergedState,
+          timestamp: finalTimestamp, // Sync state's inner timestamp too
+          syncedAt: Date.now()
+        },
+        messages: existingItem.messages && existingItem.messages.length > 0 ? existingItem.messages : (remoteItem.messages || [])
+      });
+
+      existingOrdersUpdatedCount++;
+    } else {
+      // Genuinely new remote order!
+      // Add it to local history
+      mergedMap.set(id, {
+        ...remoteItem,
+        state: {
+          ...(remoteItem.state || {}),
+          syncedAt: Date.now()
+        } as AppState
+      });
+      newOrdersAddedCount++;
+    }
+  }
+
+  const mergedList = Array.from(mergedMap.values());
+  
+  console.log(`[Sync Debug] Merge completed. Final local history items: ${mergedList.length}. New added: ${newOrdersAddedCount}. Existing updated: ${existingOrdersUpdatedCount}. Duplicates skipped: ${duplicatesSkippedCount}.`);
+
+  return mergedList;
+}
+
 interface AppContextType {
   state: AppState;
   setState: React.Dispatch<React.SetStateAction<AppState>>;
@@ -203,6 +321,13 @@ interface AppContextType {
   isHistoryReady: boolean;
   queueSize: number;
   lastSyncTime: number | null;
+  setLastSyncTime: (val: number | null) => void;
+  lastSyncFetchedCount: number;
+  setLastSyncFetchedCount: (val: number) => void;
+  syncTotalItems?: number;
+  setSyncTotalItems?: (val: number) => void;
+  syncError: string | null;
+  setSyncError: (val: string | null) => void;
   syncOfflineQueue: () => Promise<void>;
   addToOfflineQueue: (payload: any, webhookUrl: string, orderId: string) => void;
   deletedOrderIds: string[];
@@ -440,7 +565,38 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return GOOGLE_SCRIPT_URL;
     };
 
-    const jsonpRequest = (url: URL, callbackName: string): Promise<any> => {
+    const jsonpRequest = async (url: URL, callbackName: string): Promise<any> => {
+      // Try standard fetch GET first as it is much more robust against ad-blockers and CSP that block dynamic scripts
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout for fetch
+        const response = await fetch(url.toString(), {
+          method: 'GET',
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        if (response.ok) {
+          const text = await response.text();
+          const match = text.match(/^[a-zA-Z0-9_]+\(([\s\S]*)\);?\s*$/);
+          if (match) {
+            try {
+              return JSON.parse(match[1]);
+            } catch (err) {
+              console.warn('JSONP regex match parse failed', err);
+            }
+          } else {
+            try {
+              return JSON.parse(text);
+            } catch (err) {
+              console.warn('JSONP response body raw parse failed', err);
+            }
+          }
+        }
+      } catch (fetchErr) {
+        console.warn('Fetch JSONP fallback failed, trying dynamic script injection:', fetchErr);
+      }
+
+      // Fallback to traditional script injection JSONP
       return new Promise((resolve, reject) => {
         const script = document.createElement('script');
         script.src = url.toString();
@@ -497,33 +653,55 @@ export function AppProvider({ children }: { children: ReactNode }) {
             const timeUntilDue = dueTimestamp - now;
 
             // 1. Check 3 hours logic: 3 hours before due time
-            if (timeUntilDue <= THREE_HOURS && !hasThreeHourChecked) {
+            if (timeUntilDue > 0 && timeUntilDue <= THREE_HOURS && !hasThreeHourChecked) {
               newState.hasThreeHourChecked = true;
               itemUpdated = true;
 
-              const spreadsheetId = item.state?.spreadsheetId || '1kUAJYUVhr9bPYErtpnohpvuGGyhBSvJyEOIyzEFivJo';
-              const oId = item.state?.orderId;
+              if (isFirestoreCanary) {
+                newState.threeHourAlerted = true;
+              } else {
+                const spreadsheetId = item.state?.spreadsheetId || '1kUAJYUVhr9bPYErtpnohpvuGGyhBSvJyEOIyzEFivJo';
+                const oId = item.state?.orderId;
 
-              if (oId && spreadsheetId) {
-                const callbackName = 'jsonp_auto_sync_' + Math.round(100000 * Math.random()) + '_' + item.id;
-                const url = new URL(getActiveScriptUrl(spreadsheetId));
-                url.searchParams.append('action', 'get_link');
-                url.searchParams.append('orderId', oId);
-                url.searchParams.append('spreadsheetId', spreadsheetId);
-                url.searchParams.append('callback', callbackName);
+                if (oId && spreadsheetId) {
+                  const callbackName = 'jsonp_auto_sync_' + Math.round(100000 * Math.random()) + '_' + item.id;
+                  const url = new URL(getActiveScriptUrl(spreadsheetId));
+                  url.searchParams.append('action', 'get_link');
+                  url.searchParams.append('orderId', oId);
+                  url.searchParams.append('spreadsheetId', spreadsheetId);
+                  url.searchParams.append('callback', callbackName);
 
-                jsonpRequest(url, callbackName)
-                  .then((data) => {
-                    if (data && data.status === 'success' && data.link) {
-                      // Update successfully and save link
-                      updateSpecificHistoryItem(item.id, {
-                        googleSheetLink: data.link,
-                        orderLink: data.link,
-                        hasThreeHourChecked: true,
-                        threeHourAlerted: true
-                      });
-                    } else {
-                      // Not updated, send custom status query notification!
+                  jsonpRequest(url, callbackName)
+                    .then((data) => {
+                      if (data && data.status === 'success' && data.link) {
+                        // Update successfully and save link
+                        updateSpecificHistoryItem(item.id, {
+                          googleSheetLink: data.link,
+                          orderLink: data.link,
+                          hasThreeHourChecked: true,
+                          threeHourAlerted: true
+                        });
+                      } else {
+                        // Not updated, send custom status query notification!
+                        if (!item.state.googleSheetLink || item.state.googleSheetLink.trim() === '') {
+                          const notifyTitle = appLanguage === 'ms' ? 'Status Tempahan' : 'Ask Order Status';
+                          const notifyBody = `${customerName || 'Customer'} (${mainType || 'Tempahan'}) - Dah siap ke belum? Link masih belum dimasukkan.`;
+                          
+                          addInAppNotification(notifyTitle, notifyBody, 'status_query', `status_query_${item.id}`);
+                          try {
+                            if ('Notification' in window && Notification.permission === 'granted') {
+                              new Notification(notifyTitle, { body: notifyBody });
+                            }
+                          } catch (e) { console.warn(e); }
+                        }
+                        updateSpecificHistoryItem(item.id, {
+                          hasThreeHourChecked: true,
+                          threeHourAlerted: true
+                        });
+                      }
+                    })
+                    .catch((err) => {
+                      console.warn('Auto background sync failed:', err);
                       if (!item.state.googleSheetLink || item.state.googleSheetLink.trim() === '') {
                         const notifyTitle = appLanguage === 'ms' ? 'Status Tempahan' : 'Ask Order Status';
                         const notifyBody = `${customerName || 'Customer'} (${mainType || 'Tempahan'}) - Dah siap ke belum? Link masih belum dimasukkan.`;
@@ -539,40 +717,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
                         hasThreeHourChecked: true,
                         threeHourAlerted: true
                       });
-                    }
-                  })
-                  .catch((err) => {
-                    console.warn('Auto background sync failed:', err);
-                    if (!item.state.googleSheetLink || item.state.googleSheetLink.trim() === '') {
-                      const notifyTitle = appLanguage === 'ms' ? 'Status Tempahan' : 'Ask Order Status';
-                      const notifyBody = `${customerName || 'Customer'} (${mainType || 'Tempahan'}) - Dah siap ke belum? Link masih belum dimasukkan.`;
-                      
-                      addInAppNotification(notifyTitle, notifyBody, 'status_query', `status_query_${item.id}`);
-                      try {
-                        if ('Notification' in window && Notification.permission === 'granted') {
-                          new Notification(notifyTitle, { body: notifyBody });
-                        }
-                      } catch (e) { console.warn(e); }
-                    }
-                    updateSpecificHistoryItem(item.id, {
-                      hasThreeHourChecked: true,
-                      threeHourAlerted: true
                     });
-                  });
-              } else {
-                // No spreadsheetId or orderId, just ask for status if no link
-                if (!item.state.googleSheetLink || item.state.googleSheetLink.trim() === '') {
-                  const notifyTitle = appLanguage === 'ms' ? 'Status Tempahan' : 'Ask Order Status';
-                  const notifyBody = `${customerName || 'Customer'} (${mainType || 'Tempahan'}) - Dah siap ke belum? Link masih belum dimasukkan.`;
-                  
-                  alertsToTrigger.push({ title: notifyTitle, body: notifyBody, type: 'status_query', dedupeKey: `status_query_${item.id}` });
-                  try {
-                    if ('Notification' in window && Notification.permission === 'granted') {
-                      new Notification(notifyTitle, { body: notifyBody });
-                    }
-                  } catch (e) { console.warn(e); }
+                } else {
+                  // No spreadsheetId or orderId, just ask for status if no link
+                  if (!item.state.googleSheetLink || item.state.googleSheetLink.trim() === '') {
+                    const notifyTitle = appLanguage === 'ms' ? 'Status Tempahan' : 'Ask Order Status';
+                    const notifyBody = `${customerName || 'Customer'} (${mainType || 'Tempahan'}) - Dah siap ke belum? Link masih belum dimasukkan.`;
+                    
+                    alertsToTrigger.push({ title: notifyTitle, body: notifyBody, type: 'status_query', dedupeKey: `status_query_${item.id}` });
+                    try {
+                      if ('Notification' in window && Notification.permission === 'granted') {
+                        new Notification(notifyTitle, { body: notifyBody });
+                      }
+                    } catch (e) { console.warn(e); }
+                  }
+                  newState.threeHourAlerted = true;
                 }
-                newState.threeHourAlerted = true;
               }
             }
 
@@ -685,6 +845,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
     try {
       const t = localStorage.getItem('db_last_sync_time');
       return t ? parseInt(t, 10) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  const [lastSyncFetchedCount, setLastSyncFetchedCount] = useState<number>(() => {
+    try {
+      const c = localStorage.getItem('db_sync_total_items');
+      return c ? parseInt(c, 10) : 0;
+    } catch {
+      return 0;
+    }
+  });
+
+  const [syncError, setSyncError] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem('db_sync_error');
     } catch {
       return null;
     }
@@ -835,6 +1012,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const syncOrders = async () => {
     setIsSyncing(true);
+    setSyncError(null);
+    localStorage.removeItem('db_sync_error');
     try {
       const savedSheets = localStorage.getItem('db_annual_sheets');
       const annualSheets = savedSheets ? JSON.parse(savedSheets) : [
@@ -843,11 +1022,35 @@ export function AppProvider({ children }: { children: ReactNode }) {
         { year: '2026', spreadsheetId: '1kUAJYUVhr9bPYErtpnohpvuGGyhBSvJyEOIyzEFivJo', scriptUrl: '' }
       ];
 
+      let hasErrors = false;
+      let errorMsgs: string[] = [];
+
       const [operational, overdue, archived, ...sheetResults] = await Promise.all([
-        getOperationalOrders(),
-        getOverdueOrders(),
-        getArchivedOrders(),
-        ...annualSheets.map(async (sheet: any) => {
+        isFirestoreCanary
+          ? getOperationalOrders().catch(err => {
+              console.warn("Failed to load operational orders from Firestore:", err);
+              hasErrors = true;
+              errorMsgs.push(`Firestore Operational: ${err.message || err}`);
+              return [];
+            })
+          : Promise.resolve([]),
+        isFirestoreCanary
+          ? getOverdueOrders().catch(err => {
+              console.warn("Failed to load overdue orders from Firestore:", err);
+              hasErrors = true;
+              errorMsgs.push(`Firestore Overdue: ${err.message || err}`);
+              return [];
+            })
+          : Promise.resolve([]),
+        isFirestoreCanary
+          ? getArchivedOrders().catch(err => {
+              console.warn("Failed to load archived orders from Firestore:", err);
+              hasErrors = true;
+              errorMsgs.push(`Firestore Archived: ${err.message || err}`);
+              return [];
+            })
+          : Promise.resolve([]),
+        ...(isFirestoreCanary ? [] : annualSheets).map(async (sheet: any) => {
           if (!sheet.spreadsheetId?.trim()) return [];
           const url = new URL(sheet.scriptUrl?.trim() || 'https://script.google.com/macros/s/AKfycbw5KpBvJyFpIXmsHueg4XPSRkZ0mg6kxHqjMGp3WEs8Hx_JodvKSoKEg6RMsdH54iCa/exec');
           url.searchParams.append('action', 'sync_recent');
@@ -856,9 +1059,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
           url.searchParams.append('callback', callbackName);
           try {
             const data = await jsonpRequest(url, callbackName);
-            return (data && data.status === 'success' && Array.isArray(data.orders)) ? data.orders : [];
+            if (data && data.status === 'success' && Array.isArray(data.orders)) {
+              return data.orders;
+            } else {
+              hasErrors = true;
+              errorMsgs.push(`Sheet ${sheet.year}: ${data?.message || 'Invalid format'}`);
+              return [];
+            }
           } catch (e) {
-            console.error('Sheet sync failed', e);
+            console.warn('Sheet sync failed', e);
+            hasErrors = true;
+            errorMsgs.push(`Sheet ${sheet.year}: ${e instanceof Error ? e.message : String(e)}`);
             return [];
           }
         })
@@ -872,12 +1083,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const processOrder = (order: any, isFirestore: boolean) => {
         if (order.status === 'draft') return;
         
+        // Filter out "empty" orders that lack essential information
+        if (!order.mainType && !order.customerName && !order.customerOrder && !order.customerPhone) return;
+
         const id = order.orderId || order.historyId || `SYNC-${order.name || 'UNKNOWN'}-${order.phone || ''}-${order.due || ''}`.replace(/[^a-zA-Z0-9-]/g, '');
         if (id && !uniqueOrders.has(id)) {
           uniqueOrders.add(id);
           filteredOrders.push({
             id: id,
-            timestamp: order.timestamp || Date.now(),
+            timestamp: order.timestamp ? Number(order.timestamp) : 0, // Keep 0 if no real remote timestamp exists
             state: {
                 ...order,
                 syncStatus: isFirestore ? order.syncStatus || 'synced' : 'synced'
@@ -897,9 +1111,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
           }
       }
 
-      setHistory(filteredOrders);
+      setHistory(prevHistory => mergeSyncedOrders(prevHistory, filteredOrders));
+
+      const count = filteredOrders.length;
+      setLastSyncFetchedCount(count);
+      localStorage.setItem('db_sync_total_items', String(count));
+
+      const now = Date.now();
+      setLastSyncTime(now);
+      localStorage.setItem('db_last_sync_time', String(now));
+
+      if (hasErrors && errorMsgs.length > 0) {
+        const joined = errorMsgs.join('; ');
+        setSyncError(joined);
+        localStorage.setItem('db_sync_error', joined);
+      }
     } catch (e) {
-      console.error("Sync failed", e);
+      console.warn("Sync failed", e);
+      const msg = e instanceof Error ? e.message : String(e);
+      setSyncError(msg);
+      localStorage.setItem('db_sync_error', msg);
     } finally {
       setIsSyncing(false);
       setIsHistoryReady(true);
@@ -1201,7 +1432,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AppContext.Provider value={{ state, setState, viewStack, pushView, changeTab, startNewOrder, startNewCustomer, popView, goHome, reset, generatedMessages, setGeneratedMessages, history, setHistory, saveOrderToHistory, updateOrderHistoryState, updateSpecificHistoryItem, deleteOrderFromHistory, restoreOrderFromHistory, permanentlyDeleteOrderFromHistory, clearHistory, loadOrder, drafts, saveAsDraft, deleteDraft, loadDraft, theme, toggleTheme, appLanguage, toggleLanguage, isOnline, isSyncing, isHistoryReady, queueSize, lastSyncTime, syncOfflineQueue, addToOfflineQueue, deletedOrderIds, historyDeliveryFilter, setHistoryDeliveryFilter, historyPendingTimeFilter, setHistoryPendingTimeFilter, syncOrders, inAppNotifications, markNotificationAsRead, clearAllNotifications, addInAppNotification }}>
+    <AppContext.Provider value={{ state, setState, viewStack, pushView, changeTab, startNewOrder, startNewCustomer, popView, goHome, reset, generatedMessages, setGeneratedMessages, history, setHistory, saveOrderToHistory, updateOrderHistoryState, updateSpecificHistoryItem, deleteOrderFromHistory, restoreOrderFromHistory, permanentlyDeleteOrderFromHistory, clearHistory, loadOrder, drafts, saveAsDraft, deleteDraft, loadDraft, theme, toggleTheme, appLanguage, toggleLanguage, isOnline, isSyncing, isHistoryReady, queueSize, lastSyncTime, setLastSyncTime, lastSyncFetchedCount, setLastSyncFetchedCount, syncTotalItems: lastSyncFetchedCount, setSyncTotalItems: setLastSyncFetchedCount, syncError, setSyncError, syncOfflineQueue, addToOfflineQueue, deletedOrderIds, historyDeliveryFilter, setHistoryDeliveryFilter, historyPendingTimeFilter, setHistoryPendingTimeFilter, syncOrders, inAppNotifications, markNotificationAsRead, clearAllNotifications, addInAppNotification }}>
       {children}
     </AppContext.Provider>
   );
