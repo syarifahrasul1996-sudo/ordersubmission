@@ -16,7 +16,7 @@ import {
 import { AppState } from '../types';
 import { handleFirestoreError, OperationType } from './firestoreUtils';
 
-export const orderDataSource = import.meta.env.VITE_ORDER_DATA_SOURCE ?? 'sheets';
+export const orderDataSource = "sheets";
 // Explicitly disabled per user instruction: "do not migrate to canary yet"
 export const isFirestoreCanary = false;
 

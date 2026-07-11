@@ -77,7 +77,7 @@ service cloud.firestore {
     }
 
     // -- 5. Explicitly Denied Migration Collections --
-    match /orders_migration_staging/{doc=**} { allow read: if true; allow write: if false; }
+    match /orders_migration_staging/{doc=**} { allow read: if isOwner(); allow write: if false; }
     match /orders/{doc=**} { allow read, write: if false; }
     match /orders_archive/{doc=**} { allow read, write: if false; }
   }

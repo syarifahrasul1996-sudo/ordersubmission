@@ -33,7 +33,7 @@
     "motion": "^12.23.24",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
-    "recharts": "^3.8.1",
+    "recharts": "^2.12.7",
     "stripe": "^22.2.2",
     "tailwind-merge": "^3.6.0",
     "tailwindcss": "^4.1.14",

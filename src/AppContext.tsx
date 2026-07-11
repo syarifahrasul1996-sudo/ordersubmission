@@ -2,7 +2,46 @@ import React, { createContext, useContext, useState, ReactNode, useEffect } from
 import { AppState, INITIAL_STATE, ViewType, OrderHistoryItem, InAppNotification } from './types';
 import { getSubscription, syncPushNotifications, clearPushNotifications } from './lib/push';
 import { getOperationalOrders, getOverdueOrders, getArchivedOrders, isFirestoreCanary } from './services/firestoreOrders';
-import { parseDateStringToTimestamp } from './utils';
+import { parseDateStringToTimestamp, normalizeBahasa, parseTimestampFromId } from './utils';
+
+const parseDueTimestamp = (value: unknown): number => {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === 'string' && /^\d+$/.test(value.trim())) {
+    const num = Number(value.trim());
+    if (Number.isFinite(num)) {
+      return num;
+    }
+  }
+  if (typeof value !== 'string' || !value.trim()) {
+    return 0;
+  }
+  return parseDateStringToTimestamp(value, 0).timestamp;
+};
+
+const getDueDayTimestamp = (value: unknown): number => {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const d = new Date(value);
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+  }
+  if (typeof value === 'string' && /^\d+$/.test(value.trim())) {
+    const num = Number(value.trim());
+    if (Number.isFinite(num)) {
+      const d = new Date(num);
+      d.setHours(0, 0, 0, 0);
+      return d.getTime();
+    }
+  }
+  if (typeof value !== 'string' || !value.trim()) {
+    return 0;
+  }
+  const { date } = parseDateStringToTimestamp(value, 0);
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+};
 
 const deduplicateHistory = (items: OrderHistoryItem[]): OrderHistoryItem[] => {
   if (!Array.isArray(items)) return [];
@@ -23,45 +62,6 @@ const deduplicateHistory = (items: OrderHistoryItem[]): OrderHistoryItem[] => {
 
   const normalizePhone = (value: unknown) =>
     String(value || '').replace(/\D/g, '');
-
-  const parseDueTimestamp = (value: unknown): number => {
-    if (typeof value === 'number' && Number.isFinite(value)) {
-      return value;
-    }
-    if (typeof value === 'string' && /^\d+$/.test(value.trim())) {
-      const num = Number(value.trim());
-      if (Number.isFinite(num)) {
-        return num;
-      }
-    }
-    if (typeof value !== 'string' || !value.trim()) {
-      return 0;
-    }
-    return parseDateStringToTimestamp(value, 0).timestamp;
-  };
-
-  const getDueDayTimestamp = (value: unknown): number => {
-    if (typeof value === 'number' && Number.isFinite(value)) {
-      const d = new Date(value);
-      d.setHours(0, 0, 0, 0);
-      return d.getTime();
-    }
-    if (typeof value === 'string' && /^\d+$/.test(value.trim())) {
-      const num = Number(value.trim());
-      if (Number.isFinite(num)) {
-        const d = new Date(num);
-        d.setHours(0, 0, 0, 0);
-        return d.getTime();
-      }
-    }
-    if (typeof value !== 'string' || !value.trim()) {
-      return 0;
-    }
-    const { date } = parseDateStringToTimestamp(value, 0);
-    const d = new Date(date);
-    d.setHours(0, 0, 0, 0);
-    return d.getTime();
-  };
 
   const result: OrderHistoryItem[] = [];
 
@@ -181,10 +181,16 @@ export function mergeSyncedOrders(
       // Filter out empty local orders
       const state = localItem.state as any;
       const hasName = String(state?.customerName || state?.name || '').trim();
-      const hasTimestamp = Boolean(localItem.timestamp || state?.timestamp);
       
-      if (!hasName || !hasTimestamp) {
-        console.warn(`[Sync Debug] Filtering out invalid LOCAL order (ID: ${localItem.id}): name="${hasName}", hasTimestamp=${hasTimestamp}`);
+      let ts = Number(localItem.timestamp) || Number(state?.timestamp);
+      if (!ts) {
+        ts = parseTimestampFromId(localItem.id) || Date.now();
+        localItem.timestamp = ts;
+        if (state) state.timestamp = ts;
+      }
+      
+      if (!hasName) {
+        console.warn(`[Sync Debug] Filtering out invalid LOCAL order (ID: ${localItem.id}): name is empty`);
         continue;
       }
       mergedMap.set(localItem.id, { ...localItem });
@@ -200,10 +206,16 @@ export function mergeSyncedOrders(
     // Filter out orders missing mandatory fields
     const state = remoteItem.state as any;
     const hasName = String(state?.customerName || state?.name || '').trim();
-    const hasTimestamp = Boolean(remoteItem.timestamp || state?.timestamp);
     
-    if (!hasName || !hasTimestamp) {
-      console.warn(`[Sync Debug] Filtering out invalid REMOTE order (ID: ${remoteItem.id}): name="${hasName}", hasTimestamp=${hasTimestamp}`);
+    let ts = Number(remoteItem.timestamp) || Number(state?.timestamp);
+    if (!ts) {
+      ts = parseTimestampFromId(remoteItem.id) || Date.now();
+      remoteItem.timestamp = ts;
+      if (state) state.timestamp = ts;
+    }
+    
+    if (!hasName) {
+      console.warn(`[Sync Debug] Filtering out invalid REMOTE order (ID: ${remoteItem.id}): name is empty`);
       continue;
     }
 
@@ -1083,19 +1095,50 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const processOrder = (order: any, isFirestore: boolean) => {
         if (order.status === 'draft') return;
         
+        // Normalize properties so that the filter and state shape are consistent
+        const name = String(order.customerName || order.name || '').trim();
+        const phone = String(order.customerPhone || order.phone || '').trim();
+        const orderType = String(order.customerOrder || order.order || order.jenisTempahan || '').trim();
+        
         // Filter out "empty" orders that lack essential information
-        if (!order.mainType && !order.customerName && !order.customerOrder && !order.customerPhone) return;
+        if (!name && !orderType && !phone) return;
 
-        const id = order.orderId || order.historyId || `SYNC-${order.name || 'UNKNOWN'}-${order.phone || ''}-${order.due || ''}`.replace(/[^a-zA-Z0-9-]/g, '');
+        const mainType = order.mainType || (orderType === 'Resume' ? 'Resume' : orderType === 'Surat' ? 'Surat' : 'Lain-lain');
+
+        const id = order.orderId || order.historyId || `SYNC-${name || 'UNKNOWN'}-${phone || ''}-${order.due || order.customerDue || ''}`.replace(/[^a-zA-Z0-9-]/g, '');
         if (id && !uniqueOrders.has(id)) {
           uniqueOrders.add(id);
+          
+          const resolvedTimestamp = Number(order.timestamp) || parseTimestampFromId(id) || parseDueTimestamp(order.due || order.customerDue) || Date.now();
+          
+          // Map to standard AppState shape to ensure full consistency!
+          const normalizedState = {
+            ...order,
+            isDelivered: !!(order.isDelivered === true || order.isDelivered === 'true' || order.isDelivered === 1 || order.isDelivered === '1'),
+            spreadsheetId: order.spreadsheetId || '',
+            customerName: name,
+            customerPhone: phone,
+            customerOrder: orderType,
+            template: order.template || order.customerTemplate || '',
+            customerTemplate: order.template || order.customerTemplate || '',
+            customerBahasa: normalizeBahasa(order.bahasa || order.customerBahasa || ''),
+            customerAddOn: order.addon || order.customerAddOn || '',
+            customerJenis: order.jenis || order.customerJenis || '',
+            customerDue: order.due || order.customerDue || '',
+            orderLink: order.link || order.orderLink || '',
+            googleSheetLink: order.link || order.googleSheetLink || '',
+            orderId: id,
+            dueTimestamp: order.dueTimestamp || parseDueTimestamp(order.due || order.customerDue),
+            syncStatus: isFirestore ? order.syncStatus || 'synced' : 'synced',
+            mainType: mainType,
+            subType: order.subType || '',
+            timestamp: resolvedTimestamp
+          };
+
           filteredOrders.push({
             id: id,
-            timestamp: order.timestamp ? Number(order.timestamp) : 0, // Keep 0 if no real remote timestamp exists
-            state: {
-                ...order,
-                syncStatus: isFirestore ? order.syncStatus || 'synced' : 'synced'
-            },
+            timestamp: resolvedTimestamp,
+            state: normalizedState,
             messages: []
           });
         }
@@ -1277,12 +1320,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
             customerPhone || '',
             customerOrder || '',
             customerTemplate || template || '',
-            customerBahasa || '',
+            normalizeBahasa(customerBahasa),
             customerAddOn || '',
             customerJenis || '',
             customerDue || '',
             orderLink || googleSheetLink || '',
-            orderId
+            orderId,
+            itemToRestore.state.price ? itemToRestore.state.price.toString() : ''
           ];
           addToOfflineQueue({
             action: 'update_order',
@@ -1340,6 +1384,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       addons: Array.isArray(s.addons) ? s.addons : INITIAL_STATE.addons,
       clLangs: Array.isArray(s.clLangs) ? s.clLangs : INITIAL_STATE.clLangs,
       resumeLangs: Array.isArray(s.resumeLangs) ? s.resumeLangs : INITIAL_STATE.resumeLangs,
+      price: s.price ? Number(String(s.price).replace(/[^0-9.]/g, '')) : undefined,
       timestamp: item.timestamp,
       historyId: item.id,
       isEditMode: true
@@ -1375,6 +1420,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       addons: Array.isArray(s.addons) ? s.addons : INITIAL_STATE.addons,
       clLangs: Array.isArray(s.clLangs) ? s.clLangs : INITIAL_STATE.clLangs,
       resumeLangs: Array.isArray(s.resumeLangs) ? s.resumeLangs : INITIAL_STATE.resumeLangs,
+      price: s.price ? Number(String(s.price).replace(/[^0-9.]/g, '')) : undefined,
       timestamp: item.timestamp,
       historyId: item.id,
       isEditMode: s.isEditMode === true || s.customerOrder === 'Edit Resume'

@@ -1,6 +1,12 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth as getFirebaseAuth } from 'firebase/auth';
-import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
+import { 
+  initializeFirestore, 
+  persistentLocalCache, 
+  persistentMultipleTabManager,
+  doc, 
+  getDocFromServer 
+} from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 let app: any;
@@ -11,7 +17,18 @@ function initFirebase() {
   if (!app) {
     app = initializeApp(firebaseConfig);
     authInstance = getFirebaseAuth(app);
-    dbInstance = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+    
+    const settings: any = {
+      experimentalForceLongPolling: true,
+    };
+    
+    if (typeof window !== 'undefined') {
+      settings.localCache = persistentLocalCache({
+        tabManager: persistentMultipleTabManager()
+      });
+    }
+    
+    dbInstance = initializeFirestore(app, settings, firebaseConfig.firestoreDatabaseId);
   }
 }
 

@@ -285,3 +285,52 @@ export function parseDateStringToTimestamp(dueText: string, defaultTimestamp: nu
 
   return { timestamp: defaultTimestamp, date: new Date(defaultTimestamp) };
 }
+
+export function normalizeBahasa(val: string): string {
+  const clean = (val || '').trim();
+  if (!clean) return 'Melayu';
+  const lower = clean.toLowerCase();
+  if (lower === '2 bahasa' || lower === 'dua bahasa' || lower === 'both') return '2 Bahasa';
+  if (lower === 'melayu' || lower === 'bm') return 'Melayu';
+  if (lower === 'english' || lower === 'bi') return 'English';
+  return clean;
+}
+
+export function parseTimestampFromId(id: string): number | null {
+  if (!id) return null;
+  
+  // Format: ORD-YYYYMMDD-HHMMSS (e.g. ORD-20260709-115815)
+  const ordMatch = id.match(/ORD-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})/);
+  if (ordMatch) {
+    const [_, y, m, d, hh, mm, ss] = ordMatch;
+    const parsedDate = new Date(Number(y), Number(m) - 1, Number(d), Number(hh), Number(mm), Number(ss));
+    if (!isNaN(parsedDate.getTime())) {
+      return parsedDate.getTime();
+    }
+  }
+
+  // Format: SYNC-Willy-6018-4601993-10072026at237PM
+  const syncMatch = id.match(/(\d{2})(\d{2})(\d{4})at(\d+)(\d{2})(AM|PM)/i);
+  if (syncMatch) {
+    const [_, d, m, y, hh, mm, ampm] = syncMatch;
+    let hour = Number(hh);
+    if (ampm.toUpperCase() === 'PM' && hour < 12) hour += 12;
+    if (ampm.toUpperCase() === 'AM' && hour === 12) hour = 0;
+    const parsedDate = new Date(Number(y), Number(m) - 1, Number(d), hour, Number(mm));
+    if (!isNaN(parsedDate.getTime())) {
+      return parsedDate.getTime();
+    }
+  }
+
+  // General fallback check for any numbers of length 13 (typical JS timestamps)
+  const tsMatch = id.match(/\b\d{13}\b/);
+  if (tsMatch) {
+    const tsVal = Number(tsMatch[0]);
+    if (tsVal > 1500000000000 && tsVal < 2500000000000) {
+      return tsVal;
+    }
+  }
+
+  return null;
+}
+

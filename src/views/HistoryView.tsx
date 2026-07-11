@@ -24,14 +24,12 @@ const formatDisplayPhone = (phone?: string) => {
 };
 
 const getRelativeDayDetails = (orderTime: number, appLanguage: string) => {
-  const now = new Date();
-  now.setHours(0, 0, 0, 0);
-  
-  const orderDate = new Date(orderTime);
-  orderDate.setHours(0, 0, 0, 0);
-  
-  const diffTime = orderDate.getTime() - now.getTime();
-  const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+  const d1 = new Date(orderTime);
+  const d2 = new Date();
+
+  const utc1 = Date.UTC(d1.getFullYear(), d1.getMonth(), d1.getDate());
+  const utc2 = Date.UTC(d2.getFullYear(), d2.getMonth(), d2.getDate());
+  const diffDays = Math.round((utc1 - utc2) / (1000 * 60 * 60 * 24));
   
   if (diffDays === 0) {
     return {
@@ -88,18 +86,18 @@ const parseDueTimestamp = (value: unknown): number => {
 
 const getBestDueTimestamp = (item: any): number => {
   if (!item) return 0;
-  
-  const dueTimestamp = Number(item.state?.dueTimestamp);
-  if (Number.isFinite(dueTimestamp) && dueTimestamp > 0) {
-    return dueTimestamp;
-  }
-  
+
   const customerDue = String(item.state?.customerDue ?? '').trim();
   if (customerDue) {
     const parsed = parseDateStringToTimestamp(customerDue, 0).timestamp;
     if (parsed > 0) {
       return parsed;
     }
+  }
+  
+  const dueTimestamp = Number(item.state?.dueTimestamp);
+  if (Number.isFinite(dueTimestamp) && dueTimestamp > 0) {
+    return dueTimestamp;
   }
   
   return Number(item.timestamp) || 0;
@@ -115,6 +113,20 @@ const isDeletedState = (item: any): boolean => {
   if (!item || !item.state) return false;
   const val = item.state.isDeleted;
   return val === true || val === 'true' || val === 1 || val === '1';
+};
+
+const getOrderTypeDisplay = (state: any) => {
+  const mainType = String(state?.mainType || '').trim();
+  const customDoc = String(state?.customDoc || '').trim();
+  const customerOrder = String(state?.customerOrder || '').trim();
+  const order = String(state?.order || '').trim();
+  const jenisTempahan = String(state?.jenisTempahan || '').trim();
+
+  if (mainType && mainType !== 'Lain-lain') {
+    return mainType;
+  }
+
+  return customDoc || customerOrder || order || jenisTempahan || 'Lain-lain';
 };
 
 export function HistoryView() {
@@ -270,8 +282,9 @@ export function HistoryView() {
       // Filter out "empty" orders
       const state = item.state as any;
       const hasName = String(state?.customerName || state?.name || '').trim();
-      const hasTimestamp = Boolean(item.timestamp || state?.timestamp);
-      if (!hasName || hasName === 'undefined' || hasName === 'null' || !hasTimestamp) return false;
+      const hasOrder = String(state?.customerOrder || state?.order || state?.jenisTempahan || state?.mainType || '').trim();
+      const hasPhone = String(state?.customerPhone || state?.phone || '').trim();
+      if (!hasName && !hasOrder && !hasPhone) return false;
 
       const orderId = item.state?.orderId;
       const id = item.id;
@@ -315,12 +328,19 @@ export function HistoryView() {
         const nameMatch = String(item.state?.customerName || '').toLowerCase().includes(query);
         const idMatch = String(item.state?.orderId || '').toLowerCase().includes(query);
         const phoneMatch = String(item.state?.customerPhone || '').toLowerCase().includes(query);
-        if (!nameMatch && !idMatch && !phoneMatch) return false;
+        const orderTypeMatch = getOrderTypeDisplay(item.state).toLowerCase().includes(query);
+        const templateMatch = String(item.state?.template || item.state?.customerTemplate || '').toLowerCase().includes(query);
+        const addonMatch = String(item.state?.customerAddOn || '').toLowerCase().includes(query);
+        
+        if (!nameMatch && !idMatch && !phoneMatch && !orderTypeMatch && !templateMatch && !addonMatch) {
+          return false;
+        }
       }
 
       // Date filter: only apply the active date window (2 days before and 3 days after) for 'all' or 'delivered' views.
       // For 'pending' views, we want to see ALL pending orders so that overdue or far-future pending orders are not hidden.
-      if (deliveryFilter !== 'pending') {
+      // If there is an active search query, bypass the date window filter to allow searching the entire history.
+      if (deliveryFilter !== 'pending' && !searchQuery.trim()) {
         const orderTimeVal = getBestDueTimestamp(item);
         const now = new Date(currentTime);
         
@@ -344,40 +364,21 @@ export function HistoryView() {
 
       const now = currentTime;
 
-      // Read the visible due date again first.
-      const aDue =
-        parseDueTimestamp(a.state?.customerDue) ||
-        Number(a.state?.dueTimestamp) ||
-        Number(a.timestamp) ||
-        now;
+      // Read the visible due date again first using our robust helper.
+      const aDue = getBestDueTimestamp(a) || now;
+      const bDue = getBestDueTimestamp(b) || now;
 
-      const bDue =
-        parseDueTimestamp(b.state?.customerDue) ||
-        Number(b.state?.dueTimestamp) ||
-        Number(b.timestamp) ||
-        now;
-
-      const aOverdue = !aDelivered && aDue < now;
-      const bOverdue = !bDelivered && bDue < now;
-
-      // 1. Past due but not delivered (overdue pending) always appear on the very top
-      if (aOverdue && !bOverdue) return -1;
-      if (!aOverdue && bOverdue) return 1;
-
-      // 2. Standard pending orders appear above delivered orders
+      // 1. Standard pending orders appear above delivered orders
       if (!aDelivered && bDelivered) return -1;
       if (aDelivered && !bDelivered) return 1;
 
       if (!aDelivered) {
-        // Pending orders nearest to the current time appear first
-        const aDistance = Math.abs(aDue - now);
-        const bDistance = Math.abs(bDue - now);
-
-        if (aDistance !== bDistance) {
-          return aDistance - bDistance;
+        // Pending orders: earliest due date first (chronological order)
+        if (aDue !== bDue) {
+          return aDue - bDue;
         }
 
-        // If both are equally close, show the latest edited order first
+        // If both have the same due date, show the latest edited order first
         return (
           (Number(b.timestamp) || 0) -
           (Number(a.timestamp) || 0)
@@ -424,7 +425,7 @@ export function HistoryView() {
   }, [drafts, history, searchQuery]);
 
   const filteredTrash = useMemo(() => {
-    const deletedItems = history.filter(item => isDeletedState(item) && item.state?.syncStatus === 'synced');
+    const deletedItems = history.filter(item => isDeletedState(item) && item.state?.syncStatus !== 'draft');
     if (!searchQuery.trim()) return deletedItems;
     const query = searchQuery.toLowerCase().trim();
     return deletedItems.filter(item => {
@@ -465,8 +466,9 @@ export function HistoryView() {
       // Filter out empty orders from counts
       const state = item.state as any;
       const hasName = String(state?.customerName || state?.name || '').trim();
-      const hasTimestamp = Boolean(item.timestamp || state?.timestamp);
-      if (!hasName || hasName === 'undefined' || hasName === 'null' || !hasTimestamp) return;
+      const hasOrder = String(state?.customerOrder || state?.order || state?.jenisTempahan || state?.mainType || '').trim();
+      const hasPhone = String(state?.customerPhone || state?.phone || '').trim();
+      if (!hasName && !hasOrder && !hasPhone) return;
 
       const isDelivered = item.state.isDelivered === true || item.state.isDelivered === 'true' || item.state.isDelivered === 1 || item.state.isDelivered === '1';
       const isDeleted = item.state.isDeleted === true || item.state.isDeleted === 'true' || item.state.isDeleted === 1 || item.state.isDeleted === '1';
@@ -1820,7 +1822,7 @@ const existingIdx = updatedHistory.findIndex((item) => {
             <Trash2 className="w-3.5 h-3.5" />
             <span className="truncate">{appLanguage === 'ms' ? 'Tong Sampah' : 'Trash Bin'}</span>
             {(() => {
-              const deletedCount = history.filter(item => isDeletedState(item) && item.state?.syncStatus === 'synced').length;
+              const deletedCount = history.filter(item => isDeletedState(item) && item.state?.syncStatus !== 'draft').length;
               return deletedCount > 0 ? (
                 <span className="px-1.5 py-0.5 text-[9px] font-black bg-rose-600 dark:bg-rose-500 text-white rounded-full scale-90 select-none animate-pulse">
                   {deletedCount}
@@ -1831,7 +1833,7 @@ const existingIdx = updatedHistory.findIndex((item) => {
         </div>
         {activeTab === 'local' && (
           <div className="space-y-4">
-            {history.filter(item => !isDeletedState(item) && item.state?.syncStatus === 'synced').length === 0 ? (
+            {history.filter(item => !isDeletedState(item) && item.state?.syncStatus !== 'draft').length === 0 ? (
               <div className="flex flex-col items-center justify-center py-20 text-subtext space-y-4">
                 <Clock className="w-16 h-16 opacity-50" />
                 <p className="font-bold">
@@ -1991,7 +1993,7 @@ const existingIdx = updatedHistory.findIndex((item) => {
                     }
                   );
 
-                  const dueTimestamp = item.state?.dueTimestamp || item.timestamp || Date.now();
+                  const dueTimestamp = getBestDueTimestamp(item) || Date.now();
                   const dueDateObj = new Date(dueTimestamp);
                   const formattedDueDate = dueDateObj.toLocaleString(
                     appLanguage === 'ms' ? 'ms-MY' : 'en-US',
@@ -2007,9 +2009,9 @@ const existingIdx = updatedHistory.findIndex((item) => {
 
                   const now = currentTime;
                   const isDelivered = isDeliveredState(item);
-                  const timeUntilDue = item.state?.dueTimestamp ? item.state.dueTimestamp - now : 0;
+                  const timeUntilDue = dueTimestamp ? dueTimestamp - now : 0;
                   const isDueSoon = !isDelivered && timeUntilDue > 0 && timeUntilDue <= 20 * 60 * 1000;
-                  const isOverdue = !isDelivered && item.state?.dueTimestamp ? timeUntilDue <= 0 : false;
+                  const isOverdue = !isDelivered && dueTimestamp ? timeUntilDue <= 0 : false;
 
                   const relDetails = getRelativeDayDetails(dueTimestamp, appLanguage);
 
@@ -2084,9 +2086,7 @@ const existingIdx = updatedHistory.findIndex((item) => {
                             </div>
 
                             <p className="font-bold text-sm sm:text-[13.5px] leading-tight text-[#111827]">
-                              {item.state?.mainType === 'Lain-lain'
-                                ? item.state?.customDoc
-                                : item.state?.mainType}{' '}
+                              {getOrderTypeDisplay(item.state)}{' '}
                               {item.state?.isEditMode ? '(Edit)' : ''}
                               {item.state?.customerName
                                 ? ` - ${formatCustomerName(item.state.customerName)}`

@@ -378,7 +378,7 @@ function syncRecentOrders(e) {
 
       if (lastRow < 2) return;
 
-      var values = sheet.getRange(2, 1, lastRow - 1, 11).getValues();
+      var values = sheet.getRange(2, 1, lastRow - 1, 12).getValues();
 
       values.forEach(function(rowData) {
         var dueDate = parseDueDate(rowData[8]);
@@ -408,7 +408,8 @@ function syncRecentOrders(e) {
           jenis: rowData[7] || "",
           due: formatDateValue(rowData[8]),
           link: String(rowData[9] || ""),
-          orderId: String(rowData[10] || "")
+          orderId: String(rowData[10] || ""),
+          price: rowData.length > 11 ? String(rowData[11] || "") : ""
         });
       });
     });
@@ -891,6 +892,7 @@ function updateOrder(e) {
     var jenis = e.parameter.jenis || e.parameter.customerJenis || "";
     var due = e.parameter.due || e.parameter.customerDue || "";
     var link = e.parameter.link || e.parameter.googleSheetLink || e.parameter.orderLink || "";
+    var price = e.parameter.price || "";
 
     var foundRow = null;
     var foundSheet = null;
@@ -984,7 +986,8 @@ function updateOrder(e) {
       jenis,
       due,
       link,
-      finalOrderId
+      finalOrderId,
+      price
     ];
 
     var targetDate = new Date();

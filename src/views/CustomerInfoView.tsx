@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { RefreshCcw, Save, Check, FileText, ExternalLink, LogOut, Loader2, AlertCircle, ChevronDown } from 'lucide-react';
 import { useAppContext } from '../AppContext';
-import { calculateDeadline, formatPhoneUniversal, parseDateStringToTimestamp, toProperCase, formatAddOnString } from '../utils';
+import { calculateDeadline, formatPhoneUniversal, parseDateStringToTimestamp, toProperCase, formatAddOnString, normalizeBahasa } from '../utils';
 import { Toast } from '../components/Toast';
 import { SetupHelper } from '../components/SetupHelper';
 import { googleSignIn, initAuth, getAccessToken, logout } from '../utils/googleAuth';
@@ -89,7 +89,7 @@ export function CustomerInfoView() {
     // Only prefill if the user went through a flow that asks for language
     if (isNewResume || isSurat || isLainLain) {
       if (Array.isArray(state.resumeLangs)) {
-        if (state.resumeLangs.length === 2) initBahasa = '2 bahasa';
+        if (state.resumeLangs.length === 2) initBahasa = '2 Bahasa';
         else if (state.resumeLangs.length === 1) initBahasa = state.resumeLangs[0];
       }
     }
@@ -762,7 +762,7 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
       googleSheetLink: link,
       customerOrder: order,
       customerTemplate: finalFormattedTemplate,
-      customerBahasa: bahasa,
+      customerBahasa: normalizeBahasa(bahasa),
       customerAddOn: finalFormattedAddOn,
       customerJenis: jenis,
       customerDue: due,
@@ -791,7 +791,7 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
         formattedPhone,
         order,
         finalFormattedTemplate || "",
-        bahasa || "",
+        normalizeBahasa(bahasa),
         finalFormattedAddOn || "",
         jenis,
         due,
@@ -847,7 +847,7 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
         phone: formattedPhone,
         order: order,
         template: finalFormattedTemplate || "",
-        bahasa: bahasa || "",
+        bahasa: normalizeBahasa(bahasa),
         addon: addOn || "",
         jenis: jenis,
         due: due,
@@ -926,8 +926,17 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
                 lastModifiedLocally: Date.now()
               });
             }
+          } else if (resp && resp.status === 'error') {
+            console.error("JSONP update_order returned error response:", JSON.stringify(resp));
+            updateOrderHistoryState({
+              syncStatus: 'failed',
+              syncLastAttempt: Date.now(),
+              lastModifiedLocally: Date.now()
+            });
+            setErrorMsg(resp.message || 'Server returned an error');
+            showToastMessage(appLanguage === 'ms' ? 'Ralat pelayan: Gagal di-sync' : 'Server error: Sync failed');
           } else {
-            console.error("JSONP update_order returned error response:", resp);
+            console.error("JSONP update_order failed or returned invalid response:", resp);
             triggerPostFallback();
           }
         })
@@ -990,7 +999,7 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
     if (bahasaMatch && bahasaMatch[1]) {
       const val = bahasaMatch[1].toUpperCase();
       if (val.includes('2 BAHASA') || val.includes('DUA BAHASA') || val.includes('BOTH') || (val.includes('BM') && val.includes('BI'))) {
-        newBahasa = '2 bahasa';
+        newBahasa = '2 Bahasa';
       } else if (val.includes('BM') || val.includes('MELAYU')) {
         newBahasa = 'Melayu';
       } else if (val.includes('BI') || val.includes('ENGLISH') || val.includes('INGGERIS')) {
@@ -1150,7 +1159,7 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
             >
               <option value="Melayu">Melayu</option>
               <option value="English">English</option>
-              <option value="2 bahasa">2 bahasa</option>
+              <option value="2 Bahasa">2 Bahasa</option>
               <option value=""></option>
             </select>
             <div className="absolute top-0 right-4 h-full flex items-center pointer-events-none">

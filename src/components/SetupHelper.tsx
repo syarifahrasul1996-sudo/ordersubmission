@@ -127,10 +127,11 @@ function ensureSheetSetup(sheet) {
       "Jenis",
       "Due",
       "Link",
-      "Order ID"
+      "Order ID",
+      "Harga"
     ]);
 
-    sheet.appendRow(["", "", "", "", "", "", "", "", "", "", ""]);
+    sheet.appendRow(["", "", "", "", "", "", "", "", "", "", "", ""]);
     applyRowTemplate(sheet, 2);
   }
 }
@@ -183,6 +184,142 @@ function jsonResponse(obj) {
 function doGet(e) {
   var action = e.parameter.action;
   
+  if (action === "update_order") {
+    var spreadsheetId = e.parameter.spreadsheetId;
+    var orderId = e.parameter.orderId;
+    var oldOrderId = e.parameter.oldOrderId;
+    var callback = e.parameter.callback;
+
+    var name = e.parameter.name || "";
+    var phone = e.parameter.phone || "";
+    var orderVal = e.parameter.order || "";
+    var template = e.parameter.template || "";
+    var bahasa = e.parameter.bahasa || "";
+    var addon = e.parameter.addon || "";
+    var jenis = e.parameter.jenis || "";
+    var due = e.parameter.due || "";
+    var link = e.parameter.link || "";
+    var price = e.parameter.price || "";
+    var isDelivered = e.parameter.isDelivered === "true" || e.parameter.isDelivered === true || e.parameter.isDelivered === "1";
+
+    var lock = LockService.getScriptLock();
+    var hasLock = false;
+
+    try {
+      lock.waitLock(10000);
+      hasLock = true;
+
+      if (!spreadsheetId) {
+        throw new Error("Missing spreadsheetId");
+      }
+
+      var ss = SpreadsheetApp.openById(spreadsheetId);
+      
+      var monthNamesEn = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+      var monthNamesMs = ["Januari", "Februari", "Mac", "April", "Mei", "Jun", "Julai", "Ogos", "September", "Oktober", "November", "Disember"];
+      
+      var sheetName = monthNamesEn[new Date().getMonth()] + " " + new Date().getFullYear();
+      if (due && due.indexOf("/") !== -1) {
+        var cleanDue = due.replace(/\s+at\s+/i, " ").trim();
+        var dateParts = cleanDue.split(" ")[0].split("/");
+        if (dateParts.length === 3) {
+          var dMonth = parseInt(dateParts[1], 10) - 1;
+          var dYear = parseInt(dateParts[2], 10);
+          if (!isNaN(dMonth) && !isNaN(dYear) && dMonth >= 0 && dMonth < 12) {
+            sheetName = monthNamesEn[dMonth] + " " + dYear;
+          }
+        }
+      }
+
+      var sheet = ss.getSheetByName(sheetName) || ss.getSheetByName(sheetName.replace(monthNamesEn[new Date().getMonth()], monthNamesMs[new Date().getMonth()]));
+      if (!sheet) {
+        var foundSheet = null;
+        for (var i = 0; i < 12; i++) {
+          if (sheetName.indexOf(monthNamesEn[i]) !== -1) {
+            var msName = sheetName.replace(monthNamesEn[i], monthNamesMs[i]);
+            foundSheet = ss.getSheetByName(msName);
+            if (foundSheet) {
+              sheet = foundSheet;
+              break;
+            }
+          }
+        }
+        if (!sheet) {
+          sheet = ss.insertSheet(sheetName);
+        }
+      }
+
+      ensureSheetSetup(sheet);
+
+      var rowData = [
+        isDelivered,
+        name,
+        phone,
+        orderVal,
+        template,
+        bahasa,
+        addon,
+        jenis,
+        due,
+        link,
+        orderId,
+        price
+      ];
+
+      var searchId = oldOrderId || orderId;
+      var existingRow = findRowByOrderId(sheet, searchId);
+
+      if (existingRow) {
+        var existingCheckbox = sheet.getRange(existingRow, 1).getValue();
+        if (isDelivered === true || existingCheckbox === true || String(existingCheckbox).toUpperCase() === "TRUE") {
+          rowData[0] = true;
+        } else {
+          rowData[0] = false;
+        }
+
+        sheet.getRange(existingRow, 1, 1, rowData.length).setValues([rowData]);
+        applyRowTemplate(sheet, existingRow);
+
+        var result = {
+          status: "success",
+          message: "Updated order via GET " + orderId,
+          orderId: orderId
+        };
+        if (callback) {
+          return ContentService.createTextOutput(callback + '(' + JSON.stringify(result) + ')')
+            .setMimeType(ContentService.MimeType.JAVASCRIPT);
+        }
+        return jsonResponse(result);
+      }
+
+      sheet.appendRow(rowData);
+      var newRow = sheet.getLastRow();
+      applyRowTemplate(sheet, newRow);
+
+      var result = {
+        status: "success",
+        message: "Created order via GET " + orderId,
+        orderId: orderId
+      };
+      if (callback) {
+        return ContentService.createTextOutput(callback + '(' + JSON.stringify(result) + ')')
+          .setMimeType(ContentService.MimeType.JAVASCRIPT);
+      }
+      return jsonResponse(result);
+
+    } catch (error) {
+      var errResult = { status: "error", message: error.toString() };
+      if (callback) {
+        return ContentService.createTextOutput(callback + '(' + JSON.stringify(errResult) + ')')
+          .setMimeType(ContentService.MimeType.JAVASCRIPT);
+      }
+      return jsonResponse(errResult);
+
+    } finally {
+      if (hasLock) lock.releaseLock();
+    }
+  }
+
   if (action === "update_delivered") {
     var orderId = e.parameter.orderId;
     var spreadsheetId = e.parameter.spreadsheetId;

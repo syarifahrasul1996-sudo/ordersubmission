@@ -115,8 +115,9 @@ export function isActivePendingOrder(
   // Filter out empty orders
   const stateVal = item.state as any;
   const hasName = String(stateVal?.customerName || stateVal?.name || '').trim();
-  const hasTimestamp = Boolean(item.timestamp || stateVal?.timestamp);
-  if (!hasName || hasName === 'undefined' || hasName === 'null' || !hasTimestamp) {
+  const hasOrder = String(stateVal?.customerOrder || stateVal?.order || stateVal?.jenisTempahan || stateVal?.mainType || '').trim();
+  const hasPhone = String(stateVal?.customerPhone || stateVal?.phone || '').trim();
+  if (!hasName && !hasOrder && !hasPhone) {
     return false;
   }
 

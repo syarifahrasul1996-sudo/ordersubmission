@@ -99,6 +99,7 @@ export const INITIAL_STATE: AppState = {
   orderLink: '',
   googleSheetLink: '',
   orderId: '',
+  price: undefined,
   hasThreeHourChecked: false,
   threeHourAlerted: false,
   isDueInvalid: false,

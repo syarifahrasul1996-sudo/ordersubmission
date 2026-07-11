@@ -209,9 +209,15 @@ export function DashboardView() {
     // 1. Remove deleted and draft orders first
     const activeHistoryItems = history.filter(Boolean).filter((item) => {
       if (!item || !item.state) return false;
-      const state = item.state;
+      const state = item.state as any;
       if (normalizeBoolean(state.isDeleted)) return false;
       if (state.syncStatus === 'draft' || state.status === 'draft') return false;
+
+      // Filter out empty orders
+      const hasName = String(state?.customerName || state?.name || '').trim();
+      const hasOrder = String(state?.customerOrder || state?.order || state?.jenisTempahan || state?.mainType || '').trim();
+      const hasPhone = String(state?.customerPhone || state?.phone || '').trim();
+      if (!hasName && !hasOrder && !hasPhone) return false;
 
       if (deletedOrderIds) {
         if (deletedOrderIds.includes(item.id)) return false;
@@ -253,14 +259,37 @@ export function DashboardView() {
 
     // 3. Normalize orders
     const normalizedOrders = Array.from(deduplicatedMap.values()).map(item => {
-      const state = item.state || {};
+      const state = item.state as any || {};
       const dueResult = getOrderDueTimestamp(item);
       const isDueVal = dueResult !== null && Number.isFinite(dueResult) && dueResult > 0;
+      
+      let computedTimestamp = Number(item.timestamp) || 0;
+      const orderIdToParse = state.orderId || item.id;
+      if (!computedTimestamp && orderIdToParse && typeof orderIdToParse === 'string' && orderIdToParse.startsWith('ORD-')) {
+        const parts = orderIdToParse.split('-');
+        if (parts.length >= 3) {
+          const datePart = parts[1]; 
+          const timePart = parts[2];
+          if (datePart.length === 8 && timePart.length >= 6) {
+            const yyyy = parseInt(datePart.substring(0, 4), 10);
+            const MM = parseInt(datePart.substring(4, 6), 10) - 1;
+            const dd = parseInt(datePart.substring(6, 8), 10);
+            const hh = parseInt(timePart.substring(0, 2), 10);
+            const mm = parseInt(timePart.substring(2, 4), 10);
+            const ss = parseInt(timePart.substring(4, 6), 10);
+            computedTimestamp = new Date(yyyy, MM, dd, hh, mm, ss).getTime();
+          }
+        }
+      }
+      
+      if (!computedTimestamp && isDueVal) {
+        computedTimestamp = dueResult;
+      }
       
       return {
         ...state,
         historyId: item.id,
-        historyTimestamp: Number(item.timestamp) || 0,
+        historyTimestamp: computedTimestamp,
         analysisDueTimestamp: isDueVal ? dueResult : null,
         isDueInvalid: !isDueVal
       };
@@ -327,7 +356,7 @@ export function DashboardView() {
     const urgencyMap = new Map<UrgencyKey, number>();
     ['normal', 'semi', 'urgent', 'super'].forEach(k => urgencyMap.set(k as UrgencyKey, 0));
     businessOrders.forEach(o => {
-      const uKey = getUrgencyKey(o.customerJenis || o.urgency);
+      const uKey = getUrgencyKey(o.customerJenis || o.jenis || o.urgency);
       urgencyMap.set(uKey, (urgencyMap.get(uKey) || 0) + 1);
     });
 
@@ -352,7 +381,7 @@ export function DashboardView() {
     for (let i = 1; i <= 12; i++) monthCounts.set(String(i).padStart(2, '0'), 0);
     const dayCounts = new Map<string, number>();
     if (filterYear !== 'all' && filterMonth !== 'all') {
-      const numDays = new Date(parseInt(filterYear), parseInt(filterMonth), 0).getDate();
+      const numDays = new Date(parseInt(filterYear, 10), parseInt(filterMonth, 10), 0).getDate();
       for (let i = 1; i <= numDays; i++) dayCounts.set(String(i).padStart(2, '0'), 0);
     }
 
@@ -423,7 +452,7 @@ export function DashboardView() {
       ''
     ).trim();
 
-    const normUrgency = getUrgencyKey(order.customerJenis || order.urgency);
+    const normUrgency = getUrgencyKey(order.customerJenis || order.jenis || order.urgency);
 
     const updates: Partial<AppState> = {
       customerName: order.customerName || order.name || '',
@@ -634,7 +663,7 @@ export function DashboardView() {
                   ? (appLanguage === 'ms' ? 'Order Mengikut Tahun' : 'Orders By Year')
                   : filterMonth === 'all'
                     ? (appLanguage === 'ms' ? `Order Mengikut Bulan (${filterYear})` : `Orders By Month (${filterYear})`)
-                    : (appLanguage === 'ms' ? `Order Mengikut Hari (${stats.months[parseInt(filterMonth) - 1]} ${filterYear})` : `Orders By Day (${stats.months[parseInt(filterMonth) - 1]} ${filterYear})`)}
+                    : (appLanguage === 'ms' ? `Order Mengikut Hari (${stats.months[parseInt(filterMonth, 10) - 1]} ${filterYear})` : `Orders By Day (${stats.months[parseInt(filterMonth, 10) - 1]} ${filterYear})`)}
               </h3>
               <div className="h-[200px] w-full">
                 <SafeResponsiveContainer>
