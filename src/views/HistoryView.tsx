@@ -2016,12 +2016,15 @@ const existingIdx = updatedHistory.findIndex((item) => {
                   const relDetails = getRelativeDayDetails(dueTimestamp, appLanguage);
 
                   let barColor = "bg-gray-300";
+                  const jenisLower = item.state?.customerJenis?.toLowerCase() || '';
+                  const isNotUrgent = jenisLower.includes('normal') || jenisLower.includes('tak') || jenisLower.includes('not') || jenisLower.includes('tidak');
+
                   if (isDelivered) barColor = "bg-blue-500";
                   else if (isDueSoon) barColor = "bg-rose-500";
                   else if (isOverdue) barColor = "bg-amber-500 font-extrabold";
-                  else if (item.state?.urgency === 'super' || item.state?.customerJenis?.toLowerCase().includes('super')) barColor = "bg-rose-600";
-                  else if (item.state?.urgency === 'urgent' || item.state?.customerJenis?.toLowerCase().includes('urgent')) barColor = "bg-orange-500";
-                  else if (item.state?.urgency === 'semi' || item.state?.customerJenis?.toLowerCase().includes('semi')) barColor = "bg-yellow-500";
+                  else if (item.state?.urgency === 'super' || (jenisLower.includes('super') && !isNotUrgent)) barColor = "bg-rose-600";
+                  else if (item.state?.urgency === 'urgent' || (jenisLower.includes('urgent') && !isNotUrgent)) barColor = "bg-orange-500";
+                  else if (item.state?.urgency === 'semi' || (jenisLower.includes('semi') && !isNotUrgent)) barColor = "bg-yellow-500";
 
                   return (
                     <div
