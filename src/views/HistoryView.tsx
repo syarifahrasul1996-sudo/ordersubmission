@@ -398,12 +398,11 @@ export function HistoryView() {
   }, [deduplicatedHistory, deliveryFilter, searchQuery, currentTime]);
 
   const filteredDrafts = useMemo(() => {
-    // Combine drafts and unsynced history items (which are drafts/saved locally only)
-    const unsyncedHistory = history.filter(item => item && item.state && item.state.syncStatus !== 'synced');
+    // Show only actual drafts (saved locally via "Save as Draft" and stored in drafts)
     const seenIds = new Set<string>();
     const combined: OrderHistoryItem[] = [];
 
-    [...drafts, ...unsyncedHistory].forEach(item => {
+    drafts.forEach(item => {
       if (!item) return;
       if (!seenIds.has(item.id)) {
         seenIds.add(item.id);
