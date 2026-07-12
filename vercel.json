@@ -11,6 +11,6 @@
   ],
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/index.ts" },
-    { "source": "/(.*)", "destination": "/index.html" }
+    { "source": "/((?!api|assets|sw.js|manifest.json|favicon.ico).*)" , "destination": "/index.html" }
   ]
 }

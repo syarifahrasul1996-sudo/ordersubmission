@@ -10,23 +10,30 @@ const isVercel = process.env.VERCEL === '1';
 const storageDir = isVercel ? "/tmp" : process.cwd();
 
 // VAPID keys setup
-const KEY_FILE = path.join(storageDir, "vapid-keys.json");
 let vapidKeys = { publicKey: "", privateKey: "" };
 
-if (fs.existsSync(KEY_FILE)) {
-  try {
-    vapidKeys = JSON.parse(fs.readFileSync(KEY_FILE, "utf-8"));
-  } catch (err) {
-    console.warn("Failed to read VAPID key file, generating new one", err);
+if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+  vapidKeys = {
+    publicKey: process.env.VAPID_PUBLIC_KEY,
+    privateKey: process.env.VAPID_PRIVATE_KEY
+  };
+} else {
+  const KEY_FILE = path.join(storageDir, "vapid-keys.json");
+  if (fs.existsSync(KEY_FILE)) {
+    try {
+      vapidKeys = JSON.parse(fs.readFileSync(KEY_FILE, "utf-8"));
+    } catch (err) {
+      console.warn("Failed to read VAPID key file, generating new one", err);
+    }
   }
-}
 
-if (!vapidKeys.publicKey || !vapidKeys.privateKey) {
-  vapidKeys = webPush.generateVAPIDKeys();
-  try {
-    fs.writeFileSync(KEY_FILE, JSON.stringify(vapidKeys, null, 2), "utf-8");
-  } catch(e) {
-    console.warn("Could not write vapid keys to disk:", e);
+  if (!vapidKeys.publicKey || !vapidKeys.privateKey) {
+    vapidKeys = webPush.generateVAPIDKeys();
+    try {
+      fs.writeFileSync(KEY_FILE, JSON.stringify(vapidKeys, null, 2), "utf-8");
+    } catch(e) {
+      console.warn("Could not write vapid keys to disk:", e);
+    }
   }
 }
 
