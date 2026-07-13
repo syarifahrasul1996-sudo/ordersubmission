@@ -7,6 +7,7 @@ import { SetupHelper } from '../components/SetupHelper';
 import { googleSignIn, initAuth, getAccessToken, logout } from '../utils/googleAuth';
 import { User } from 'firebase/auth';
 import { cn } from '../cn';
+import { isFirestoreCanary, saveOrderToFirestore } from '../services/firestoreOrders';
 
 const TEMPLATE_SOURCES = {
   agreement: {
@@ -530,7 +531,7 @@ Dokumen Dijana Secara Automatik`;
       }, 500);
       return () => clearTimeout(timer);
     }
-  }, [isActive, state.historyId, state.timestamp]); // fetch when mounted or when switching orders
+  }, [isActive]); // fetch when mounted or when switching views
 
   const handleResumeProgress = () => {
     try {
@@ -565,9 +566,9 @@ Dokumen Dijana Secara Automatik`;
   };
 
   const syncStateAndSave = (isDraftSave = false) => {
-    // Sync state one last time before saving
-    setState(prev => ({
-      ...prev,
+    if (isSaving || saved) return;
+
+    const formValues = {
       customerName: name,
       customerPhone: phone,
       customerOrder: order,
@@ -582,15 +583,21 @@ Dokumen Dijana Secara Automatik`;
       googleSheetLink: link,
       orderId: orderId,
       price: price ? parseFloat(price) : undefined,
-    }));
-    
+    };
+
     if (isDraftSave) {
         // Only save draft if it's a transient draft, NOT a completed order in local history or remote search result
-        const isRealOrder = state.historyId && (!state.historyId.startsWith('draft_') || history?.some(item => item.id === state.historyId));
+        const checkId = state.historyId;
+        const isRealOrder = checkId && (!checkId.startsWith('draft_') || history?.some(item => item.id === checkId));
         if (!isRealOrder) {
-          contextSaveAsDraft();
+          contextSaveAsDraft(formValues);
           showToastMessage(appLanguage === 'ms' ? 'Draf disimpan secara lokal!' : 'Draft saved locally!');
         }
+    } else {
+        setState(prev => ({
+          ...prev,
+          ...formValues,
+        }));
     }
   };
 
@@ -600,13 +607,13 @@ Dokumen Dijana Secara Automatik`;
 
   // Debounced Auto-Save
   useEffect(() => {
-    if (isActive) {
+    if (isActive && !isSaving && !saved) {
       const timer = setTimeout(() => {
         syncStateAndSave(true);
       }, 5000); 
       return () => clearTimeout(timer);
     }
-  }, [name, phone, order, template, bahasa, addOn, jenis, due, info, link, orderId, isActive]);
+  }, [name, phone, order, template, bahasa, addOn, jenis, due, info, link, orderId, isActive, isSaving, saved]);
 
   // Save form progress to localStorage with a debounce
   useEffect(() => {
@@ -641,149 +648,163 @@ Dokumen Dijana Secara Automatik`;
       return;
     }
     
-    // Cleanup draft if it exists
-    if (state.historyId) {
-        deleteDraft(state.historyId);
-    }
-
-    const parsedObj = parseDateStringToTimestamp(due, dueTimestamp);
-    const parsedTimestamp = parsedObj.timestamp;
-    const targetDate = parsedObj.date;
-
-    const orderYear = String(targetDate.getFullYear());
-    let resolvedSpreadsheetId = spreadsheetId || state.spreadsheetId || '1kUAJYUVhr9bPYErtpnohpvuGGyhBSvJyEOIyzEFivJo';
-    let resolvedWebhookUrl = webhookUrl.trim();
-
-    try {
-      const savedSheets = localStorage.getItem('db_annual_sheets');
-      if (savedSheets) {
-        const parsed = JSON.parse(savedSheets);
-        if (Array.isArray(parsed)) {
-          const matches = parsed.find(s => s.year === orderYear);
-          if (matches) {
-            if (matches.spreadsheetId && matches.spreadsheetId.trim()) {
-              const rawInput = matches.spreadsheetId.trim();
-              if (rawInput.includes('docs.google.com/spreadsheets/d/')) {
-                const matchedId = rawInput.match(/\/d\/([a-zA-Z0-9-_]+)/);
-                resolvedSpreadsheetId = matchedId ? matchedId[1] : rawInput;
-              } else {
-                resolvedSpreadsheetId = rawInput;
-              }
-            }
-            if (matches.scriptUrl && matches.scriptUrl.trim()) {
-              resolvedWebhookUrl = matches.scriptUrl.trim();
-            }
-          }
-        }
-      }
-    } catch (err) {
-      console.error("Error reading db_annual_sheets:", err);
-    }
-
-    // Default fallbacks for each year if not customized
-    if (resolvedSpreadsheetId === '1kUAJYUVhr9bPYErtpnohpvuGGyhBSvJyEOIyzEFivJo' || !resolvedSpreadsheetId) {
-      if (orderYear === '2024') {
-        resolvedSpreadsheetId = '1B9zdWXVLnvj0jNNVnKxcb6cJnS1VLCIdB4j-RR3wOlg';
-      } else if (orderYear === '2025') {
-        resolvedSpreadsheetId = '1myU9apnYWWtU3snnCw14qI6ZS05i4DY6oOswLz1sCwo';
-      } else if (orderYear === '2026') {
-        resolvedSpreadsheetId = '1kUAJYUVhr9bPYErtpnohpvuGGyhBSvJyEOIyzEFivJo';
-      }
-    }
-// Format phone first using our universal helper
-const formattedPhone = formatPhoneUniversal(phone);
-setPhone(formattedPhone);
-
-const updatedInfo = info.replace(
-  /(No\.?\s*Telefon|Phone Number)\s*:\s*.*/i,
-  `$1: ${formattedPhone}`
-);
-
-setInfo(updatedInfo);
-
-const oldIdToSend = orderId;
-let finalOrderId = orderId;
-
-// Check if we need to upgrade a temporary ID or empty ID to a permanent one
-if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-") === 0) {
-  finalOrderId = generateOrderId();
-  setOrderId(finalOrderId);
-
-  // 1. Rename existing history item in local memory (so updateOrderHistoryState updates it instead of duplicating)
-  setHistory(prev => {
-    return prev.map(item => {
-      if (item.id === state.historyId || item.id === oldIdToSend || (item.state && item.state.orderId === oldIdToSend)) {
-        return {
-          ...item,
-          id: finalOrderId,
-          state: {
-            ...item.state,
-            orderId: finalOrderId,
-            historyId: finalOrderId,
-          }
-        };
-      }
-      return item;
-    });
-  });
-}
-
-    // Format name and template correctly
-    const finalFormattedName = name.trim().replace(/\w\S*/g, (txt) => txt.charAt(0).toUpperCase() + txt.substring(1).toLowerCase());
-    const finalFormattedTemplate = template.trim().toUpperCase();
-
-    let finalMainType = 'Resume';
-    let finalIsEditMode = false;
-    if (order === 'Edit Resume') {
-      finalMainType = 'Resume';
-      finalIsEditMode = true;
-    } else if (order === 'Surat') {
-      finalMainType = 'Surat';
-      finalIsEditMode = false;
-    } else if (order === 'Edit PDF') {
-      finalMainType = 'Edit PDF';
-      finalIsEditMode = false;
-    } else if (order === 'Lain2' || order === 'Lain-lain') {
-      finalMainType = 'Lain-lain';
-      finalIsEditMode = false;
-    } else {
-      finalMainType = 'Resume';
-      finalIsEditMode = false;
-    }
-
-    const finalFormattedAddOn = formatAddOnString(addOn);
-
-    // Save the new values to global state + history with syncing status
-    updateOrderHistoryState({
-      customerName: finalFormattedName,
-      customerPhone: formattedPhone,
-      customerInfo: updatedInfo,
-      orderLink: link,
-      googleSheetLink: link,
-      customerOrder: order,
-      customerTemplate: finalFormattedTemplate,
-      customerBahasa: normalizeBahasa(bahasa),
-      customerAddOn: finalFormattedAddOn,
-      customerJenis: jenis,
-      customerDue: due,
-      dueTimestamp: parsedTimestamp,
-      hasNotified: false,
-      orderId: finalOrderId,
-      historyId: finalOrderId,
-      price: price ? parseFloat(price) : undefined,
-      spreadsheetId: resolvedSpreadsheetId,
-      scriptUrl: resolvedWebhookUrl,
-      syncStatus: 'syncing',
-      mainType: finalMainType,
-      isEditMode: finalIsEditMode
-    });
-
-    setDueTimestamp(parsedTimestamp);
-    setErrorMsg('');
     setIsSaving(true);
     setSaved(false);
 
     try {
+      // Cleanup draft if it exists
+      if (state.historyId) {
+          deleteDraft(state.historyId);
+      }
+
+      const parsedObj = parseDateStringToTimestamp(due, dueTimestamp);
+      const parsedTimestamp = parsedObj.timestamp;
+      const targetDate = parsedObj.date;
+
+      const orderYear = String(targetDate.getFullYear());
+      let resolvedSpreadsheetId = spreadsheetId || state.spreadsheetId || '1kUAJYUVhr9bPYErtpnohpvuGGyhBSvJyEOIyzEFivJo';
+      let resolvedWebhookUrl = webhookUrl.trim();
+
+      try {
+        const savedSheets = localStorage.getItem('db_annual_sheets');
+        if (savedSheets) {
+          const parsed = JSON.parse(savedSheets);
+          if (Array.isArray(parsed)) {
+            const matches = parsed.find(s => s.year === orderYear);
+            if (matches) {
+              if (matches.spreadsheetId && matches.spreadsheetId.trim()) {
+                const rawInput = matches.spreadsheetId.trim();
+                if (rawInput.includes('docs.google.com/spreadsheets/d/')) {
+                  const matchedId = rawInput.match(/\/d\/([a-zA-Z0-9-_]+)/);
+                  resolvedSpreadsheetId = matchedId ? matchedId[1] : rawInput;
+                } else {
+                  resolvedSpreadsheetId = rawInput;
+                }
+              }
+              if (matches.scriptUrl && matches.scriptUrl.trim()) {
+                resolvedWebhookUrl = matches.scriptUrl.trim();
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.error("Error reading db_annual_sheets:", err);
+      }
+
+      // Default fallbacks for each year if not customized
+      if (resolvedSpreadsheetId === '1kUAJYUVhr9bPYErtpnohpvuGGyhBSvJyEOIyzEFivJo' || !resolvedSpreadsheetId) {
+        if (orderYear === '2024') {
+          resolvedSpreadsheetId = '1B9zdWXVLnvj0jNNVnKxcb6cJnS1VLCIdB4j-RR3wOlg';
+        } else if (orderYear === '2025') {
+          resolvedSpreadsheetId = '1myU9apnYWWtU3snnCw14qI6ZS05i4DY6oOswLz1sCwo';
+        } else if (orderYear === '2026') {
+          resolvedSpreadsheetId = '1kUAJYUVhr9bPYErtpnohpvuGGyhBSvJyEOIyzEFivJo';
+        }
+      }
+      
+      // Format phone first using our universal helper
+      const formattedPhone = formatPhoneUniversal(phone);
+      setPhone(formattedPhone);
+
+      const updatedInfo = info.replace(
+        /(No\.?\s*Telefon|Phone Number)\s*:\s*.*/i,
+        `$1: ${formattedPhone}`
+      );
+
+      setInfo(updatedInfo);
+
+      const oldIdToSend = orderId;
+      let finalOrderId = orderId;
+
+      // Check if we need to upgrade a temporary ID or empty ID to a permanent one
+      if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-") === 0) {
+        finalOrderId = generateOrderId();
+        setOrderId(finalOrderId);
+
+        // Rename existing history item in local memory (so updateOrderHistoryState updates it instead of duplicating)
+        setHistory(prev => {
+          return prev.map(item => {
+            if (item.id === state.historyId || item.id === oldIdToSend || (item.state && item.state.orderId === oldIdToSend)) {
+              return {
+                ...item,
+                id: finalOrderId,
+                state: {
+                  ...item.state,
+                  orderId: finalOrderId,
+                  historyId: finalOrderId,
+                }
+              };
+            }
+            return item;
+          });
+        });
+      }
+
+      // Format name and template correctly
+      const finalFormattedName = name.trim().replace(/\w\S*/g, (txt) => txt.charAt(0).toUpperCase() + txt.substring(1).toLowerCase());
+      const finalFormattedTemplate = template.trim().toUpperCase();
+
+      let finalMainType = 'Resume';
+      let finalIsEditMode = false;
+      if (order === 'Edit Resume') {
+        finalMainType = 'Resume';
+        finalIsEditMode = true;
+      } else if (order === 'Surat') {
+        finalMainType = 'Surat';
+        finalIsEditMode = false;
+      } else if (order === 'Edit PDF') {
+        finalMainType = 'Edit PDF';
+        finalIsEditMode = false;
+      } else if (order === 'Lain2' || order === 'Lain-lain') {
+        finalMainType = 'Lain-lain';
+        finalIsEditMode = false;
+      } else {
+        finalMainType = 'Resume';
+        finalIsEditMode = false;
+      }
+
+      const finalFormattedAddOn = formatAddOnString(addOn);
+
+      // Save the new values to global state + history with syncing status
+      const updatedState = {
+        ...state,
+        customerName: finalFormattedName,
+        customerPhone: formattedPhone,
+        customerInfo: updatedInfo,
+        orderLink: link,
+        googleSheetLink: link,
+        customerOrder: order,
+        customerTemplate: finalFormattedTemplate,
+        customerBahasa: normalizeBahasa(bahasa),
+        customerAddOn: finalFormattedAddOn,
+        customerJenis: jenis,
+        customerDue: due,
+        dueTimestamp: parsedTimestamp,
+        hasNotified: false,
+        orderId: finalOrderId,
+        historyId: finalOrderId,
+        price: price ? parseFloat(price) : undefined,
+        spreadsheetId: resolvedSpreadsheetId,
+        scriptUrl: resolvedWebhookUrl,
+        syncStatus: isFirestoreCanary ? ('synced' as const) : ('syncing' as const),
+        mainType: finalMainType,
+        isEditMode: finalIsEditMode
+      };
+
+      updateOrderHistoryState(updatedState);
+      setDueTimestamp(parsedTimestamp);
+      setErrorMsg('');
+
+      if (isFirestoreCanary) {
+        await saveOrderToFirestore(updatedState);
+        localStorage.removeItem('customer_form_progress');
+        setSaved(true);
+        showToastMessage(appLanguage === 'ms' ? 'Berjaya disimpan di Firestore!' : 'Successfully saved to Firestore!');
+        setIsSaving(false);
+        setTimeout(() => goHome(), 500);
+        return;
+      }
+
       // Columns: Checkbox, Nama, Phone Number, Order, Template, Bahasa, Add On, Jenis, Due, Link, Order ID
       const orderRow = [
         state.isDelivered || false,

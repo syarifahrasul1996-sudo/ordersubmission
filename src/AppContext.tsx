@@ -321,7 +321,7 @@ interface AppContextType {
   clearHistory: () => void;
   loadOrder: (item: OrderHistoryItem) => void;
   drafts: OrderHistoryItem[];
-  saveAsDraft: () => void;
+  saveAsDraft: (formUpdates?: Partial<AppState>) => void;
   deleteDraft: (id: string) => void;
   loadDraft: (item: OrderHistoryItem) => void;
   theme: 'light' | 'dark';
@@ -1343,19 +1343,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setHistory(prev => prev.filter(item => item.id !== id));
   };
 
-  const saveAsDraft = () => {
+  const saveAsDraft = (formUpdates?: Partial<AppState>) => {
+    const currentState = formUpdates ? { ...state, ...formUpdates } : state;
+
     // If this is a real order (not starting with 'draft_' or already present in history), do not save it as a draft
-    if (state.historyId && (!state.historyId.startsWith('draft_') || history.some(item => item.id === state.historyId))) {
+    if (currentState.historyId && (!currentState.historyId.startsWith('draft_') || history.some(item => item.id === currentState.historyId))) {
       return;
     }
 
-    const draftId = state.historyId || `draft_${Date.now()}`;
-    const timestamp = state.timestamp || Date.now();
+    const draftId = currentState.historyId || `draft_${Date.now()}`;
+    const timestamp = currentState.timestamp || Date.now();
     
     const draftItem: OrderHistoryItem = {
       id: draftId,
       timestamp,
-      state: { ...state, historyId: draftId, timestamp },
+      state: { ...currentState, historyId: draftId, timestamp },
       messages: []
     };
     
@@ -1367,7 +1369,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return [draftItem, ...prev];
     });
     
-    setState(prev => ({ ...prev, historyId: draftId, timestamp }));
+    setState(prev => ({ ...prev, ...formUpdates, historyId: draftId, timestamp }));
   };
 
   const deleteDraft = (id: string) => {

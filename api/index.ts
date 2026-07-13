@@ -167,9 +167,9 @@ async function processPushes() {
   }
 }
 
-// Keep the background interval for non-Vercel environments (like Cloud Run)
-if (!isVercel) {
-  setInterval(processPushes, 15000); // Check every 15 seconds
+// Keep the background interval for local development environments
+if (process.env.NODE_ENV !== "production") {
+  setInterval(processPushes, 15000); // Check every 15 seconds during local development
 }
 
 export default app;

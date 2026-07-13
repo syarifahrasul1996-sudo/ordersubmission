@@ -4,7 +4,7 @@
 
 # Run and Deploy Your AI Studio App
 
-This project is a high-performance React (Vite) single-page application (SPA) backed by a modular Express API server. It is carefully structured to run seamlessly in both containerized environments (like Google Cloud Run) and serverless hosting environments (like Vercel).
+This project is a high-performance React (Vite) single-page application (SPA) backed by a modular Express API server. It is carefully structured to run seamlessly in modern web hosting environments, with first-class support for serverless hosting on Vercel.
 
 ## 🚀 How to Migrate and Host on Vercel & GitHub
 
