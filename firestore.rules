@@ -67,7 +67,9 @@ service cloud.firestore {
 
     match /orders_archive_canary/{orderId} {
       allow read: if isOwner();
-      allow write: if false;
+      allow create: if isOwner() && isValidId(orderId) && isValidOrder(incoming());
+      allow update: if isOwner() && isValidId(orderId) && isValidOrder(incoming());
+      allow delete: if isOwner() && isValidId(orderId);
     }
 
     match /orders_migration_staging/{doc=**} { allow read: if isOwner(); allow write: if false; }
