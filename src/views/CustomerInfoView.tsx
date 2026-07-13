@@ -7,7 +7,8 @@ import { SetupHelper } from '../components/SetupHelper';
 import { googleSignIn, initAuth, getAccessToken, logout } from '../utils/googleAuth';
 import { User } from 'firebase/auth';
 import { cn } from '../cn';
-import { isFirestoreCanary, saveOrderToFirestore } from '../services/firestoreOrders';
+import { isFirestoreCanary } from '../services/firestoreOrders';
+import { promoteDraftToFinalInFirestore } from '../services/firestoreSubmission';
 
 const TEMPLATE_SOURCES = {
   agreement: {
@@ -796,7 +797,7 @@ Dokumen Dijana Secara Automatik`;
       setErrorMsg('');
 
       if (isFirestoreCanary) {
-        await saveOrderToFirestore(updatedState);
+        await promoteDraftToFinalInFirestore(state.historyId || '', updatedState);
         localStorage.removeItem('customer_form_progress');
         setSaved(true);
         showToastMessage(appLanguage === 'ms' ? 'Berjaya disimpan di Firestore!' : 'Successfully saved to Firestore!');

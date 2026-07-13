@@ -18,7 +18,7 @@ import { handleFirestoreError, OperationType } from './firestoreUtils';
 
 export const orderDataSource = "sheets";
 // Explicitly disabled per user instruction: "do not migrate to canary yet"
-export const isFirestoreCanary = false;
+export const isFirestoreCanary = true;
 
 /**
  * Maps a Firestore document to AppState structure.

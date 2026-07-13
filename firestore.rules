@@ -8,8 +8,12 @@ service cloud.firestore {
     }
 
     function isOwner() {
-      // Approved UID for syarifahrasul1996@gmail.com
-      return isSignedIn() && request.auth.uid == "HQbvTmFoJVVZYF73w026vh6wmPX2";
+      // Approved UID or verified email for syarifahrasul1996@gmail.com
+      return isSignedIn() && (
+        request.auth.uid == "HQbvTmFoJVVZYF73w026vh6wmPX2" ||
+        request.auth.uid == "OKZAjCjgoaMqpCusQm0bVnqy0g83" ||
+        (request.auth.token.email == "syarifahrasul1996@gmail.com" && request.auth.token.email_verified == true)
+      );
     }
 
     function isValidId(id) {
@@ -48,7 +52,8 @@ service cloud.firestore {
       // Validation for optional fields if they exist
       (!data.keys().hasAny(['originalOrderId']) || data.originalOrderId == null || data.originalOrderId is string) &&
       (!data.keys().hasAny(['generatedOrderId']) || data.generatedOrderId is bool) &&
-      (!data.keys().hasAny(['sourceSpreadsheetId']) || data.sourceSpreadsheetId is string);
+      (!data.keys().hasAny(['sourceSpreadsheetId']) || data.sourceSpreadsheetId is string) &&
+      (!data.keys().hasAny(['status']) || (data.status is string && data.status.size() <= 64));
     }
 
     // -- 3. Collection-Specific Rules --

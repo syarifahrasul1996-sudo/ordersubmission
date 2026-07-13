@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, ReactNode, useEffect } from
 import { AppState, INITIAL_STATE, ViewType, OrderHistoryItem, InAppNotification } from './types';
 import { getSubscription, syncPushNotifications, clearPushNotifications } from './lib/push';
 import { getOperationalOrders, getOverdueOrders, getArchivedOrders, isFirestoreCanary } from './services/firestoreOrders';
+import { saveDraftToFirestore, deleteDraftFromFirestore, getDraftsFromFirestore } from './services/firestoreSubmission';
 import { parseDateStringToTimestamp, normalizeBahasa, parseTimestampFromId } from './utils';
 
 const parseDueTimestamp = (value: unknown): number => {
@@ -1156,6 +1157,31 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       setHistory(prevHistory => mergeSyncedOrders(prevHistory, filteredOrders));
 
+      if (isFirestoreCanary) {
+        try {
+          const firestoreDrafts = await getDraftsFromFirestore();
+          if (firestoreDrafts.length > 0) {
+            const formattedDrafts = firestoreDrafts.map(state => ({
+              id: state.historyId || state.orderId || '',
+              timestamp: state.timestamp || Date.now(),
+              state: state,
+              messages: []
+            }));
+            setDrafts(prev => {
+              const merged = [...formattedDrafts];
+              prev.forEach(p => {
+                if (!merged.some(m => m.id === p.id)) {
+                  merged.push(p);
+                }
+              });
+              return merged;
+            });
+          }
+        } catch (draftErr) {
+          console.warn("Failed to sync drafts from Firestore:", draftErr);
+        }
+      }
+
       const count = filteredOrders.length;
       setLastSyncFetchedCount(count);
       localStorage.setItem('db_sync_total_items', String(count));
@@ -1370,10 +1396,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
     });
     
     setState(prev => ({ ...prev, ...formUpdates, historyId: draftId, timestamp }));
+
+    if (isFirestoreCanary) {
+      saveDraftToFirestore(draftItem.state).catch(err => {
+        console.error("Failed to save draft to Firestore:", err);
+      });
+    }
   };
 
   const deleteDraft = (id: string) => {
     setDrafts(prev => prev.filter(d => d.id !== id));
+    if (isFirestoreCanary) {
+      deleteDraftFromFirestore(id).catch(err => {
+        console.error("Failed to delete draft from Firestore:", err);
+      });
+    }
   };
 
   const loadDraft = (item: OrderHistoryItem) => {
