@@ -6,7 +6,7 @@
   "crons": [
     {
       "path": "/api/cron/process-pushes",
-      "schedule": "* * * * *"
+      "schedule": "0 */12 * * *"
     }
   ],
   "rewrites": [
