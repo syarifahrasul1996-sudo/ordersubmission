@@ -653,8 +653,8 @@ Dokumen Dijana Secara Automatik`;
     setSaved(false);
 
     try {
-      // Cleanup draft if it exists
-      if (state.historyId) {
+      // Cleanup draft if it exists (only if not using Firestore Canary, as Canary handles promotion/cleanup atomically)
+      if (state.historyId && !isFirestoreCanary) {
           deleteDraft(state.historyId);
       }
 
