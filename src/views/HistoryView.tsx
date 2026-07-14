@@ -659,35 +659,25 @@ export function HistoryView() {
       }),
     });
 
-    // 2. If Firestore is active, save to Firestore and return
+    // 2. If Firestore is active, save to Firestore
     if (isFirestoreCanary) {
       try {
         const updatedState = {
           ...item.state,
           isDelivered: newStatus,
           lastModifiedLocally: now,
-          syncStatus: 'synced' as const,
-          syncLastSuccess: now,
-          syncFailCount: 0
+          syncStatus: 'syncing' as const,
+          syncLastAttempt: now,
         };
         await saveOrderToFirestore(updatedState);
         updateSpecificHistoryItem(item.id, {
           isDelivered: newStatus,
-          syncStatus: 'synced',
-          syncLastSuccess: now,
-          syncFailCount: 0
-        });
-        handleGlobalSync(true);
-      } catch (err) {
-        console.error("Failed to save delivery toggle in Firestore:", err);
-        updateSpecificHistoryItem(item.id, {
-          isDelivered: newStatus,
-          syncStatus: 'failed',
-          syncFailCount: (item.state?.syncFailCount || 0) + 1,
+          syncStatus: 'syncing',
           syncLastAttempt: now,
         });
+      } catch (err) {
+        console.error("Failed to save delivery toggle in Firestore:", err);
       }
-      return;
     }
 
     // 3. If spreadsheetId and orderId are configured, gently sync update with Google Sheets in background
@@ -758,11 +748,13 @@ export function HistoryView() {
   };
 
   const deleteOrderFromCloud = async (spreadsheetId: string, orderId: string) => {
-    if (isFirestoreCanary) {
-      if (orderId) {
+    if (isFirestoreCanary && orderId) {
+      try {
         await deleteOrderFromFirestore(orderId);
+        console.log('[orderService] [HistoryView] Deleted from Firestore canary successfully.');
+      } catch (err) {
+        console.error('[orderService] [HistoryView] Failed to delete from Firestore canary:', err);
       }
-      return;
     }
     if (spreadsheetId && orderId) {
       const activeUrl = getActiveScriptUrl(spreadsheetId);

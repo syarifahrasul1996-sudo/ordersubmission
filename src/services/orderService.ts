@@ -17,6 +17,26 @@ import { handleFirestoreError, OperationType } from './firestoreUtils';
 
 const db = getDb();
 
+/**
+ * Captures and returns a lightweight call stack trace to identify which logic paths triggered the database write.
+ */
+function getCallerTrace(): string {
+    try {
+        const err = new Error();
+        const stack = err.stack;
+        if (!stack) return "Unknown caller path (stack trace unavailable)";
+        const lines = stack.split('\n');
+        // Filter out frames that are internal to Error, getCallerTrace or orderService itself
+        const filtered = lines
+            .slice(1) // Skip "Error" header
+            .map(line => line.trim())
+            .filter(line => line.length > 0 && !line.includes('getCallerTrace') && !line.includes('Error'));
+        return filtered.slice(0, 4).join(' -> ');
+    } catch (e) {
+        return "Trace capture failed";
+    }
+}
+
 export const orderDataSource = "sheets";
 export const isFirestoreCanary = true;
 
@@ -122,6 +142,7 @@ export async function getOperationalOrders(): Promise<AppState[]> {
     );
 
     try {
+        console.log('[FIRESTORE_DIAGNOSTIC] [getOperationalOrders] EXECUTING getDocs (orders_canary query) at:', new Date().toISOString());
         const snap = await getDocs(q);
         console.log(`[orderService] [getOperationalOrders] Found ${snap.size} documents.`);
         return snap.docs
@@ -151,6 +172,7 @@ export async function getOverdueOrders(): Promise<AppState[]> {
     );
 
     try {
+        console.log('[FIRESTORE_DIAGNOSTIC] [getOverdueOrders] EXECUTING getDocs (orders_canary overdue query) at:', new Date().toISOString());
         const snap = await getDocs(q);
         console.log(`[orderService] [getOverdueOrders] Found ${snap.size} documents.`);
         return snap.docs
@@ -177,6 +199,7 @@ export async function getArchivedOrders(): Promise<AppState[]> {
     );
 
     try {
+        console.log('[FIRESTORE_DIAGNOSTIC] [getArchivedOrders] EXECUTING getDocs (orders_archive_canary query) at:', new Date().toISOString());
         const snap = await getDocs(q);
         console.log(`[orderService] [getArchivedOrders] Found ${snap.size} documents.`);
         return snap.docs
@@ -208,6 +231,7 @@ export async function saveOrderToFirestore(state: AppState): Promise<void> {
     try {
         // Check if document already exists to preserve migratedAt
         console.log(`[orderService] [saveOrderToFirestore] checking existence of ${collectionName}/${docId}`);
+        console.log('[FIRESTORE_DIAGNOSTIC] [saveOrderToFirestore] EXECUTING getDoc on:', collectionName, '/', docId, 'at:', new Date().toISOString());
         const existingSnap = await getDoc(docRef);
         const docData = mapAppStateToFirestoreDoc(state);
         
@@ -219,9 +243,13 @@ export async function saveOrderToFirestore(state: AppState): Promise<void> {
         }
 
         console.log(`[orderService] [saveOrderToFirestore] setDoc on ${collectionName}/${docId} with data:`, JSON.stringify(docData));
+        console.log('[FIRESTORE_DIAGNOSTIC] [saveOrderToFirestore] EXECUTING setDoc on:', collectionName, '/', docId, 'data:', JSON.stringify(docData), 'at:', new Date().toISOString());
+        console.debug(`[FIRESTORE_DIAGNOSTIC] [saveOrderToFirestore] [BEFORE WRITE] Type: tempahan, Collection: ${collectionName}, DocID: ${docId}, Timestamp: ${new Date().toISOString()}, CallerTrace: ${getCallerTrace()}, Payload:`, JSON.stringify(docData));
         await setDoc(docRef, docData);
+        console.debug(`[FIRESTORE_DIAGNOSTIC] [saveOrderToFirestore] [AFTER WRITE] Type: tempahan, Collection: ${collectionName}, DocID: ${docId}, Timestamp: ${new Date().toISOString()} - Write successful.`);
 
         console.log(`[orderService] [saveOrderToFirestore] deleting from alt collection ${altCollectionName}/${docId}`);
+        console.log('[FIRESTORE_DIAGNOSTIC] [saveOrderToFirestore] EXECUTING deleteDoc on:', altCollectionName, '/', docId, 'at:', new Date().toISOString());
         await deleteDoc(altDocRef).catch((e) => {
             console.log(`[orderService] [saveOrderToFirestore] optional alt collection cleanup no-op for ${docId}:`, e);
         });
@@ -242,9 +270,11 @@ export async function deleteOrderFromFirestore(orderId: string): Promise<void> {
 
     try {
         console.log(`[orderService] [deleteOrderFromFirestore] deleteDoc active ${orderId}`);
+        console.log('[FIRESTORE_DIAGNOSTIC] [deleteOrderFromFirestore] EXECUTING deleteDoc active on orders_canary/', orderId, 'at:', new Date().toISOString());
         await deleteDoc(activeRef).catch((e) => console.log(`[orderService] [deleteOrderFromFirestore] active delete no-op:`, e));
         
         console.log(`[orderService] [deleteOrderFromFirestore] deleteDoc archive ${orderId}`);
+        console.log('[FIRESTORE_DIAGNOSTIC] [deleteOrderFromFirestore] EXECUTING deleteDoc archive on orders_archive_canary/', orderId, 'at:', new Date().toISOString());
         await deleteDoc(archiveRef).catch((e) => console.log(`[orderService] [deleteOrderFromFirestore] archive delete no-op:`, e));
     } catch (error) {
         console.error(`[orderService] [deleteOrderFromFirestore] Failed:`, error);
@@ -271,7 +301,10 @@ export async function saveDraftToFirestore(state: AppState): Promise<void> {
     console.log(`[orderService] [saveDraftToFirestore] setDoc on orders_canary/${draftId} with data:`, JSON.stringify(docData));
 
     try {
+        console.log('[FIRESTORE_DIAGNOSTIC] [saveDraftToFirestore] EXECUTING setDoc on orders_canary/', draftId, 'data:', JSON.stringify(docData), 'at:', new Date().toISOString());
+        console.debug(`[FIRESTORE_DIAGNOSTIC] [saveDraftToFirestore] [BEFORE WRITE] Type: draft, Collection: orders_canary, DraftID: ${draftId}, Timestamp: ${new Date().toISOString()}, CallerTrace: ${getCallerTrace()}, Payload:`, JSON.stringify(docData));
         await setDoc(docRef, docData);
+        console.debug(`[FIRESTORE_DIAGNOSTIC] [saveDraftToFirestore] [AFTER WRITE] Type: draft, Collection: orders_canary, DraftID: ${draftId}, Timestamp: ${new Date().toISOString()} - Write successful.`);
         console.log(`[orderService] Draft ${draftId} successfully saved to Firestore.`);
     } catch (error) {
         console.error(`[orderService] [saveDraftToFirestore] Failed:`, error);
@@ -289,6 +322,7 @@ export async function deleteDraftFromFirestore(draftId: string): Promise<void> {
     console.log(`[orderService] [deleteDraftFromFirestore] deleteDoc on orders_canary/${draftId}`);
 
     try {
+        console.log('[FIRESTORE_DIAGNOSTIC] [deleteDraftFromFirestore] EXECUTING deleteDoc on orders_canary/', draftId, 'at:', new Date().toISOString());
         await deleteDoc(docRef);
         console.log(`[orderService] Draft ${draftId} successfully deleted from Firestore.`);
     } catch (error) {
@@ -327,11 +361,15 @@ export async function createOrder(finalState: AppState, draftId?: string): Promi
 
     try {
         // 1. Single atomic write to create/update final document
+        console.log('[FIRESTORE_DIAGNOSTIC] [createOrder] EXECUTING setDoc on final collection:', targetCollection, '/', finalOrderId, 'data:', JSON.stringify(finalDocData), 'at:', new Date().toISOString());
+        console.debug(`[FIRESTORE_DIAGNOSTIC] [createOrder] [BEFORE WRITE] Type: tempahan, Collection: ${targetCollection}, FinalOrderID: ${finalOrderId}, Timestamp: ${new Date().toISOString()}, CallerTrace: ${getCallerTrace()}, Payload:`, JSON.stringify(finalDocData));
         await setDoc(finalDocRef, finalDocData);
+        console.debug(`[FIRESTORE_DIAGNOSTIC] [createOrder] [AFTER WRITE] Type: tempahan, Collection: ${targetCollection}, FinalOrderID: ${finalOrderId}, Timestamp: ${new Date().toISOString()} - Write successful.`);
         console.log(`[orderService] [createOrder] Atomic write succeeded for ${finalOrderId}.`);
 
         // 2. Perform alternative collection cleanup sequentially & non-blocking to avoid batch permission noise
         console.log(`[orderService] [createOrder] Cleaning up alternative path ${altCollection}/${finalOrderId}`);
+        console.log('[FIRESTORE_DIAGNOSTIC] [createOrder] EXECUTING deleteDoc on alternative collection:', altCollection, '/', finalOrderId, 'at:', new Date().toISOString());
         await deleteDoc(finalAltDocRef).catch((err) => {
             console.log(`[orderService] [createOrder] alternative path deletion ignored (no-op):`, err);
         });
@@ -340,6 +378,7 @@ export async function createOrder(finalState: AppState, draftId?: string): Promi
         if (draftId && draftId !== finalOrderId) {
             const draftDocRef = doc(db, 'orders_canary', draftId);
             console.log(`[orderService] [createOrder] Cleaning up draft ${draftId} from orders_canary`);
+            console.log('[FIRESTORE_DIAGNOSTIC] [createOrder] EXECUTING deleteDoc on draft collection: orders_canary/', draftId, 'at:', new Date().toISOString());
             await deleteDoc(draftDocRef).catch((err) => {
                 console.warn(`[orderService] [createOrder] draft cleanup failed for ${draftId}:`, err);
             });
@@ -371,6 +410,7 @@ export async function getDraftsFromFirestore(): Promise<AppState[]> {
     );
 
     try {
+        console.log('[FIRESTORE_DIAGNOSTIC] [getDraftsFromFirestore] EXECUTING getDocs (orders_canary drafts query) at:', new Date().toISOString());
         const snap = await getDocs(q);
         console.log(`[orderService] [getDraftsFromFirestore] Found ${snap.size} drafts directly.`);
         return snap.docs.map(doc => {
@@ -381,6 +421,7 @@ export async function getDraftsFromFirestore(): Promise<AppState[]> {
     } catch (error) {
         console.warn(`[orderService] [getDraftsFromFirestore] Direct drafts fetch failed. Falling back to client-side filter.`, error);
         try {
+            console.log('[FIRESTORE_DIAGNOSTIC] [getDraftsFromFirestore] EXECUTING fallback getDocs (orders_canary full list) at:', new Date().toISOString());
             const allSnap = await getDocs(collection(db, 'orders_canary'));
             console.log(`[orderService] [getDraftsFromFirestore] Fallback scanned ${allSnap.size} total docs.`);
             return allSnap.docs
@@ -451,7 +492,10 @@ export async function seedCanaryData(): Promise<{ undelivered: number; delivered
 
         try {
             console.log(`[orderService] [seedCanaryData] Seeding ${targetCollection}/${docId}`);
+            console.log('[FIRESTORE_DIAGNOSTIC] [seedCanaryData] EXECUTING setDoc on:', targetCollection, '/', docId, 'at:', new Date().toISOString());
+            console.debug(`[FIRESTORE_DIAGNOSTIC] [seedCanaryData] [BEFORE WRITE] Type: tempahan, Collection: ${targetCollection}, DocID: ${docId}, Timestamp: ${new Date().toISOString()}, CallerTrace: ${getCallerTrace()}, Payload:`, JSON.stringify(docData));
             await setDoc(docRef, docData);
+            console.debug(`[FIRESTORE_DIAGNOSTIC] [seedCanaryData] [AFTER WRITE] Type: tempahan, Collection: ${targetCollection}, DocID: ${docId}, Timestamp: ${new Date().toISOString()} - Write successful.`);
         } catch (error) {
             console.error(`[orderService] [seedCanaryData] Seeding failed for ${docId}:`, error);
             handleFirestoreError(error, OperationType.WRITE, targetCollection);

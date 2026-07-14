@@ -787,7 +787,7 @@ Dokumen Dijana Secara Automatik`;
         price: price ? parseFloat(price) : undefined,
         spreadsheetId: resolvedSpreadsheetId,
         scriptUrl: resolvedWebhookUrl,
-        syncStatus: isFirestoreCanary ? ('synced' as const) : ('syncing' as const),
+        syncStatus: 'syncing' as const,
         mainType: finalMainType,
         isEditMode: finalIsEditMode
       };
@@ -797,13 +797,12 @@ Dokumen Dijana Secara Automatik`;
       setErrorMsg('');
 
       if (isFirestoreCanary) {
-        await promoteDraftToFinalInFirestore(state.historyId || '', updatedState);
-        localStorage.removeItem('customer_form_progress');
-        setSaved(true);
-        showToastMessage(appLanguage === 'ms' ? 'Berjaya disimpan di Firestore!' : 'Successfully saved to Firestore!');
-        setIsSaving(false);
-        setTimeout(() => goHome(), 500);
-        return;
+        try {
+          await promoteDraftToFinalInFirestore(state.historyId || '', updatedState);
+          console.log('[orderService] [CustomerInfoView] Saved to Firestore canary successfully.');
+        } catch (err) {
+          console.error('[orderService] [CustomerInfoView] Failed to save to Firestore canary:', err);
+        }
       }
 
       // Columns: Checkbox, Nama, Phone Number, Order, Template, Bahasa, Add On, Jenis, Due, Link, Order ID

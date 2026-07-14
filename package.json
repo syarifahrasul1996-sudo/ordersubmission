@@ -4,14 +4,9 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx server.ts",
-    "build": "rm -rf dist && vite build",
-    "preview": "vite preview",
-    "lint": "tsc --noEmit",
-    "audit:sheets": "tsx scripts/auditGoogleSheets.ts",
-    "migrate:firestore:dry": "tsx scripts/migrateToFirestore.ts --dry-run",
-    "migrate:firestore:staging": "tsx scripts/migrateToFirestoreStaging.ts",
-    "verify:firestore:staging": "tsx scripts/verifyFirestoreStaging.ts"
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
   },
   "dependencies": {
     "@google-cloud/firestore": "^8.6.0",
@@ -49,5 +44,8 @@
     "@types/web-push": "^3.6.4",
     "glob": "^13.0.6",
     "google-auth-library": "^10.9.0"
+  },
+  "overrides": {
+    "node-domexception": "file:./scripts/node-domexception-mock"
   }
 }
