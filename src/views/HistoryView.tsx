@@ -190,6 +190,7 @@ export function HistoryView() {
   const setPendingTimeFilter = setHistoryPendingTimeFilter;
   const [activeTab, setActiveTab] = useState<'local' | 'remote' | 'drafts' | 'trash'>('local');
   const [searchQuery, setSearchQuery] = useState('');
+  const [sortBy, setSortBy] = useState<'due' | 'lastUpdated'>('due');
   const [remoteResults, setRemoteResults] = useState<any[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState('');
@@ -247,10 +248,10 @@ export function HistoryView() {
   const deduplicatedHistory = useMemo(() => {
     const map = new Map();
     history.forEach(item => {
-      const state = item.state as any;
-      if (!state) return;
-      const orderId = state.orderId;
-      const historyId = state.historyId;
+      const s = item.state as any;
+      if (!s) return;
+      const orderId = s.orderId;
+      const historyId = s.historyId;
       const id = item.id;
       
       const key = orderId || historyId || id;
@@ -260,7 +261,25 @@ export function HistoryView() {
         map.set(key, item);
       } else {
         const existing = map.get(key);
-        if (Number(item.timestamp) > Number(existing.timestamp)) {
+        const existingState = existing.state || {};
+        
+        const existingLU = Number(existingState.lastUpdated) || 0;
+        const itemLU = Number(s.lastUpdated) || 0;
+        const existingV = Number(existingState.version) || 1;
+        const itemV = Number(s.version) || 1;
+        const existingMod = Number(existingState.lastModifiedLocally) || 0;
+        const itemMod = Number(s.lastModifiedLocally) || 0;
+        
+        let preferNew = false;
+        if (itemLU > existingLU) {
+          preferNew = true;
+        } else if (itemLU === existingLU && itemV > existingV) {
+          preferNew = true;
+        } else if (itemLU === existingLU && itemV === existingV) {
+          preferNew = itemMod > existingMod;
+        }
+        
+        if (preferNew) {
           map.set(key, item);
         }
       }
@@ -359,6 +378,12 @@ export function HistoryView() {
 
       return true;
     }).sort((a, b) => {
+      if (sortBy === 'lastUpdated') {
+        const aLU = Number(a.state?.lastUpdated) || Number(a.state?.lastModifiedLocally) || Number(a.timestamp) || 0;
+        const bLU = Number(b.state?.lastUpdated) || Number(b.state?.lastModifiedLocally) || Number(b.timestamp) || 0;
+        return bLU - aLU; // Latest updated first
+      }
+
       const aDelivered = isDeliveredState(a);
       const bDelivered = isDeliveredState(b);
 
@@ -395,7 +420,7 @@ export function HistoryView() {
         (Number(a.timestamp) || 0)
       );
     });
-  }, [deduplicatedHistory, deliveryFilter, searchQuery, currentTime]);
+  }, [deduplicatedHistory, deliveryFilter, searchQuery, currentTime, sortBy]);
 
   const filteredDrafts = useMemo(() => {
     // Show only actual drafts (saved locally via "Save as Draft" and stored in drafts)
@@ -669,11 +694,12 @@ export function HistoryView() {
           syncStatus: 'syncing' as const,
           syncLastAttempt: now,
         };
-        await saveOrderToFirestore(updatedState);
+        const result = await saveOrderToFirestore(updatedState);
         updateSpecificHistoryItem(item.id, {
           isDelivered: newStatus,
-          syncStatus: 'syncing',
+          syncStatus: result ? 'synced' : 'failed',
           syncLastAttempt: now,
+          ...(result ? { lastUpdated: result.lastUpdated, version: result.version } : {}),
         });
       } catch (err) {
         console.error("Failed to save delivery toggle in Firestore:", err);
@@ -847,14 +873,35 @@ export function HistoryView() {
               if (isDeletedState(existingItem)) {
                 continue;
               }
-              updatedHistory[existingIdx] = {
-                ...existingItem,
-                state: {
-                  ...existingItem.state,
-                  ...newState,
-                  syncStatus: 'synced'
-                }
-              };
+
+              const localState = existingItem.state;
+              const localLastUpdated = Number(localState?.lastUpdated) || 0;
+              const localVersion = Number(localState?.version) || 1;
+              const localModified = Number(localState?.lastModifiedLocally) || 0;
+
+              const remoteLastUpdated = Number(order.lastUpdated) || 0;
+              const remoteVersion = Number(order.version) || 1;
+              const remoteModified = Number(order.lastModifiedLocally) || 0;
+
+              let isRemoteNewer = false;
+              if (remoteLastUpdated > localLastUpdated) {
+                isRemoteNewer = true;
+              } else if (remoteLastUpdated === localLastUpdated && remoteVersion > localVersion) {
+                isRemoteNewer = true;
+              } else if (remoteLastUpdated === localLastUpdated && remoteVersion === localVersion) {
+                isRemoteNewer = remoteModified > localModified;
+              }
+
+              if (isRemoteNewer) {
+                updatedHistory[existingIdx] = {
+                  ...existingItem,
+                  state: {
+                    ...existingItem.state,
+                    ...newState,
+                    syncStatus: 'synced'
+                  }
+                };
+              }
             } else {
               updatedHistory.push({
                 id: generatedOrderId,
@@ -1871,6 +1918,33 @@ const existingIdx = updatedHistory.findIndex((item) => {
                   </button>
                 );
               })}
+            </div>
+
+            <div className="flex bg-gray-100 p-1 rounded-xl">
+              <button
+                key="sort-due"
+                type="button"
+                onClick={() => setSortBy('due')}
+                className={`flex-1 text-center text-xs font-bold py-1.5 px-3 rounded-lg transition-all duration-200 ${
+                  sortBy === 'due'
+                    ? 'bg-white text-primary shadow-sm'
+                    : 'text-subtext/70 hover:text-text hover:bg-white/40'
+                }`}
+              >
+                {appLanguage === 'ms' ? 'Ikut Tarikh Serahan' : 'By Delivery Date'}
+              </button>
+              <button
+                key="sort-lastUpdated"
+                type="button"
+                onClick={() => setSortBy('lastUpdated')}
+                className={`flex-1 text-center text-xs font-bold py-1.5 px-3 rounded-lg transition-all duration-200 ${
+                  sortBy === 'lastUpdated'
+                    ? 'bg-white text-primary shadow-sm'
+                    : 'text-subtext/70 hover:text-text hover:bg-white/40'
+                }`}
+              >
+                {appLanguage === 'ms' ? 'Ikut Kemas Kini Terakhir' : 'By Last Updated'}
+              </button>
             </div>
 
             {deliveryFilter !== 'delivered' && (

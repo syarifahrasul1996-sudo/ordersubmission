@@ -14,6 +14,7 @@ import {
 } from 'firebase/firestore';
 import { AppState } from '../types';
 import { handleFirestoreError, OperationType } from './firestoreUtils';
+import { normalizeJenis } from '../utils';
 
 const db = getDb();
 
@@ -50,10 +51,16 @@ export function mapFirestoreDocToAppState(docId: string, data: any): AppState {
             ? data.deliveryDate.toMillis() 
             : (data.deliveryDate?.seconds ? data.deliveryDate.seconds * 1000 : null));
 
+    const lastUpdatedMillis = data.lastUpdated instanceof Timestamp 
+        ? data.lastUpdated.toMillis() 
+        : (data.lastUpdated && typeof data.lastUpdated.toMillis === 'function' 
+            ? data.lastUpdated.toMillis() 
+            : (data.lastUpdated?.seconds ? data.lastUpdated.seconds * 1000 : (typeof data.lastUpdated === 'number' ? data.lastUpdated : null)));
+
     return {
         mainType: data.customerOrder === 'Resume' ? 'Resume' : (data.customerOrder === 'Surat' ? 'Surat' : 'Lain-lain'),
         subType: '',
-        urgency: data.customerJenis === 'Urgent' ? 'urgent' : (data.customerJenis === 'Super Urgent' ? 'super' : 'noturgent'),
+        urgency: data.customerJenis === 'Urgent' ? 'urgent' : (data.customerJenis === 'Super Urgent' ? 'super' : (data.customerJenis === 'Semi Urgent' ? 'semi' : 'noturgent')),
         baseHours: 0,
         addons: data.customerAddOn ? [data.customerAddOn] : [],
         template: data.customerTemplate || '',
@@ -73,7 +80,7 @@ export function mapFirestoreDocToAppState(docId: string, data: any): AppState {
         customerTemplate: data.customerTemplate || '',
         customerBahasa: data.customerBahasa || '',
         customerAddOn: data.customerAddOn || '',
-        customerJenis: data.customerJenis || '',
+        customerJenis: normalizeJenis(data.customerJenis || ''),
         customerDue: data.originalDue || '',
         dueTimestamp: deliveryDateMillis || undefined,
         isDelivered: data.isDelivered || false,
@@ -83,6 +90,11 @@ export function mapFirestoreDocToAppState(docId: string, data: any): AppState {
         price: typeof data.price === 'number' ? data.price : undefined,
         status: data.status || undefined,
         type: data.type || undefined,
+        lastModifiedLocally: data.lastModifiedLocally || undefined,
+        lastUpdated: lastUpdatedMillis || undefined,
+        version: typeof data.version === 'number' ? data.version : 1,
+        isDeleted: data.isDeleted || false,
+        messages: data.messages || []
     };
 }
 
@@ -106,14 +118,19 @@ export function mapAppStateToFirestoreDoc(state: AppState) {
         customerTemplate: state.customerTemplate || '',
         customerBahasa: state.customerBahasa || '',
         customerAddOn: state.customerAddOn || '',
-        customerJenis: state.customerJenis || '',
+        customerJenis: normalizeJenis(state.customerJenis || ''),
         deliveryDate: deliveryDate,
         originalDue: state.customerDue || '',
         orderLink: state.orderLink || '',
         price: typeof state.price === 'number' ? state.price : null,
         isDelivered: state.isDelivered || false,
         migrationVersion: '1.0-canary',
-        migratedAt: Timestamp.fromDate(new Date())
+        migratedAt: Timestamp.fromDate(new Date()),
+        lastModifiedLocally: state.lastModifiedLocally || null,
+        lastUpdated: state.lastUpdated ? Timestamp.fromMillis(state.lastUpdated) : Timestamp.fromDate(new Date()),
+        version: typeof state.version === 'number' ? state.version : 1,
+        isDeleted: state.isDeleted || false,
+        messages: state.messages || []
     };
 }
 
@@ -214,8 +231,9 @@ export async function getArchivedOrders(): Promise<AppState[]> {
 
 /**
  * Saves or updates an order in the appropriate canary collection.
+ * Returns the updated conflict-resolved lastUpdated timestamp and version on success.
  */
-export async function saveOrderToFirestore(state: AppState): Promise<void> {
+export async function saveOrderToFirestore(state: AppState): Promise<{ lastUpdated: number; version: number } | null> {
     const docId = state.orderId || state.historyId;
     if (!docId) throw new Error("Order ID is missing.");
 
@@ -229,17 +247,53 @@ export async function saveOrderToFirestore(state: AppState): Promise<void> {
     console.log(`[orderService] [saveOrderToFirestore] saving order ID ${docId} to ${collectionName}. State:`, JSON.stringify(state));
 
     try {
-        // Check if document already exists to preserve migratedAt
-        console.log(`[orderService] [saveOrderToFirestore] checking existence of ${collectionName}/${docId}`);
-        console.log('[FIRESTORE_DIAGNOSTIC] [saveOrderToFirestore] EXECUTING getDoc on:', collectionName, '/', docId, 'at:', new Date().toISOString());
-        const existingSnap = await getDoc(docRef);
-        const docData = mapAppStateToFirestoreDoc(state);
+        // Check if document already exists to preserve migratedAt and prevent older overwrites
+        console.log(`[orderService] [saveOrderToFirestore] checking existence of ${docId} in both active & archived collections to prevent overwrite conflicts`);
         
-        if (existingSnap.exists()) {
-            const existingData = existingSnap.data();
+        // Fetch from both to make sure we catch if it shifted collections
+        const [activeSnap, archiveSnap] = await Promise.all([
+            getDoc(doc(db, 'orders_canary', docId)),
+            getDoc(doc(db, 'orders_archive_canary', docId))
+        ]);
+
+        let existingData: any = null;
+        if (activeSnap.exists()) {
+            existingData = activeSnap.data();
+        } else if (archiveSnap.exists()) {
+            existingData = archiveSnap.data();
+        }
+
+        const docData = mapAppStateToFirestoreDoc(state);
+        const writeTime = Date.now();
+        let finalVersion = 1;
+
+        if (existingData) {
             if (existingData.migratedAt) {
                 docData.migratedAt = existingData.migratedAt;
             }
+            
+            // Conflict check: compare incoming local state against existing db state
+            const existingLastUpdated = existingData.lastUpdated instanceof Timestamp 
+                ? existingData.lastUpdated.toMillis() 
+                : (existingData.lastUpdated?.seconds ? existingData.lastUpdated.seconds * 1000 : Number(existingData.lastUpdated) || 0);
+            
+            const existingModified = Number(existingData.lastModifiedLocally) || existingLastUpdated || 0;
+            const incomingModified = Number(state.lastModifiedLocally) || Number(state.lastUpdated) || 0;
+            const existingVersion = Number(existingData.version) || 1;
+            
+            if (existingModified > incomingModified) {
+                console.warn(`[orderService] [saveOrderToFirestore] Overwrite prevented for order ID ${docId}. Remote db is newer (remote: ${existingModified}, local: ${incomingModified}).`);
+                return null;
+            }
+
+            // Increment version and set lastUpdated to now for this write
+            finalVersion = existingVersion + 1;
+            docData.version = finalVersion;
+            docData.lastUpdated = Timestamp.fromMillis(writeTime);
+        } else {
+            finalVersion = 1;
+            docData.version = finalVersion;
+            docData.lastUpdated = Timestamp.fromMillis(writeTime);
         }
 
         console.log(`[orderService] [saveOrderToFirestore] setDoc on ${collectionName}/${docId} with data:`, JSON.stringify(docData));
@@ -253,9 +307,12 @@ export async function saveOrderToFirestore(state: AppState): Promise<void> {
         await deleteDoc(altDocRef).catch((e) => {
             console.log(`[orderService] [saveOrderToFirestore] optional alt collection cleanup no-op for ${docId}:`, e);
         });
+
+        return { lastUpdated: writeTime, version: finalVersion };
     } catch (error) {
         console.error(`[orderService] [saveOrderToFirestore] Failed:`, error);
         handleFirestoreError(error, OperationType.WRITE, collectionName);
+        return null;
     }
 }
 
@@ -271,11 +328,15 @@ export async function deleteOrderFromFirestore(orderId: string): Promise<void> {
     try {
         console.log(`[orderService] [deleteOrderFromFirestore] deleteDoc active ${orderId}`);
         console.log('[FIRESTORE_DIAGNOSTIC] [deleteOrderFromFirestore] EXECUTING deleteDoc active on orders_canary/', orderId, 'at:', new Date().toISOString());
+        console.debug(`[FIRESTORE_DIAGNOSTIC] [deleteOrderFromFirestore] [BEFORE DELETE] Type: tempahan, Collection: orders_canary, DocID: ${orderId}, Timestamp: ${new Date().toISOString()}, CallerTrace: ${getCallerTrace()}`);
         await deleteDoc(activeRef).catch((e) => console.log(`[orderService] [deleteOrderFromFirestore] active delete no-op:`, e));
+        console.debug(`[FIRESTORE_DIAGNOSTIC] [deleteOrderFromFirestore] [AFTER DELETE] Type: tempahan, Collection: orders_canary, DocID: ${orderId}, Timestamp: ${new Date().toISOString()} - Delete call processed.`);
         
         console.log(`[orderService] [deleteOrderFromFirestore] deleteDoc archive ${orderId}`);
         console.log('[FIRESTORE_DIAGNOSTIC] [deleteOrderFromFirestore] EXECUTING deleteDoc archive on orders_archive_canary/', orderId, 'at:', new Date().toISOString());
+        console.debug(`[FIRESTORE_DIAGNOSTIC] [deleteOrderFromFirestore] [BEFORE DELETE] Type: tempahan, Collection: orders_archive_canary, DocID: ${orderId}, Timestamp: ${new Date().toISOString()}, CallerTrace: ${getCallerTrace()}`);
         await deleteDoc(archiveRef).catch((e) => console.log(`[orderService] [deleteOrderFromFirestore] archive delete no-op:`, e));
+        console.debug(`[FIRESTORE_DIAGNOSTIC] [deleteOrderFromFirestore] [AFTER DELETE] Type: tempahan, Collection: orders_archive_canary, DocID: ${orderId}, Timestamp: ${new Date().toISOString()} - Delete call processed.`);
     } catch (error) {
         console.error(`[orderService] [deleteOrderFromFirestore] Failed:`, error);
         handleFirestoreError(error, OperationType.WRITE, 'orders_canary/archive_canary');
@@ -323,7 +384,9 @@ export async function deleteDraftFromFirestore(draftId: string): Promise<void> {
 
     try {
         console.log('[FIRESTORE_DIAGNOSTIC] [deleteDraftFromFirestore] EXECUTING deleteDoc on orders_canary/', draftId, 'at:', new Date().toISOString());
+        console.debug(`[FIRESTORE_DIAGNOSTIC] [deleteDraftFromFirestore] [BEFORE DELETE] Type: draft, Collection: orders_canary, DraftID: ${draftId}, Timestamp: ${new Date().toISOString()}, CallerTrace: ${getCallerTrace()}`);
         await deleteDoc(docRef);
+        console.debug(`[FIRESTORE_DIAGNOSTIC] [deleteDraftFromFirestore] [AFTER DELETE] Type: draft, Collection: orders_canary, DraftID: ${draftId}, Timestamp: ${new Date().toISOString()} - Delete successful.`);
         console.log(`[orderService] Draft ${draftId} successfully deleted from Firestore.`);
     } catch (error) {
         console.error(`[orderService] [deleteDraftFromFirestore] Failed:`, error);

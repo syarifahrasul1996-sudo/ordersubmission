@@ -43,9 +43,12 @@ window.addEventListener('unhandledrejection', (event) => {
 import { getAuth } from './lib/firebase';
 const auth = getAuth();
 import { onAuthStateChanged } from 'firebase/auth';
+import { AppErrorBoundary } from './components/AppErrorBoundary';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <AppErrorBoundary>
+      <App />
+    </AppErrorBoundary>
   </StrictMode>,
 );

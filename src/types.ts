@@ -42,11 +42,14 @@ export interface AppState {
   dashboardFilterMonth?: string;
   dashboardFilterYear?: string;
   lastModifiedLocally?: number;
+  lastUpdated?: number;
+  version?: number;
   isDeleted?: boolean;
   ENABLE_CANARY_FIRESTORE?: boolean;
   status?: string;
   type?: string;
   syncedAt?: number;
+  messages?: string[];
 }
 
 export type ViewType = 'home' | 'resume-type' | 'resume-form-fields' | 'general-form' | 'confirmation' | 'output' | 'history' | 'customer-info' | 'dashboard' | 'contacts-sync' | 'others';

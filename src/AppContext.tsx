@@ -1,9 +1,10 @@
-import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
+import React, { createContext, useContext, useState, ReactNode, useEffect, useRef } from 'react';
 import { AppState, INITIAL_STATE, ViewType, OrderHistoryItem, InAppNotification } from './types';
 import { getSubscription, syncPushNotifications, clearPushNotifications } from './lib/push';
-import { getOperationalOrders, getOverdueOrders, getArchivedOrders, isFirestoreCanary } from './services/firestoreOrders';
+import { getOperationalOrders, getOverdueOrders, getArchivedOrders, isFirestoreCanary, saveOrderToFirestore, deleteOrderFromFirestore } from './services/firestoreOrders';
 import { saveDraftToFirestore, deleteDraftFromFirestore, getDraftsFromFirestore } from './services/firestoreSubmission';
-import { parseDateStringToTimestamp, normalizeBahasa, parseTimestampFromId } from './utils';
+import { trackEvent } from './utils/analytics';
+import { parseDateStringToTimestamp, normalizeBahasa, parseTimestampFromId, normalizeJenis } from './utils';
 
 const parseDueTimestamp = (value: unknown): number => {
   if (typeof value === 'number' && Number.isFinite(value)) {
@@ -233,14 +234,35 @@ export function mergeSyncedOrders(
       const localModified = Number(localState.lastModifiedLocally) || 0;
       const remoteModified = Number(remoteState.lastModifiedLocally) || 0;
 
-      // Determine which state's values to prioritize for status fields
-      const isLocalNewer = localModified > remoteModified;
+      const localLastUpdated = Number(localState.lastUpdated) || 0;
+      const remoteLastUpdated = Number(remoteState.lastUpdated) || 0;
+      const localVersion = Number(localState.version) || 1;
+      const remoteVersion = Number(remoteState.version) || 1;
+
+      // Remote is newer if its database timestamp (lastUpdated) is newer,
+      // or if timestamps are equal but the version number is higher,
+      // or as a fallback if the local modify time is older.
+      let isRemoteNewer = false;
+      if (remoteLastUpdated > localLastUpdated) {
+        isRemoteNewer = true;
+      } else if (remoteLastUpdated === localLastUpdated && remoteVersion > localVersion) {
+        isRemoteNewer = true;
+      } else if (remoteLastUpdated === localLastUpdated && remoteVersion === localVersion) {
+        isRemoteNewer = remoteModified > localModified;
+      }
+
+      const isLocalNewer = !isRemoteNewer;
 
       // Build the merged state
-      const mergedState: AppState = {
-        ...remoteState, // Remote fields
-        ...localState,  // Local fields take precedence if they are not provided by remote, or if local is newer
-      };
+      const mergedState: AppState = isRemoteNewer
+        ? {
+            ...localState,
+            ...remoteState,
+          }
+        : {
+            ...remoteState,
+            ...localState,
+          };
 
       // Specifically check each important field:
       // "Preserve local delivered/deleted/edited state if it is newer or only exists locally"
@@ -314,7 +336,7 @@ interface AppContextType {
   history: OrderHistoryItem[];
   setHistory: React.Dispatch<React.SetStateAction<OrderHistoryItem[]>>;
   saveOrderToHistory: (messages: string[]) => void;
-  updateOrderHistoryState: (updates: Partial<AppState>) => void;
+  updateOrderHistoryState: (updates: Partial<AppState>, skipFirestoreSave?: boolean) => void;
   updateSpecificHistoryItem: (id: string, updates: Partial<AppState>) => void;
   deleteOrderFromHistory: (id: string) => void;
   restoreOrderFromHistory: (id: string) => void;
@@ -400,7 +422,29 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [viewStack, setViewStack] = useState<ViewType[]>(() => {
     try {
       const saved = localStorage.getItem('viewStack');
-      return saved ? JSON.parse(saved) : ['home'];
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const validViews: ViewType[] = [
+            'home',
+            'resume-type',
+            'resume-form-fields',
+            'general-form',
+            'confirmation',
+            'output',
+            'history',
+            'customer-info',
+            'dashboard',
+            'contacts-sync',
+            'others'
+          ];
+          const filtered = parsed.filter((v): v is ViewType => validViews.includes(v as ViewType));
+          if (filtered.length > 0) {
+            return filtered;
+          }
+        }
+      }
+      return ['home'];
     } catch {
       return ['home'];
     }
@@ -476,6 +520,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     localStorage.setItem('viewStack', JSON.stringify(viewStack));
   }, [viewStack]);
+
+  // Automatic active view tracking for analytics
+  const activeView = viewStack[viewStack.length - 1];
+  const lastTrackedViewRef = useRef<ViewType | null>(null);
+
+  useEffect(() => {
+    if (activeView && activeView !== lastTrackedViewRef.current) {
+      trackEvent('view_changed', {
+        from_view: lastTrackedViewRef.current,
+        to_view: activeView,
+        mainType: state.mainType || 'none',
+        subType: state.subType || 'none',
+        urgency: state.urgency || 'none'
+      });
+      lastTrackedViewRef.current = activeView;
+    }
+  }, [activeView, state.mainType, state.subType, state.urgency]);
 
   useEffect(() => {
     localStorage.setItem('generatedMessages', JSON.stringify(generatedMessages));
@@ -1090,7 +1151,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       
       const allFirestoreOrders = [...operational, ...overdue, ...archived];
       
-      const uniqueOrders = new Set<string>();
       const filteredOrders: OrderHistoryItem[] = [];
 
       const processOrder = (order: any, isFirestore: boolean) => {
@@ -1107,9 +1167,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const mainType = order.mainType || (orderType === 'Resume' ? 'Resume' : orderType === 'Surat' ? 'Surat' : 'Lain-lain');
 
         const id = order.orderId || order.historyId || `SYNC-${name || 'UNKNOWN'}-${phone || ''}-${order.due || order.customerDue || ''}`.replace(/[^a-zA-Z0-9-]/g, '');
-        if (id && !uniqueOrders.has(id)) {
-          uniqueOrders.add(id);
-          
+        if (id) {
           const resolvedTimestamp = Number(order.timestamp) || parseTimestampFromId(id) || parseDueTimestamp(order.due || order.customerDue) || Date.now();
           
           // Map to standard AppState shape to ensure full consistency!
@@ -1133,15 +1191,48 @@ export function AppProvider({ children }: { children: ReactNode }) {
             syncStatus: isFirestore ? order.syncStatus || 'synced' : 'synced',
             mainType: mainType,
             subType: order.subType || '',
-            timestamp: resolvedTimestamp
+            timestamp: resolvedTimestamp,
+            lastUpdated: Number(order.lastUpdated) || 0,
+            version: typeof order.version === 'number' ? order.version : 1,
+            lastModifiedLocally: Number(order.lastModifiedLocally) || 0
           };
 
-          filteredOrders.push({
-            id: id,
-            timestamp: resolvedTimestamp,
-            state: normalizedState,
-            messages: []
-          });
+          const existingIdx = filteredOrders.findIndex(item => item.id === id);
+          if (existingIdx !== -1) {
+            const existingState = filteredOrders[existingIdx].state;
+            const existingLastUpdated = Number(existingState.lastUpdated) || 0;
+            const existingVersion = Number(existingState.version) || 1;
+            const existingModified = Number(existingState.lastModifiedLocally) || 0;
+
+            const incomingLastUpdated = Number(normalizedState.lastUpdated) || 0;
+            const incomingVersion = Number(normalizedState.version) || 1;
+            const incomingModified = Number(normalizedState.lastModifiedLocally) || 0;
+
+            let isIncomingNewer = false;
+            if (incomingLastUpdated > existingLastUpdated) {
+              isIncomingNewer = true;
+            } else if (incomingLastUpdated === existingLastUpdated && incomingVersion > existingVersion) {
+              isIncomingNewer = true;
+            } else if (incomingLastUpdated === existingLastUpdated && incomingVersion === existingVersion) {
+              isIncomingNewer = incomingModified > existingModified;
+            }
+
+            if (isIncomingNewer) {
+              filteredOrders[existingIdx] = {
+                id: id,
+                timestamp: resolvedTimestamp,
+                state: normalizedState,
+                messages: order.messages || []
+              };
+            }
+          } else {
+            filteredOrders.push({
+              id: id,
+              timestamp: resolvedTimestamp,
+              state: normalizedState,
+              messages: order.messages || []
+            });
+          }
         }
       };
 
@@ -1160,23 +1251,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (isFirestoreCanary) {
         try {
           const firestoreDrafts = await getDraftsFromFirestore();
-          if (firestoreDrafts.length > 0) {
-            const formattedDrafts = firestoreDrafts.map(state => ({
-              id: state.historyId || state.orderId || '',
-              timestamp: state.timestamp || Date.now(),
-              state: state,
-              messages: []
-            }));
-            setDrafts(prev => {
-              const merged = [...formattedDrafts];
-              prev.forEach(p => {
-                if (!merged.some(m => m.id === p.id)) {
-                  merged.push(p);
-                }
-              });
-              return merged;
-            });
-          }
+          const formattedDrafts = firestoreDrafts.map(state => ({
+            id: state.historyId || state.orderId || '',
+            timestamp: state.timestamp || Date.now(),
+            state: state,
+            messages: []
+          }));
+          setDrafts(formattedDrafts);
         } catch (draftErr) {
           console.warn("Failed to sync drafts from Firestore:", draftErr);
         }
@@ -1206,8 +1287,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const toggleTheme = () => setTheme(t => t === 'light' ? 'dark' : 'light');
-  const toggleLanguage = () => setAppLanguage(l => l === 'ms' ? 'en' : 'ms');
+  const toggleTheme = () => {
+    const nextTheme = theme === 'light' ? 'dark' : 'light';
+    trackEvent('theme_toggled', { to_theme: nextTheme });
+    setTheme(nextTheme);
+  };
+  const toggleLanguage = () => {
+    const nextLang = appLanguage === 'ms' ? 'en' : 'ms';
+    trackEvent('language_toggled', { to_language: nextLang });
+    setAppLanguage(nextLang);
+  };
 
   const saveOrderToHistory = (messages: string[]) => {
     let currentId = state.historyId;
@@ -1218,7 +1307,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
       currentTimestamp = Date.now();
     }
     
-    const finalState = { ...state, historyId: currentId, timestamp: currentTimestamp };
+    // Track order submission in analytics
+    trackEvent('order_submitted', {
+      urgency: state.urgency || 'none',
+      mainType: state.mainType || 'none',
+      subType: state.subType || 'none',
+      addons_count: state.addons ? state.addons.length : 0,
+      has_softcopy: state.addons ? (state.addons.includes('Editable softcopy BI') || state.addons.includes('Editable softcopy BM')) : false,
+      cl_langs_count: state.clLangs ? state.clLangs.length : 0,
+      resume_langs_count: state.resumeLangs ? state.resumeLangs.length : 0,
+      is_edit_mode: state.isEditMode || false,
+      extra_hours: state.extraHours || 0,
+      messages_count: messages.length,
+      price: state.price || 0
+    });
+    
+    const finalState = { ...state, historyId: currentId, timestamp: currentTimestamp, messages, lastModifiedLocally: Date.now() };
     
     const newItem: OrderHistoryItem = {
       id: currentId,
@@ -1237,9 +1341,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
     
     setState(finalState);
     syncPushNotifications(newItem, appLanguage).catch(console.warn);
+
+    if (isFirestoreCanary) {
+      saveOrderToFirestore(finalState).then(result => {
+        if (result) {
+          setHistory(prev => prev.map(item => 
+            item.id === currentId 
+              ? { ...item, state: { ...item.state, lastUpdated: result.lastUpdated, version: result.version, syncStatus: 'synced' } } 
+              : item
+          ));
+          setState(s => s.historyId === currentId ? { ...s, lastUpdated: result.lastUpdated, version: result.version, syncStatus: 'synced' } : s);
+        }
+      }).catch(err => {
+        console.error("Failed to save order to Firestore inside saveOrderToHistory:", err);
+      });
+    }
   };
   
-  const updateOrderHistoryState = (updates: Partial<AppState>) => {
+  const updateOrderHistoryState = (updates: Partial<AppState>, skipFirestoreSave = false) => {
     const finalState = { ...state, ...updates, lastModifiedLocally: Date.now() };
     setState(finalState);
     if (finalState.historyId) {
@@ -1260,11 +1379,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
            id: finalState.historyId as string,
            timestamp: finalState.timestamp || Date.now(),
            state: finalState,
-           messages: []
+           messages: finalState.messages || []
          };
          syncPushNotifications(newItem, appLanguage).catch(console.warn);
          return [newItem, ...prev];
        });
+
+       if (isFirestoreCanary && !skipFirestoreSave) {
+         saveOrderToFirestore(finalState).then(result => {
+           if (result) {
+             setHistory(prev => prev.map(item => 
+               item.id === finalState.historyId 
+                 ? { ...item, state: { ...item.state, lastUpdated: result.lastUpdated, version: result.version, syncStatus: 'synced' } } 
+                 : item
+             ));
+             setState(s => s.historyId === finalState.historyId ? { ...s, lastUpdated: result.lastUpdated, version: result.version, syncStatus: 'synced' } : s);
+           }
+         }).catch(err => {
+           console.error("Failed to save order to Firestore inside updateOrderHistoryState:", err);
+         });
+       }
     }
   };
 
@@ -1273,6 +1407,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (item.id === id) {
         const updatedItem = { ...item, state: { ...item.state, ...updates, lastModifiedLocally: Date.now() } };
         syncPushNotifications(updatedItem, appLanguage).catch(console.warn);
+
+        if (isFirestoreCanary) {
+          saveOrderToFirestore(updatedItem.state).then(result => {
+            if (result) {
+              setHistory(prev => prev.map(item => 
+                item.id === id 
+                  ? { ...item, state: { ...item.state, lastUpdated: result.lastUpdated, version: result.version, syncStatus: 'synced' } } 
+                  : item
+              ));
+              setState(s => s.historyId === id ? { ...s, lastUpdated: result.lastUpdated, version: result.version, syncStatus: 'synced' } : s);
+            }
+          }).catch(err => {
+            console.error("Failed to save order to Firestore inside updateSpecificHistoryItem:", err);
+          });
+        }
+
         return updatedItem;
       }
       return item;
@@ -1297,6 +1447,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
           ? { ...item, state: { ...item.state, isDeleted: true, lastModifiedLocally: Date.now() } } 
           : item
       ));
+
+      if (isFirestoreCanary) {
+        const oId = itemToDelete.state?.orderId || id;
+        deleteOrderFromFirestore(oId).catch(err => {
+          console.error("Failed to delete order from Firestore inside deleteOrderFromHistory:", err);
+        });
+      }
     }
 
     clearPushNotifications(id).catch(console.warn);
@@ -1313,11 +1470,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return prev.filter(x => !blacklisted.includes(x));
       });
 
+      const now = Date.now();
       setHistory(prev => prev.map(item => 
         item.id === id 
-          ? { ...item, state: { ...item.state, isDeleted: false, syncStatus: 'failed', lastModifiedLocally: Date.now() } } 
+          ? { ...item, state: { ...item.state, isDeleted: false, syncStatus: 'failed', lastModifiedLocally: now } } 
           : item
       ));
+
+      if (isFirestoreCanary && itemToRestore.state) {
+        const restoredState = { ...itemToRestore.state, isDeleted: false, lastModifiedLocally: now };
+        saveOrderToFirestore(restoredState).then(result => {
+          if (result) {
+            setHistory(prev => prev.map(item => 
+              item.id === id 
+                ? { ...item, state: { ...item.state, lastUpdated: result.lastUpdated, version: result.version, syncStatus: 'synced' } } 
+                : item
+            ));
+          }
+        }).catch(err => {
+          console.error("Failed to save restored order to Firestore inside restoreOrderFromHistory:", err);
+        });
+      }
 
       if (itemToRestore.state) {
         const {
@@ -1348,7 +1521,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             customerTemplate || template || '',
             normalizeBahasa(customerBahasa),
             customerAddOn || '',
-            customerJenis || '',
+            normalizeJenis(customerJenis || ''),
             customerDue || '',
             orderLink || googleSheetLink || '',
             orderId,
@@ -1376,6 +1549,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (currentState.historyId && (!currentState.historyId.startsWith('draft_') || history.some(item => item.id === currentState.historyId))) {
       return;
     }
+
+    // Track draft saved in analytics
+    trackEvent('draft_saved', {
+      mainType: currentState.mainType || 'none',
+      subType: currentState.subType || 'none',
+      urgency: currentState.urgency || 'none'
+    });
 
     const draftId = currentState.historyId || `draft_${Date.now()}`;
     const timestamp = currentState.timestamp || Date.now();
@@ -1415,6 +1595,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const loadDraft = (item: OrderHistoryItem) => {
     const s = (item.state || {}) as any;
+    
+    // Track draft loaded in analytics
+    trackEvent('draft_loaded', {
+      id: item.id,
+      mainType: s.mainType || 'none',
+      subType: s.subType || 'none'
+    });
+
     setState({
       ...INITIAL_STATE,
       ...s,
@@ -1469,6 +1657,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const startNewCustomer = () => {
     localStorage.removeItem('customer_form_progress');
+    // Track order flow start for a customer info flow
+    trackEvent('order_flow_start', {
+      start_type: 'new_customer'
+    });
     setState(prev => ({
       ...INITIAL_STATE,
       spreadsheetId: prev.spreadsheetId
@@ -1477,6 +1669,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
   };
 
   const startNewOrder = (view: ViewType, updates: Partial<AppState>) => {
+    // Track order flow start for a specific template/type flow
+    trackEvent('order_flow_start', {
+      start_type: 'new_order',
+      view,
+      mainType: updates.mainType || 'none',
+      subType: updates.subType || 'none'
+    });
     setState({ ...INITIAL_STATE, ...updates });
     setViewStack(['home', view]);
   };

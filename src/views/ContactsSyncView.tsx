@@ -18,6 +18,7 @@ import {
 import { useAppContext } from '../AppContext';
 import { cn } from '../cn';
 import { motion } from 'motion/react';
+import { trackEvent } from '../utils/analytics';
 
 interface ContactItem {
   phone: string;
@@ -330,6 +331,11 @@ export function ContactsSyncView() {
     const targets = contacts.filter(c => selectedPhones.has(c.phone));
     if (targets.length === 0) return;
 
+    // Track CSV bulk contacts export in analytics
+    trackEvent('contacts_export_triggered', {
+      count: targets.length
+    });
+
     setIsExporting(true);
     setSyncLogs(prev => [...prev, appLanguage === 'ms' ? `Membina fail CSV untuk ${targets.length} kenalan...` : `Building CSV file for ${targets.length} contacts...`]);
 
@@ -416,6 +422,10 @@ export function ContactsSyncView() {
 
   // Action: Export individual contact as CSV simple helper
   const handleExportIndividual = (contact: ContactItem) => {
+    // Track individual contact export in analytics
+    trackEvent('contact_export_individual_triggered', {
+      timesOrdered: contact.timesOrdered
+    });
     const sanitize = (val: string) => val.replace(/[\u200B-\u200D\uFEFF\u200E\u200F\u202A-\u202E\u2066-\u2069\u00A0\u202F\r\n\t]/g, '').trim();
     const sanitizePhone = (val: string) => {
       let p = val.replace(/[^\d+]/g, '');

@@ -27,6 +27,10 @@ interface OrderDocument {
   migrationVersion: "1.0-production";
   migratedAt: Date;             // Firestore Timestamp
   
+  // --- Sync / Conflict Resolution ---
+  lastUpdated: Date | null;     // Last updated timestamp for multi-device sync
+  version: number;              // Monotonically increasing version counter
+  
   // --- Audit Tracking (Optional/Internal) ---
   originalOrderId?: string | null;   // The raw value from the spreadsheet
   generatedOrderId?: boolean;        // true if documentId was generated from sourceKey

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { RefreshCcw, Save, Check, FileText, ExternalLink, LogOut, Loader2, AlertCircle, ChevronDown } from 'lucide-react';
 import { useAppContext } from '../AppContext';
-import { calculateDeadline, formatPhoneUniversal, parseDateStringToTimestamp, toProperCase, formatAddOnString, normalizeBahasa } from '../utils';
+import { calculateDeadline, formatPhoneUniversal, parseDateStringToTimestamp, toProperCase, formatAddOnString, normalizeBahasa, normalizeJenis } from '../utils';
 import { Toast } from '../components/Toast';
 import { SetupHelper } from '../components/SetupHelper';
 import { googleSignIn, initAuth, getAccessToken, logout } from '../utils/googleAuth';
@@ -27,28 +27,55 @@ function generateOrderId() {
   return `ORD-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
 }
 
-function jsonpRequest<T>(url: string, params: Record<string, string | number | boolean>): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const callbackName = 'jsonp_edit_callback_' + Math.round(100000 * Math.random());
-    (window as any)[callbackName] = (data: T) => {
-      cleanup();
-      resolve(data);
-    };
+async function jsonpRequest<T>(url: string, params: Record<string, string | number | boolean>): Promise<T> {
+  const callbackName = 'jsonp_edit_callback_' + Math.round(100000 * Math.random());
+  const separator = url.indexOf('?') === -1 ? '?' : '&';
+  const queryParts = [`callback=${callbackName}`];
+  Object.entries(params).forEach(([key, value]) => {
+    queryParts.push(`${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`);
+  });
+  const fullUrl = url + separator + queryParts.join('&');
 
-    const script = document.createElement('script');
-    const separator = url.indexOf('?') === -1 ? '?' : '&';
-    const queryParts = [`callback=${callbackName}`];
-    Object.entries(params).forEach(([key, value]) => {
-      queryParts.push(`${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`);
+  // Try standard fetch GET first as it is much more robust against ad-blockers and CSP that block dynamic scripts
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout for fast fetch attempt
+    const response = await fetch(fullUrl, {
+      method: 'GET',
+      signal: controller.signal
     });
-    
-    script.src = url + separator + queryParts.join('&');
+    clearTimeout(timeoutId);
+    if (response.ok) {
+      const text = await response.text();
+      const match = text.match(/^[a-zA-Z0-9_]+\(([\s\S]*)\);?\s*$/);
+      if (match) {
+        try {
+          return JSON.parse(match[1]) as T;
+        } catch (err) {
+          console.warn('JSONP regex match parse failed', err);
+        }
+      } else {
+        try {
+          return JSON.parse(text) as T;
+        } catch (err) {
+          console.warn('JSONP response body raw parse failed', err);
+        }
+      }
+    }
+  } catch (fetchErr) {
+    console.warn('Fetch JSONP fallback failed, trying dynamic script injection:', fetchErr);
+  }
+
+  // Fallback to traditional script injection JSONP with 45s timeout for Apps Script cold start tolerance
+  return new Promise<T>((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = fullUrl;
     script.async = true;
 
     const timeoutId = setTimeout(() => {
       cleanup();
       reject(new Error('JSONP request timed out'));
-    }, 15000);
+    }, 45000);
 
     const cleanup = () => {
       clearTimeout(timeoutId);
@@ -58,7 +85,16 @@ function jsonpRequest<T>(url: string, params: Record<string, string | number | b
       delete (window as any)[callbackName];
     };
 
-    script.onerror = () => {
+    (window as any)[callbackName] = (data: T) => {
+      cleanup();
+      resolve(data);
+    };
+
+    script.onerror = (event: any) => {
+      if (event && typeof event !== 'string') {
+        if (typeof (event as any).preventDefault === 'function') (event as any).preventDefault();
+        if (typeof (event as any).stopPropagation === 'function') (event as any).stopPropagation();
+      }
       cleanup();
       reject(new Error('JSONP request failed'));
     };
@@ -97,7 +133,7 @@ export function CustomerInfoView() {
     }
 
     let initJenis = '';
-    if (state.urgency === 'noturgent' || state.urgency === 'standard') initJenis = appLanguage === 'ms' ? 'Tak Urgent' : 'Not Urgent';
+    if (state.urgency === 'noturgent' || state.urgency === 'standard') initJenis = 'Tak Urgent';
     else if (state.urgency === 'urgent') initJenis = 'Urgent';
     else if (state.urgency === 'super') initJenis = 'Super Urgent';
     else if (state.urgency === 'semi') initJenis = 'Semi Urgent';
@@ -206,7 +242,7 @@ export function CustomerInfoView() {
       initType: state.mainType || 'Resume',
       initSubType: state.subType || '',
       initUrgency: state.urgency || 'normal',
-      initJenis: state.customerJenis ? String(state.customerJenis) : initJenis, 
+      initJenis: state.customerJenis ? normalizeJenis(String(state.customerJenis)) : initJenis, 
       initDue, 
       initDueTimestamp: state.dueTimestamp || dl.getTime(),
       initTemplate: state.customerTemplate || initTemplate, 
@@ -653,8 +689,8 @@ Dokumen Dijana Secara Automatik`;
     setSaved(false);
 
     try {
-      // Cleanup draft if it exists (only if not using Firestore Canary, as Canary handles promotion/cleanup atomically)
-      if (state.historyId && !isFirestoreCanary) {
+      // Cleanup draft if it exists
+      if (state.historyId && state.historyId.startsWith('draft_')) {
           deleteDraft(state.historyId);
       }
 
@@ -766,6 +802,8 @@ Dokumen Dijana Secara Automatik`;
 
       const finalFormattedAddOn = formatAddOnString(addOn);
 
+      const normalizedJenisVal = normalizeJenis(jenis);
+
       // Save the new values to global state + history with syncing status
       const updatedState = {
         ...state,
@@ -778,7 +816,7 @@ Dokumen Dijana Secara Automatik`;
         customerTemplate: finalFormattedTemplate,
         customerBahasa: normalizeBahasa(bahasa),
         customerAddOn: finalFormattedAddOn,
-        customerJenis: jenis,
+        customerJenis: normalizedJenisVal,
         customerDue: due,
         dueTimestamp: parsedTimestamp,
         hasNotified: false,
@@ -792,7 +830,7 @@ Dokumen Dijana Secara Automatik`;
         isEditMode: finalIsEditMode
       };
 
-      updateOrderHistoryState(updatedState);
+      updateOrderHistoryState(updatedState, true);
       setDueTimestamp(parsedTimestamp);
       setErrorMsg('');
 
@@ -814,7 +852,7 @@ Dokumen Dijana Secara Automatik`;
         finalFormattedTemplate || "",
         normalizeBahasa(bahasa),
         finalFormattedAddOn || "",
-        jenis,
+        normalizedJenisVal,
         due,
         link || "",
         finalOrderId || "",
@@ -870,7 +908,7 @@ Dokumen Dijana Secara Automatik`;
         template: finalFormattedTemplate || "",
         bahasa: normalizeBahasa(bahasa),
         addon: addOn || "",
-        jenis: jenis,
+        jenis: normalizedJenisVal,
         due: due,
         link: link || "",
         price: price ? price.toString() : ""

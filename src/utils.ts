@@ -296,6 +296,15 @@ export function normalizeBahasa(val: string): string {
   return clean;
 }
 
+export function normalizeJenis(val: string): string {
+  const v = (val || '').trim().toLowerCase();
+  if (v.includes('super')) return 'Super Urgent';
+  if (v.includes('semi')) return 'Semi Urgent';
+  if (v.includes('normal') || v.includes('tak') || v.includes('not') || v.includes('tidak')) return 'Tak Urgent';
+  if (v.includes('urgent')) return 'Urgent';
+  return 'Tak Urgent'; // default fallback
+}
+
 export function parseTimestampFromId(id: string): number | null {
   if (!id) return null;
   

@@ -8,6 +8,7 @@ import {
   getDocFromServer 
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
+import { initAnalytics } from '../utils/analytics';
 
 let app: any;
 let authInstance: any;
@@ -17,6 +18,9 @@ function initFirebase() {
   if (!app) {
     app = initializeApp(firebaseConfig);
     authInstance = getFirebaseAuth(app);
+    
+    // Safely trigger async analytics initialization
+    initAnalytics(app);
     
     const settings: any = {
       experimentalForceLongPolling: true,

@@ -4,6 +4,7 @@ import { Header } from './components/Header';
 import { ViewSection } from './components/ViewSection';
 import { Toast } from './components/Toast';
 import { FloatingControls } from './components/FloatingControls';
+import { trackEvent } from './utils/analytics';
 
 // Dynamically import views for code splitting
 const HomeView = lazy(() => import('./views/HomeView').then(m => ({ default: m.HomeView })));
@@ -27,10 +28,17 @@ import { onAuthStateChanged } from 'firebase/auth';
 import { DesktopSidebar } from './components/DesktopSidebar';
 
 function AppContent() {
-  const { viewStack } = useAppContext();
+  const { viewStack, state } = useAppContext();
   const [showToast, setShowToast] = useState(false);
 
   const handleCopy = async (txt: string) => {
+    // Track content copied event in analytics
+    trackEvent('order_output_copied', {
+      view: viewStack[viewStack.length - 1] || 'none',
+      mainType: state.mainType || 'none',
+      subType: state.subType || 'none',
+      text_length: txt.length
+    });
     try {
       await navigator.clipboard.writeText(txt);
     } catch (e) {

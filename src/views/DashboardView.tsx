@@ -116,6 +116,16 @@ interface SafeResponsiveContainerProps {
   children: React.ReactElement;
 }
 
+const getMaxDomainValue = (data: any[], key: string): number => {
+  if (!Array.isArray(data) || data.length === 0) return 5;
+  const values = data.map(d => {
+    const val = Number(d?.[key]);
+    return Number.isFinite(val) ? val : 0;
+  });
+  const max = Math.max(...values);
+  return Number.isFinite(max) ? Math.max(5, max) : 5;
+};
+
 function SafeResponsiveContainer({ children }: SafeResponsiveContainerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
@@ -123,42 +133,70 @@ function SafeResponsiveContainer({ children }: SafeResponsiveContainerProps) {
   useEffect(() => {
     if (!containerRef.current) return;
 
-    const resizeObserver = new ResizeObserver((entries) => {
-      if (!entries || entries.length === 0) return;
+    const updateDimensions = () => {
+      if (!containerRef.current) return;
+      const clientWidth = containerRef.current.clientWidth;
+      const clientHeight = containerRef.current.clientHeight;
       
-      const { width, height } = entries[0].contentRect;
+      const w = typeof clientWidth === 'number' && !Number.isNaN(clientWidth) && clientWidth > 0 ? clientWidth : 300;
+      const h = typeof clientHeight === 'number' && !Number.isNaN(clientHeight) && clientHeight > 0 ? clientHeight : 200;
       
       setDimensions({
-        width: Math.max(1, Math.floor(width)),
-        height: Math.max(1, Math.floor(height || containerRef.current?.clientHeight || 200)),
+        width: Math.max(50, Math.floor(w)),
+        height: Math.max(50, Math.floor(h))
       });
+    };
+
+    const resizeObserver = new ResizeObserver((entries) => {
+      if (!entries || entries.length === 0) return;
+      const entry = entries[0];
+      let w = 0;
+      let h = 0;
+      if (entry.contentRect) {
+        w = entry.contentRect.width;
+        h = entry.contentRect.height;
+      } else if (entry.borderBoxSize && entry.borderBoxSize[0]) {
+        w = entry.borderBoxSize[0].inlineSize;
+        h = entry.borderBoxSize[0].blockSize;
+      }
+      
+      const parsedW = typeof w === 'number' && !Number.isNaN(w) && w > 0 ? w : 0;
+      const parsedH = typeof h === 'number' && !Number.isNaN(h) && h > 0 ? h : 0;
+      
+      if (parsedW > 0 && parsedH > 0) {
+        setDimensions({
+          width: Math.max(50, Math.floor(parsedW)),
+          height: Math.max(50, Math.floor(parsedH))
+        });
+      } else {
+        updateDimensions();
+      }
     });
 
     resizeObserver.observe(containerRef.current);
-
-    const initialWidth = containerRef.current.clientWidth;
-    const initialHeight = containerRef.current.clientHeight;
-    if (initialWidth > 0 && initialHeight > 0) {
-      setDimensions({
-        width: initialWidth,
-        height: initialHeight,
-      });
-    }
+    updateDimensions();
 
     return () => {
       resizeObserver.disconnect();
     };
   }, []);
 
+  if (dimensions.width === 0 || dimensions.height === 0) {
+    return (
+      <div ref={containerRef} className="w-full h-full min-h-[50px] relative font-sans" style={{ minWidth: 1, minHeight: 1 }} />
+    );
+  }
+
   return (
-    <div ref={containerRef} className="w-full h-full min-h-[50px] relative" style={{ minWidth: 1, minHeight: 1 }}>
-      {dimensions.width > 0 && dimensions.height > 0 ? (
-        <ResponsiveContainer width={dimensions.width} height={dimensions.height}>
-          {children}
-        </ResponsiveContainer>
+    <div ref={containerRef} className="w-full h-full min-h-[50px] relative font-sans" style={{ minWidth: 1, minHeight: 1 }}>
+      {React.isValidElement(children) ? (
+        React.cloneElement(children as React.ReactElement<any>, {
+          width: dimensions.width,
+          height: dimensions.height
+        })
       ) : (
-        <div className="w-full h-full flex items-center justify-center text-xs text-gray-400">
-          Loading...
+        <div className="w-full h-full flex items-center justify-center text-xs text-gray-400 font-sans">
+          Chart unavailable
         </div>
       )}
     </div>
@@ -169,9 +207,7 @@ export function DashboardView() {
   const { appLanguage, pushView, history, syncOrders, isSyncing, deletedOrderIds } = useAppContext();
   
   const [filterYear, setFilterYear] = useState<string>(new Date().getFullYear().toString());
-  const [filterMonth, setFilterMonth] = useState<string>(
-    String(new Date().getMonth() + 1).padStart(2, '0')
-  );
+  const [filterMonth, setFilterMonth] = useState<string>('all');
   
   const annualSheets = useMemo(() => {
     try {
@@ -655,39 +691,93 @@ export function DashboardView() {
           </button>
         )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 pb-8">
-          <div className="bg-surface border border-gray-100 rounded-[20px] p-4 shadow-sm space-y-6">
-            <div>
-              <h3 className="text-sm font-bold text-text mb-4">
-                {filterYear === 'all'
-                  ? (appLanguage === 'ms' ? 'Order Mengikut Tahun' : 'Orders By Year')
-                  : filterMonth === 'all'
-                    ? (appLanguage === 'ms' ? `Order Mengikut Bulan (${filterYear})` : `Orders By Month (${filterYear})`)
-                    : (appLanguage === 'ms' ? `Order Mengikut Hari (${stats.months[parseInt(filterMonth, 10) - 1]} ${filterYear})` : `Orders By Day (${stats.months[parseInt(filterMonth, 10) - 1]} ${filterYear})`)}
-              </h3>
-              <div className="h-[200px] w-full">
-                <SafeResponsiveContainer>
-                  <LineChart data={stats.ordersByMonth} margin={{ top: 20, right: 10, left: -20, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
-                    <XAxis dataKey="name" tick={{fontSize: 10}} tickLine={false} axisLine={false} />
-                    <YAxis tick={{fontSize: 10}} tickLine={false} axisLine={false} allowDecimals={false} />
-                    <Tooltip cursor={{fill: 'rgba(0,0,0,0.05)'}} contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)'}} />
-                    <Line type="monotone" dataKey="value" stroke="#0A84FF" strokeWidth={3} dot={{ r: 4, strokeWidth: 2 }} activeDot={{ r: 6 }} >
-                      <LabelList dataKey="value" position="top" style={{ fontSize: '10px', fontWeight: 'bold', fill: '#636366' }} />
-                    </Line>
-                  </LineChart>
-                </SafeResponsiveContainer>
+        {stats.totalUniqueOrders === 0 ? (
+          <div className="bg-surface border border-gray-100 rounded-[20px] p-8 text-center shadow-sm space-y-3 mb-8">
+            <div className="w-12 h-12 rounded-full bg-gray-50 flex items-center justify-center mx-auto text-gray-400">
+              <AlertCircle className="w-6 h-6" />
+            </div>
+            <h3 className="text-base font-bold text-text">
+              {appLanguage === 'ms' ? 'Tiada Data untuk Analisis' : 'No Data Available for Analysis'}
+            </h3>
+            <p className="text-xs text-gray-400 max-w-sm mx-auto leading-relaxed">
+              {appLanguage === 'ms' 
+                ? 'Sila masukkan order pelanggan baru atau muat turun data dari Google Sheets untuk menjana visualisasi graf.' 
+                : 'Please input new customer orders or load data from Google Sheets to generate visual chart analysis.'}
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 pb-8">
+            <div className="bg-surface border border-gray-100 rounded-[20px] p-4 shadow-sm space-y-6">
+              <div>
+                <h3 className="text-sm font-bold text-text mb-4">
+                  {filterYear === 'all'
+                    ? (appLanguage === 'ms' ? 'Order Mengikut Tahun' : 'Orders By Year')
+                    : filterMonth === 'all'
+                      ? (appLanguage === 'ms' ? `Order Mengikut Bulan (${filterYear})` : `Orders By Month (${filterYear})`)
+                      : (appLanguage === 'ms' ? `Order Mengikut Hari (${stats.months[parseInt(filterMonth, 10) - 1]} ${filterYear})` : `Orders By Day (${stats.months[parseInt(filterMonth, 10) - 1]} ${filterYear})`)}
+                </h3>
+                <div className="h-[200px] w-full">
+                  <SafeResponsiveContainer>
+                    <LineChart data={stats.ordersByMonth} margin={{ top: 20, right: 10, left: -20, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
+                      <XAxis dataKey="name" tick={{fontSize: 10}} tickLine={false} axisLine={false} />
+                      <YAxis tick={{fontSize: 10}} tickLine={false} axisLine={false} allowDecimals={false} domain={[0, getMaxDomainValue(stats.ordersByMonth, 'value')]} />
+                      <Tooltip cursor={{fill: 'rgba(0,0,0,0.05)'}} contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)'}} />
+                      <Line type="monotone" dataKey="value" stroke="#0A84FF" strokeWidth={3} dot={{ r: 4, strokeWidth: 2 }} activeDot={{ r: 6 }} />
+                    </LineChart>
+                  </SafeResponsiveContainer>
+                </div>
+              </div>
+
+              <div>
+                <h3 className="text-sm font-bold text-text mb-4">{appLanguage === 'ms' ? 'Jenis Pelanggan' : 'Customer Types'}</h3>
+                <div className="h-[180px] w-full flex items-center justify-center">
+                  <div className="w-[180px] h-full relative">
+                    <SafeResponsiveContainer>
+                      <PieChart>
+                        <Pie
+                          data={stats.customerTypes}
+                          cx="50%"
+                          cy="50%"
+                          innerRadius={50}
+                          outerRadius={70}
+                          paddingAngle={5}
+                          dataKey="value"
+                          label={{ fontSize: '10px', fill: '#636366', fontWeight: 'bold' }}
+                        >
+                          {stats.customerTypes.map((entry, index) => (
+                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                          ))}
+                        </Pie>
+                        <Tooltip contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)'}} />
+                      </PieChart>
+                    </SafeResponsiveContainer>
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none flex-col">
+                      <span className="text-xl font-black text-text">{stats.totalUniqueCustomers}</span>
+                      <span className="text-[10px] font-bold text-gray-400 uppercase">{appLanguage === 'ms' ? 'Jumlah' : 'Total'}</span>
+                    </div>
+                  </div>
+                  <div className="flex flex-col justify-center space-y-2 ml-4">
+                    {stats.customerTypes.map((entry, index) => (
+                      <div key={entry.name} className="flex items-center text-xs">
+                        <div className="w-3 h-3 rounded-full mr-2" style={{ backgroundColor: COLORS[index % COLORS.length] }}></div>
+                        <span className="text-gray-500 mr-2">{entry.name}</span>
+                        <span className="font-bold text-text">{entry.value}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
             </div>
 
-            <div>
-              <h3 className="text-sm font-bold text-text mb-4">{appLanguage === 'ms' ? 'Jenis Pelanggan' : 'Customer Types'}</h3>
-              <div className="h-[180px] w-full flex items-center justify-center">
-                <div className="w-[180px] h-full relative">
+            <div className="bg-surface border border-gray-100 rounded-[20px] p-4 shadow-sm space-y-6">
+              <div>
+                <h3 className="text-sm font-bold text-text mb-4">{appLanguage === 'ms' ? 'Kategori Tempahan' : 'Order Categories'}</h3>
+                <div className="h-[200px] w-full">
                   <SafeResponsiveContainer>
                     <PieChart>
                       <Pie
-                        data={stats.customerTypes}
+                        data={stats.typesChart}
                         cx="50%"
                         cy="50%"
                         innerRadius={50}
@@ -696,90 +786,49 @@ export function DashboardView() {
                         dataKey="value"
                         label={{ fontSize: '10px', fill: '#636366', fontWeight: 'bold' }}
                       >
-                        {stats.customerTypes.map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                        {stats.typesChart.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={COLORS[(index + 2) % COLORS.length]} />
                         ))}
                       </Pie>
                       <Tooltip contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)'}} />
                     </PieChart>
                   </SafeResponsiveContainer>
-                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none flex-col">
-                    <span className="text-xl font-black text-text">{stats.totalUniqueCustomers}</span>
-                    <span className="text-[10px] font-bold text-gray-400 uppercase">{appLanguage === 'ms' ? 'Jumlah' : 'Total'}</span>
-                  </div>
                 </div>
-                <div className="flex flex-col justify-center space-y-2 ml-4">
-                  {stats.customerTypes.map((entry, index) => (
-                    <div key={entry.name} className="flex items-center text-xs">
-                      <div className="w-3 h-3 rounded-full mr-2" style={{ backgroundColor: COLORS[index % COLORS.length] }}></div>
-                      <span className="text-gray-500 mr-2">{entry.name}</span>
+                <div className="flex flex-wrap justify-center gap-3 mt-2">
+                  {stats.typesChart.map((entry, index) => (
+                    <div key={entry.name} className="flex items-center text-[10px]">
+                      <div className="w-2 h-2 rounded-full mr-1" style={{ backgroundColor: COLORS[(index + 2) % COLORS.length] }}></div>
+                      <span className="text-gray-500 mr-1 truncate max-w-[80px]">{entry.name}</span>
                       <span className="font-bold text-text">{entry.value}</span>
                     </div>
                   ))}
                 </div>
               </div>
-            </div>
-          </div>
 
-          <div className="bg-surface border border-gray-100 rounded-[20px] p-4 shadow-sm space-y-6">
-            <div>
-              <h3 className="text-sm font-bold text-text mb-4">{appLanguage === 'ms' ? 'Kategori Tempahan' : 'Order Categories'}</h3>
-              <div className="h-[200px] w-full">
-                <SafeResponsiveContainer>
-                  <PieChart>
-                    <Pie
-                      data={stats.typesChart}
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={50}
-                      outerRadius={70}
-                      paddingAngle={5}
-                      dataKey="value"
-                      label={{ fontSize: '10px', fill: '#636366', fontWeight: 'bold' }}
-                    >
-                      {stats.typesChart.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={COLORS[(index + 2) % COLORS.length]} />
-                      ))}
-                    </Pie>
-                    <Tooltip contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)'}} />
-                  </PieChart>
-                </SafeResponsiveContainer>
-              </div>
-              <div className="flex flex-wrap justify-center gap-3 mt-2">
-                {stats.typesChart.map((entry, index) => (
-                  <div key={entry.name} className="flex items-center text-[10px]">
-                    <div className="w-2 h-2 rounded-full mr-1" style={{ backgroundColor: COLORS[(index + 2) % COLORS.length] }}></div>
-                    <span className="text-gray-500 mr-1 truncate max-w-[80px]">{entry.name}</span>
-                    <span className="font-bold text-text">{entry.value}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div>
-              <h3 className="text-sm font-bold text-text mb-4">{appLanguage === 'ms' ? 'Prioriti (Tahap Urgency)' : 'Priority (Urgency Level)'}</h3>
-              <div className="h-[160px] w-full">
-                <SafeResponsiveContainer>
-                  <BarChart data={stats.urgencyChart} layout="vertical" margin={{ top: 0, right: 30, left: 10, bottom: 0 }}>
-                    <XAxis type="number" hide />
-                    <YAxis dataKey="name" type="category" tick={{fontSize: 10}} tickLine={false} axisLine={false} width={80} />
-                    <Tooltip cursor={{fill: 'rgba(0,0,0,0.05)'}} contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)'}} />
-                    <Bar dataKey="value" radius={[0, 4, 4, 0]}>
-                      {stats.urgencyChart.map((entry, index) => {
-                        let color = '#059669'; // default Tak Urgent / Not Urgent
-                        if (entry.name === 'Super Urgent') color = '#E11D48';
-                        else if (entry.name === 'Urgent') color = '#EA580C';
-                        else if (entry.name === 'Semi Urgent') color = '#D97706';
-                        return <Cell key={`cell-${index}`} fill={color} />;
-                      })}
-                      <LabelList dataKey="value" position="right" style={{ fontSize: '10px', fontWeight: 'bold', fill: '#636366' }} />
-                    </Bar>
-                  </BarChart>
-                </SafeResponsiveContainer>
+              <div>
+                <h3 className="text-sm font-bold text-text mb-4">{appLanguage === 'ms' ? 'Prioriti (Tahap Urgency)' : 'Priority (Urgency Level)'}</h3>
+                <div className="h-[160px] w-full">
+                  <SafeResponsiveContainer>
+                    <BarChart data={stats.urgencyChart} layout="vertical" margin={{ top: 0, right: 30, left: 10, bottom: 0 }}>
+                      <XAxis type="number" hide domain={[0, getMaxDomainValue(stats.urgencyChart, 'value')]} />
+                      <YAxis dataKey="name" type="category" tick={{fontSize: 10}} tickLine={false} axisLine={false} width={80} />
+                      <Tooltip cursor={{fill: 'rgba(0,0,0,0.05)'}} contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)'}} />
+                      <Bar dataKey="value" radius={[0, 4, 4, 0]} minPointSize={0}>
+                        {stats.urgencyChart.map((entry, index) => {
+                          let color = '#059669'; // default Tak Urgent / Not Urgent
+                          if (entry.name === 'Super Urgent') color = '#E11D48';
+                          else if (entry.name === 'Urgent') color = '#EA580C';
+                          else if (entry.name === 'Semi Urgent') color = '#D97706';
+                          return <Cell key={`cell-${index}`} fill={color} />;
+                        })}
+                      </Bar>
+                    </BarChart>
+                  </SafeResponsiveContainer>
+                </div>
               </div>
             </div>
           </div>
-        </div>
+        )}
       </div>
     </>
   );
