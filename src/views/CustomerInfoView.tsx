@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { RefreshCcw, Save, Check, FileText, ExternalLink, LogOut, Loader2, AlertCircle, ChevronDown } from 'lucide-react';
 import { useAppContext } from '../AppContext';
+import { triggerHaptic } from '../utils/haptics';
 import { calculateDeadline, formatPhoneUniversal, parseDateStringToTimestamp, toProperCase, formatAddOnString, normalizeBahasa, normalizeJenis } from '../utils';
 import { Toast } from '../components/Toast';
 import { SetupHelper } from '../components/SetupHelper';
@@ -1120,14 +1121,20 @@ Dokumen Dijana Secara Automatik`;
             <div className="flex gap-2 w-full sm:w-auto shrink-0 pt-0.5 sm:pt-0">
               <button
                 type="button"
-                onClick={handleResumeProgress}
+                onClick={() => {
+                  triggerHaptic('medium');
+                  handleResumeProgress();
+                }}
                 className="flex-1 sm:flex-none px-3.5 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-black text-xs active:scale-95 transition-all shadow-sm"
               >
                 {appLanguage === 'ms' ? 'Pulihkan' : 'Resume'}
               </button>
               <button
                 type="button"
-                onClick={handleDismissProgress}
+                onClick={() => {
+                  triggerHaptic('medium');
+                  handleDismissProgress();
+                }}
                 className="flex-1 sm:flex-none px-3 py-1.5 rounded-xl bg-white dark:bg-gray-800 border border-amber-200/40 dark:border-amber-800/30 hover:bg-amber-100/30 text-amber-900 dark:text-amber-200 font-bold text-xs transition-colors"
               >
                 {appLanguage === 'ms' ? 'Padam' : 'Discard'}
@@ -1443,7 +1450,10 @@ Dokumen Dijana Secara Automatik`;
               {appLanguage === 'ms' ? 'Maklumat Pelanggan' : 'Customer Information'}
             </label>
             <button
-              onClick={handleAutoFill}
+              onClick={() => {
+                triggerHaptic('light');
+                handleAutoFill();
+              }}
               className="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-lg hover:bg-blue-100 transition-colors active:scale-95"
             >
               {appLanguage === 'ms' ? 'Auto-isi' : 'Auto-fill'}
@@ -1466,7 +1476,10 @@ Dokumen Dijana Secara Automatik`;
 
         <div className="pt-2 space-y-2">
           <button
-            onClick={handleSaveDraft}
+            onClick={() => {
+              triggerHaptic('medium');
+              handleSaveDraft();
+            }}
             className="w-full h-[48px] bg-white dark:bg-gray-800 text-blue-600 border-2 border-blue-600/20 font-bold text-sm rounded-2xl flex items-center justify-center space-x-2 active:scale-[0.98] transition-all hover:bg-blue-50 dark:hover:bg-blue-900/10"
           >
             <RefreshCcw className="w-4 h-4" />
@@ -1474,7 +1487,10 @@ Dokumen Dijana Secara Automatik`;
           </button>
 
           <button
-            onClick={handleSaveInfo}
+            onClick={() => {
+              triggerHaptic('heavy');
+              handleSaveInfo();
+            }}
             disabled={isSaving}
             className="w-full h-[58px] bg-blue-600 hover:bg-blue-700 text-white font-black text-base sm:text-base rounded-2xl flex items-center justify-center space-x-2 active:scale-[0.98] transition-all disabled:opacity-70 shadow-md shadow-blue-500/10"
           >

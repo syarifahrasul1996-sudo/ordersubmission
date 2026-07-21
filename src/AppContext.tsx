@@ -1166,10 +1166,36 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
         const mainType = order.mainType || (orderType === 'Resume' ? 'Resume' : orderType === 'Surat' ? 'Surat' : 'Lain-lain');
 
-        const id = order.orderId || order.historyId || `SYNC-${name || 'UNKNOWN'}-${phone || ''}-${order.due || order.customerDue || ''}`.replace(/[^a-zA-Z0-9-]/g, '');
+        const id = order.orderId || order.historyId || `SYNC-${name || 'UNKNOWN'}-${phone || ''}-${order.originalDue || order.due || order.customerDue || ''}`.replace(/[^a-zA-Z0-9-]/g, '');
         if (id) {
-          const resolvedTimestamp = Number(order.timestamp) || parseTimestampFromId(id) || parseDueTimestamp(order.due || order.customerDue) || Date.now();
+          let resolvedTimestamp = parseTimestampFromId(id);
+          if (!resolvedTimestamp) {
+            const rawTs = Number(order.timestamp);
+            if (!isNaN(rawTs) && rawTs > 0) {
+              resolvedTimestamp = rawTs;
+            } else {
+              const trimmedTsStr = String(order.timestamp || '').trim();
+              if (trimmedTsStr) {
+                const parsed = new Date(trimmedTsStr).getTime();
+                if (!isNaN(parsed) && parsed > 0) {
+                  resolvedTimestamp = parsed;
+                } else {
+                  const res = parseDateStringToTimestamp(trimmedTsStr, 0);
+                  if (res.timestamp > 0) {
+                    resolvedTimestamp = res.timestamp;
+                  }
+                }
+              }
+            }
+          }
+          if (!resolvedTimestamp) {
+            resolvedTimestamp = parseDueTimestamp(order.originalDue || order.due || order.customerDue) || Date.now();
+          }
           
+          const rawPrice = order.price !== undefined && order.price !== null
+            ? (typeof order.price === 'number' ? order.price : parseFloat(String(order.price).replace(/RM/gi, '').replace(/,/g, '')) || undefined)
+            : undefined;
+
           // Map to standard AppState shape to ensure full consistency!
           const normalizedState = {
             ...order,
@@ -1183,11 +1209,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
             customerBahasa: normalizeBahasa(order.bahasa || order.customerBahasa || ''),
             customerAddOn: order.addon || order.customerAddOn || '',
             customerJenis: order.jenis || order.customerJenis || '',
-            customerDue: order.due || order.customerDue || '',
+            customerDue: order.originalDue || order.due || order.customerDue || '',
             orderLink: order.link || order.orderLink || '',
             googleSheetLink: order.link || order.googleSheetLink || '',
             orderId: id,
-            dueTimestamp: order.dueTimestamp || parseDueTimestamp(order.due || order.customerDue),
+            price: rawPrice,
+            dueTimestamp: order.dueTimestamp || parseDueTimestamp(order.originalDue || order.due || order.customerDue),
             syncStatus: isFirestore ? order.syncStatus || 'synced' : 'synced',
             mainType: mainType,
             subType: order.subType || '',

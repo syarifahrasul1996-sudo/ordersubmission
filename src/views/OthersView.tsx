@@ -17,12 +17,14 @@ import {
   RefreshCw,
   Play,
   CheckCircle,
-  AlertTriangle
+  AlertTriangle,
+  Smartphone
 } from 'lucide-react';
 import { useAppContext } from '../AppContext';
 import { cn } from '../cn';
 import { getAuth } from '../lib/firebase';
 import { SyncDiagnostics } from '../components/SyncDiagnostics';
+import { isHapticsSupported, isHapticsEnabled, setHapticsEnabled, triggerHaptic } from '../utils/haptics';
 const auth = getAuth();
 import { 
   GoogleAuthProvider, 
@@ -61,6 +63,21 @@ export function OthersView() {
   const [seedStatus, setSeedStatus] = useState<string | null>(null);
   const [isRunningTests, setIsRunningTests] = useState(false);
   const [testResults, setTestResults] = useState<any | null>(null);
+  const [hapticsEnabled, setHapticsState] = useState(isHapticsEnabled());
+
+  const handleToggleHaptics = (enabled: boolean) => {
+    setHapticsEnabled(enabled);
+    setHapticsState(enabled);
+    if (enabled) {
+      setTimeout(() => {
+        triggerHaptic('success');
+      }, 50);
+    } else {
+      setTimeout(() => {
+        // Fallback or small confirmation if supported before turning off
+      }, 50);
+    }
+  };
 
   useEffect(() => {
     getRedirectResult(auth).then((result) => {
@@ -75,6 +92,7 @@ export function OthersView() {
   }, []);
 
   const handleLogin = async () => {
+    triggerHaptic('light');
     setAuthError(null);
     const provider = new GoogleAuthProvider();
     provider.addScope('https://www.googleapis.com/auth/spreadsheets');
@@ -83,7 +101,9 @@ export function OthersView() {
     try {
       // Default to popup, with fallback logic internally if needed
       await signInWithPopup(auth, provider);
+      triggerHaptic('success');
     } catch (error: any) {
+      triggerHaptic('error');
       setAuthError(error.code || error.message);
       
       if (error.code === 'auth/popup-blocked' || error.code === 'auth/cancelled-query') {
@@ -93,6 +113,7 @@ export function OthersView() {
   };
 
   const handleLogout = async () => {
+    triggerHaptic('heavy');
     try {
       await auth.signOut();
       setFirebaseUser(null);
@@ -102,16 +123,19 @@ export function OthersView() {
   };
 
   const handleSeed = async () => {
+    triggerHaptic('medium');
     setIsSeeding(true);
     setSeedStatus(appLanguage === 'ms' ? 'Menulis rekod canary ke Firestore...' : 'Writing canary records to Firestore...');
     try {
       const res = await seedCanaryData();
+      triggerHaptic('success');
       setSeedStatus(
         appLanguage === 'ms' 
           ? `Berjaya! Ditulis ${res.undelivered} ke orders_canary dan ${res.delivered} ke orders_archive_canary.` 
           : `Success! Wrote ${res.undelivered} to orders_canary and ${res.delivered} to orders_archive_canary.`
       );
     } catch (e: any) {
+      triggerHaptic('error');
       console.error(e);
       setSeedStatus(appLanguage === 'ms' ? `Ralat: ${e.message}` : `Error: ${e.message}`);
     } finally {
@@ -120,6 +144,7 @@ export function OthersView() {
   };
 
   const handleRunTests = async () => {
+    triggerHaptic('medium');
     setIsRunningTests(true);
     setTestResults(null);
     try {
@@ -130,6 +155,12 @@ export function OthersView() {
       const totalCount = operational.length + overdue.length + archived.length;
       const isSuccess = operational.length === 5 && overdue.length === 5 && archived.length === 10;
 
+      if (isSuccess) {
+        triggerHaptic('success');
+      } else {
+        triggerHaptic('warning');
+      }
+
       setTestResults({
         success: isSuccess,
         totalRecords: totalCount,
@@ -138,6 +169,7 @@ export function OthersView() {
         archivedCount: archived.length
       });
     } catch (e: any) {
+      triggerHaptic('error');
       console.error(e);
       setTestResults({
         success: false,
@@ -153,6 +185,7 @@ export function OthersView() {
   };
 
   const handleExportContacts = () => {
+    triggerHaptic('light');
     pushView('contacts-sync');
   };
 
@@ -191,7 +224,12 @@ export function OthersView() {
             </span>
             <div className="flex bg-gray-100 dark:bg-zinc-800 p-0.5 rounded-lg border border-gray-100/30">
               <button
-                onClick={() => appLanguage !== 'en' && toggleLanguage()}
+                onClick={() => {
+                  if (appLanguage !== 'en') {
+                    triggerHaptic('light');
+                    toggleLanguage();
+                  }
+                }}
                 className={cn(
                   "px-3 py-1 rounded-md text-[10px] font-black uppercase transition-all cursor-pointer",
                   appLanguage === 'en' 
@@ -202,7 +240,12 @@ export function OthersView() {
                 EN
               </button>
               <button
-                onClick={() => appLanguage !== 'ms' && toggleLanguage()}
+                onClick={() => {
+                  if (appLanguage !== 'ms') {
+                    triggerHaptic('light');
+                    toggleLanguage();
+                  }
+                }}
                 className={cn(
                   "px-3 py-1 rounded-md text-[10px] font-black uppercase transition-all cursor-pointer",
                   appLanguage === 'ms' 
@@ -223,7 +266,12 @@ export function OthersView() {
             </span>
             <div className="flex bg-gray-100 dark:bg-zinc-800 p-0.5 rounded-lg border border-gray-100/30">
               <button
-                onClick={() => theme !== 'light' && toggleTheme()}
+                onClick={() => {
+                  if (theme !== 'light') {
+                    triggerHaptic('light');
+                    toggleTheme();
+                  }
+                }}
                 className={cn(
                   "px-3 py-1 rounded-md text-[10px] font-black transition-all cursor-pointer",
                   theme === 'light' 
@@ -234,7 +282,12 @@ export function OthersView() {
                 {appLanguage === 'ms' ? 'Cerah' : 'Light'}
               </button>
               <button
-                onClick={() => theme !== 'dark' && toggleTheme()}
+                onClick={() => {
+                  if (theme !== 'dark') {
+                    triggerHaptic('light');
+                    toggleTheme();
+                  }
+                }}
                 className={cn(
                   "px-3 py-1 rounded-md text-[10px] font-black transition-all cursor-pointer",
                   theme === 'dark' 
@@ -243,6 +296,47 @@ export function OthersView() {
                 )}
               >
                 {appLanguage === 'ms' ? 'Gelap' : 'Dark'}
+              </button>
+            </div>
+          </div>
+
+          {/* Haptic Feedback Row */}
+          <div className="flex items-center justify-between p-2 rounded-xl hover:bg-gray-50/50 dark:hover:bg-zinc-900/50 transition-colors">
+            <span className="text-xs font-bold text-text flex items-center gap-2">
+              <Smartphone className="w-4 h-4 text-violet-500" />
+              <span className="flex flex-col">
+                <span>{appLanguage === 'ms' ? 'Maklum Balas Haptik' : 'Haptic Feedback'}</span>
+                {!isHapticsSupported() && (
+                  <span className="text-[9px] text-subtext/60 font-semibold leading-none">
+                    {appLanguage === 'ms' ? 'Tidak disokong pada peranti ini' : 'Not supported on this device'}
+                  </span>
+                )}
+              </span>
+            </span>
+            <div className="flex bg-gray-100 dark:bg-zinc-800 p-0.5 rounded-lg border border-gray-100/30">
+              <button
+                onClick={() => handleToggleHaptics(true)}
+                disabled={!isHapticsSupported()}
+                className={cn(
+                  "px-3 py-1 rounded-md text-[10px] font-black transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed",
+                  hapticsEnabled && isHapticsSupported()
+                    ? "bg-white dark:bg-zinc-700 text-text shadow-sm" 
+                    : "text-subtext opacity-75 active:opacity-100"
+                )}
+              >
+                {appLanguage === 'ms' ? 'Aktif' : 'On'}
+              </button>
+              <button
+                onClick={() => handleToggleHaptics(false)}
+                disabled={!isHapticsSupported()}
+                className={cn(
+                  "px-3 py-1 rounded-md text-[10px] font-black transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed",
+                  (!hapticsEnabled || !isHapticsSupported())
+                    ? "bg-white dark:bg-zinc-700 text-text shadow-sm" 
+                    : "text-subtext opacity-75 active:opacity-100"
+                )}
+              >
+                {appLanguage === 'ms' ? 'Matikan' : 'Off'}
               </button>
             </div>
           </div>

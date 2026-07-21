@@ -15,6 +15,7 @@ import { useAppContext } from '../AppContext';
 import { cn } from '../cn';
 import { parseDateStringToTimestamp } from '../utils';
 import { isActivePendingOrder } from '../utils/orderWindow';
+import { triggerHaptic } from '../utils/haptics';
 
 export function HomeView() {
   const { 
@@ -69,6 +70,7 @@ export function HomeView() {
     setIsPulling(false);
 
     if (pullProgress >= 60) {
+      triggerHaptic('medium');
       syncOrders();
     } else {
       setPullProgress(0);
@@ -279,6 +281,7 @@ export function HomeView() {
           <button
             type="button"
             onClick={() => {
+              triggerHaptic('light');
               setHistoryDeliveryFilter('pending');
               setHistoryPendingTimeFilter('all');
               changeTab('history');
@@ -305,6 +308,7 @@ export function HomeView() {
           <button
             type="button"
             onClick={() => {
+              triggerHaptic('light');
               setHistoryDeliveryFilter('pending');
               setHistoryPendingTimeFilter('today');
               changeTab('history');
@@ -331,6 +335,7 @@ export function HomeView() {
           <button
             type="button"
             onClick={() => {
+              triggerHaptic('light');
               setHistoryDeliveryFilter('pending');
               setHistoryPendingTimeFilter('tomorrow');
               changeTab('history');
@@ -376,6 +381,7 @@ export function HomeView() {
             <button
               type="button"
               onClick={() => {
+                triggerHaptic('light');
                 setCalcUrgency('all');
                 setSuperHours(2);
               }}
@@ -388,7 +394,7 @@ export function HomeView() {
           )}
         </div>
 
-        {/* Urgency selector strip */}
+         {/* Urgency selector strip */}
         <div className="grid grid-cols-4 p-1 bg-gray-100/80 dark:bg-zinc-900/60 rounded-xl gap-1 shadow-inner">
           {urgencyOptions.map(opt => {
             const isSelected = calcUrgency === opt.id;
@@ -403,7 +409,10 @@ export function HomeView() {
               <button
                 type="button"
                 key={opt.id}
-                onClick={() => setCalcUrgency(prev => prev === opt.id ? 'all' : opt.id)}
+                onClick={() => {
+                  triggerHaptic('light');
+                  setCalcUrgency(prev => prev === opt.id ? 'all' : opt.id);
+                }}
                 className={cn(
                   "py-2 px-0.5 rounded-lg font-black text-[9px] min-[360px]:text-[10px] sm:text-xs leading-tight transition-all cursor-pointer text-center flex items-center justify-center min-h-[36px]",
                   isSelected 
@@ -425,7 +434,10 @@ export function HomeView() {
           <div className="flex justify-center items-center gap-3 bg-gray-50/50 dark:bg-zinc-900/20 p-1.5 rounded-xl border border-gray-100/50">
             <button 
               type="button"
-              onClick={() => setSuperHours(h => Math.max(1, h - 1))}
+              onClick={() => {
+                triggerHaptic('light');
+                setSuperHours(h => Math.max(1, h - 1));
+              }}
               className="w-7 h-7 bg-white dark:bg-zinc-800 rounded-full flex items-center justify-center shadow-sm text-text border border-gray-100/50 active:scale-95 transition-transform cursor-pointer"
             >
               <Minus aria-hidden="true" className="w-3.5 h-3.5 stroke-[2.5]" />
@@ -436,7 +448,10 @@ export function HomeView() {
             </div>
             <button 
               type="button"
-              onClick={() => setSuperHours(h => h + 1)}
+              onClick={() => {
+                triggerHaptic('light');
+                setSuperHours(h => h + 1);
+              }}
               className="w-7 h-7 bg-white dark:bg-zinc-800 rounded-full flex items-center justify-center shadow-sm text-text border border-gray-100/50 active:scale-95 transition-transform cursor-pointer"
             >
               <Plus aria-hidden="true" className="w-3.5 h-3.5 stroke-[2.5]" />
@@ -460,6 +475,7 @@ export function HomeView() {
             type="button"
             onClick={async () => {
               if (await handleCopy()) {
+                triggerHaptic('success');
                 setCopied(true);
                 if (copyTimeout.current) clearTimeout(copyTimeout.current);
                 copyTimeout.current = setTimeout(() => setCopied(false), 2000);

@@ -241,34 +241,72 @@ export function formatPhoneUniversal(phone?: any): string {
  * in a robust manner. Returns both the timestamp and a Date object.
  */
 export function parseDateStringToTimestamp(dueText: string, defaultTimestamp: number): { timestamp: number; date: Date } {
-  if (!dueText || !dueText.trim()) {
+  if (!dueText) {
     return { timestamp: defaultTimestamp, date: new Date(defaultTimestamp) };
   }
 
-  const cleanText = dueText.replace(/\s+at\s+/i, ' ').trim();
+  // Strip all invisible formatting marks/Unicode directional controls (e.g. \u202a, \u202c)
+  // and normalize all types of spaces (regular, non-breaking, wide spaces) to regular space
+  const sanitized = String(dueText)
+    .replace(/[\u200B-\uFEFF\u200E\u200F\u202A-\u202E]/g, '')
+    .replace(/[\s\xa0\u2002\u2003\u2009]+/g, ' ')
+    .trim();
 
-  // Attempt custom DD/MM/YYYY parses with optional time first to avoid JS new Date() parsing it as MM/DD/YYYY
-  const parts = cleanText.split(/\s+/);
-  const datePart = parts[0];
-  const timePart = parts[1] || '00:00';
+  if (!sanitized) {
+    return { timestamp: defaultTimestamp, date: new Date(defaultTimestamp) };
+  }
 
-  const dateSegs = datePart.split('/');
-  if (dateSegs.length === 3) {
-    const day = parseInt(dateSegs[0], 10);
-    const month = parseInt(dateSegs[1], 10) - 1;
-    const year = parseInt(dateSegs[2], 10);
+  const cleanText = sanitized.replace(/\s+at\s+/i, ' ').trim();
 
-    const timeSegs = timePart.split(':');
-    let hours = parseInt(timeSegs[0] || '0', 10);
-    const minutes = parseInt(timeSegs[1] || '0', 10);
-    const seconds = parseInt(timeSegs[2] || '0', 10);
+  // Robustly extract date segments: support /, -, or . separators
+  const datePattern = /(\d{1,4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,4})/;
+  const match = cleanText.match(datePattern);
 
-    const isPM = cleanText.toUpperCase().includes('PM');
-    const isAM = cleanText.toUpperCase().includes('AM');
-    if (isPM && hours < 12) {
-      hours += 12;
-    } else if (isAM && hours === 12) {
-      hours = 0;
+  if (match) {
+    let day = 0, month = 0, year = 0;
+    const part1 = match[1];
+    const part2 = match[2];
+    const part3 = match[3];
+
+    if (part1.length === 4) {
+      // YYYY-MM-DD
+      year = parseInt(part1, 10);
+      month = parseInt(part2, 10) - 1;
+      day = parseInt(part3, 10);
+    } else {
+      // DD-MM-YYYY
+      day = parseInt(part1, 10);
+      month = parseInt(part2, 10) - 1;
+      year = parseInt(part3, 10);
+      // Normalize 2-digit years
+      if (year < 100) {
+        if (year >= 50) year += 1900;
+        else year += 2000;
+      }
+    }
+
+    // Robustly extract time segments: support : or . delimiters with optional AM/PM
+    const timePattern = /(\d{1,2})[\:\.](\d{2})(?:[\:\.](\d{2}))?\s*(AM|PM)?/i;
+    const timeMatch = cleanText.match(timePattern);
+
+    let hours = 0;
+    let minutes = 0;
+    let seconds = 0;
+
+    if (timeMatch) {
+      hours = parseInt(timeMatch[1], 10);
+      minutes = parseInt(timeMatch[2], 10);
+      if (timeMatch[3]) {
+        seconds = parseInt(timeMatch[3], 10);
+      }
+      const ampm = timeMatch[4];
+      if (ampm) {
+        if (ampm.toUpperCase() === 'PM' && hours < 12) {
+          hours += 12;
+        } else if (ampm.toUpperCase() === 'AM' && hours === 12) {
+          hours = 0;
+        }
+      }
     }
 
     const parsedDME = new Date(year, month, day, hours, minutes, seconds);
@@ -277,7 +315,7 @@ export function parseDateStringToTimestamp(dueText: string, defaultTimestamp: nu
     }
   }
 
-  // Fallback to standard new Date() for formats other than DD/MM/YYYY
+  // Fallback to standard new Date() for formats other than custom DD/MM/YYYY
   const directDate = new Date(cleanText);
   if (!isNaN(directDate.getTime())) {
     return { timestamp: directDate.getTime(), date: directDate };
@@ -318,14 +356,26 @@ export function parseTimestampFromId(id: string): number | null {
     }
   }
 
-  // Format: SYNC-Willy-6018-4601993-10072026at237PM
-  const syncMatch = id.match(/(\d{2})(\d{2})(\d{4})at(\d+)(\d{2})(AM|PM)/i);
+  // Format: SYNC-Willy-6018-4601993-10072026at237PM or SYNC-...-10072026at1437
+  const syncMatch = id.match(/(\d{2})(\d{2})(\d{4})at(\d+)(\d{2})(AM|PM)?/i);
   if (syncMatch) {
     const [_, d, m, y, hh, mm, ampm] = syncMatch;
     let hour = Number(hh);
-    if (ampm.toUpperCase() === 'PM' && hour < 12) hour += 12;
-    if (ampm.toUpperCase() === 'AM' && hour === 12) hour = 0;
+    if (ampm) {
+      if (ampm.toUpperCase() === 'PM' && hour < 12) hour += 12;
+      if (ampm.toUpperCase() === 'AM' && hour === 12) hour = 0;
+    }
     const parsedDate = new Date(Number(y), Number(m) - 1, Number(d), hour, Number(mm));
+    if (!isNaN(parsedDate.getTime())) {
+      return parsedDate.getTime();
+    }
+  }
+
+  // Format: SYNC-Willy-6018-4601993-10072026 (DDMMYYYY) at the end of ID
+  const syncMatchNoTime = id.match(/(\d{2})(\d{2})(\d{4})$/);
+  if (syncMatchNoTime) {
+    const [_, d, m, y] = syncMatchNoTime;
+    const parsedDate = new Date(Number(y), Number(m) - 1, Number(d));
     if (!isNaN(parsedDate.getTime())) {
       return parsedDate.getTime();
     }

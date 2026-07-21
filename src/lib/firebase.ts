@@ -2,6 +2,7 @@ import { initializeApp } from 'firebase/app';
 import { getAuth as getFirebaseAuth } from 'firebase/auth';
 import { 
   initializeFirestore, 
+  getFirestore,
   persistentLocalCache, 
   persistentMultipleTabManager,
   doc, 
@@ -27,12 +28,27 @@ function initFirebase() {
     };
     
     if (typeof window !== 'undefined') {
-      settings.localCache = persistentLocalCache({
-        tabManager: persistentMultipleTabManager()
-      });
+      try {
+        settings.localCache = persistentLocalCache({
+          tabManager: persistentMultipleTabManager()
+        });
+      } catch (cacheErr) {
+        console.warn("Firebase persistent cache initialization failed, proceeding without persistent local cache:", cacheErr);
+      }
     }
     
-    dbInstance = initializeFirestore(app, settings, firebaseConfig.firestoreDatabaseId);
+    try {
+      dbInstance = initializeFirestore(app, settings, firebaseConfig.firestoreDatabaseId);
+    } catch (firestoreErr) {
+      console.warn("initializeFirestore failed, falling back to default getFirestore:", firestoreErr);
+      try {
+        dbInstance = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+      } catch (fallbackErr) {
+        console.error("Critical: Both initializeFirestore and getFirestore failed:", fallbackErr);
+        // Fallback to getFirestore with default DB ID as last resort
+        dbInstance = getFirestore(app);
+      }
+    }
   }
 }
 

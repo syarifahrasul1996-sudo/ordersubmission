@@ -2,7 +2,7 @@ import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { useAppContext } from '../AppContext';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LabelList, CartesianGrid } from 'recharts';
 import { RefreshCcw, AlertCircle, X, ChevronDown } from 'lucide-react';
-import { parseDateStringToTimestamp } from '../utils';
+import { parseDateStringToTimestamp, parseTimestampFromId } from '../utils';
 import { getOrderDueTimestamp } from '../utils/orderWindow';
 import { AppState } from '../types';
 
@@ -206,7 +206,7 @@ function SafeResponsiveContainer({ children }: SafeResponsiveContainerProps) {
 export function DashboardView() {
   const { appLanguage, pushView, history, syncOrders, isSyncing, deletedOrderIds } = useAppContext();
   
-  const [filterYear, setFilterYear] = useState<string>(new Date().getFullYear().toString());
+  const [filterYear, setFilterYear] = useState<string>('all');
   const [filterMonth, setFilterMonth] = useState<string>('all');
   
   const annualSheets = useMemo(() => {
@@ -299,24 +299,10 @@ export function DashboardView() {
       const dueResult = getOrderDueTimestamp(item);
       const isDueVal = dueResult !== null && Number.isFinite(dueResult) && dueResult > 0;
       
-      let computedTimestamp = Number(item.timestamp) || 0;
       const orderIdToParse = state.orderId || item.id;
-      if (!computedTimestamp && orderIdToParse && typeof orderIdToParse === 'string' && orderIdToParse.startsWith('ORD-')) {
-        const parts = orderIdToParse.split('-');
-        if (parts.length >= 3) {
-          const datePart = parts[1]; 
-          const timePart = parts[2];
-          if (datePart.length === 8 && timePart.length >= 6) {
-            const yyyy = parseInt(datePart.substring(0, 4), 10);
-            const MM = parseInt(datePart.substring(4, 6), 10) - 1;
-            const dd = parseInt(datePart.substring(6, 8), 10);
-            const hh = parseInt(timePart.substring(0, 2), 10);
-            const mm = parseInt(timePart.substring(2, 4), 10);
-            const ss = parseInt(timePart.substring(4, 6), 10);
-            computedTimestamp = new Date(yyyy, MM, dd, hh, mm, ss).getTime();
-          }
-        }
-      }
+      const parsedIdTimestamp = parseTimestampFromId(orderIdToParse);
+      
+      let computedTimestamp = parsedIdTimestamp || Number(item.timestamp) || 0;
       
       if (!computedTimestamp && isDueVal) {
         computedTimestamp = dueResult;
