@@ -1,6 +1,9 @@
-import { getAuth } from './lib/firebase';
-const auth = getAuth();
-import { signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider, onAuthStateChanged, User } from 'firebase/auth';
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider, onAuthStateChanged, User } from 'firebase/auth';
+import firebaseConfig from '../firebase-applet-config.json';
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
 
 const provider = new GoogleAuthProvider();
 provider.addScope('https://www.googleapis.com/auth/spreadsheets');
@@ -61,6 +64,7 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
     console.error('Sign in error:', error);
     if (error.code === 'auth/popup-blocked' || error.code === 'auth/cancelled-query' || error.code === 'auth/popup-closed-by-user') {
       // Fallback to redirect if popup is blocked or closed prematurely
+      console.log('Popup issue detected, trying redirect...');
       await signInWithRedirect(auth, provider);
       return null;
     }

@@ -12,6 +12,9 @@ export interface AppState {
   isEditMode: boolean;
   extraHours: number;
   customDoc: string;
+  scriptUrl?: string;
+  name?: string;
+  phone?: string;
   spreadsheetId: string;
   timestamp?: number;
   historyId?: string;
@@ -34,7 +37,7 @@ export interface AppState {
   price?: number;
   hasThreeHourChecked?: boolean;
   threeHourAlerted?: boolean;
-  syncStatus?: 'saved_locally' | 'syncing' | 'synced' | 'failed';
+  syncStatus?: 'saved_locally' | 'syncing' | 'synced' | 'failed' | 'sent_unverified';
   syncLastAttempt?: number;
   syncLastSuccess?: number;
   syncFailCount?: number;
@@ -42,33 +45,18 @@ export interface AppState {
   dashboardFilterMonth?: string;
   dashboardFilterYear?: string;
   lastModifiedLocally?: number;
-  lastUpdated?: number;
-  version?: number;
   isDeleted?: boolean;
-  ENABLE_CANARY_FIRESTORE?: boolean;
-  status?: string;
-  type?: string;
-  syncedAt?: number;
-  messages?: string[];
 }
 
 export type ViewType = 'home' | 'resume-type' | 'resume-form-fields' | 'general-form' | 'confirmation' | 'output' | 'history' | 'customer-info' | 'dashboard' | 'contacts-sync' | 'others';
-
-export interface InAppNotification {
-  id: string;
-  title: string;
-  body: string;
-  timestamp: number;
-  isRead: boolean;
-  type?: 'soon' | 'due' | 'sync' | 'status_query';
-  dedupeKey?: string;
-}
 
 export interface OrderHistoryItem {
   id: string;
   timestamp: number;
   state: AppState;
   messages: string[];
+  data?: any;
+  type?: string;
 }
 
 export const INITIAL_STATE: AppState = {
@@ -102,12 +90,10 @@ export const INITIAL_STATE: AppState = {
   orderLink: '',
   googleSheetLink: '',
   orderId: '',
-  price: undefined,
   hasThreeHourChecked: false,
   threeHourAlerted: false,
   isDueInvalid: false,
   dashboardFilterMonth: 'all',
   dashboardFilterYear: new Date().getFullYear().toString(),
   isDeleted: false,
-  ENABLE_CANARY_FIRESTORE: false,
 };

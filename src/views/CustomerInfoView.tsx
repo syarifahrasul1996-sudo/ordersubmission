@@ -1,15 +1,12 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { RefreshCcw, Save, Check, FileText, ExternalLink, LogOut, Loader2, AlertCircle, ChevronDown } from 'lucide-react';
 import { useAppContext } from '../AppContext';
-import { triggerHaptic } from '../utils/haptics';
-import { calculateDeadline, formatPhoneUniversal, parseDateStringToTimestamp, toProperCase, formatAddOnString, normalizeBahasa, normalizeJenis } from '../utils';
+import { calculateDeadline, formatPhoneUniversal, parseDateStringToTimestamp } from '../utils';
 import { Toast } from '../components/Toast';
 import { SetupHelper } from '../components/SetupHelper';
 import { googleSignIn, initAuth, getAccessToken, logout } from '../utils/googleAuth';
 import { User } from 'firebase/auth';
 import { cn } from '../cn';
-import { isFirestoreCanary } from '../services/firestoreOrders';
-import { promoteDraftToFinalInFirestore } from '../services/firestoreSubmission';
 
 const TEMPLATE_SOURCES = {
   agreement: {
@@ -28,55 +25,28 @@ function generateOrderId() {
   return `ORD-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
 }
 
-async function jsonpRequest<T>(url: string, params: Record<string, string | number | boolean>): Promise<T> {
-  const callbackName = 'jsonp_edit_callback_' + Math.round(100000 * Math.random());
-  const separator = url.indexOf('?') === -1 ? '?' : '&';
-  const queryParts = [`callback=${callbackName}`];
-  Object.entries(params).forEach(([key, value]) => {
-    queryParts.push(`${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`);
-  });
-  const fullUrl = url + separator + queryParts.join('&');
+function jsonpRequest<T>(url: string, params: Record<string, string | number | boolean>): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const callbackName = 'jsonp_edit_callback_' + Math.round(100000 * Math.random());
+    (window as any)[callbackName] = (data: T) => {
+      cleanup();
+      resolve(data);
+    };
 
-  // Try standard fetch GET first as it is much more robust against ad-blockers and CSP that block dynamic scripts
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout for fast fetch attempt
-    const response = await fetch(fullUrl, {
-      method: 'GET',
-      signal: controller.signal
-    });
-    clearTimeout(timeoutId);
-    if (response.ok) {
-      const text = await response.text();
-      const match = text.match(/^[a-zA-Z0-9_]+\(([\s\S]*)\);?\s*$/);
-      if (match) {
-        try {
-          return JSON.parse(match[1]) as T;
-        } catch (err) {
-          console.warn('JSONP regex match parse failed', err);
-        }
-      } else {
-        try {
-          return JSON.parse(text) as T;
-        } catch (err) {
-          console.warn('JSONP response body raw parse failed', err);
-        }
-      }
-    }
-  } catch (fetchErr) {
-    console.warn('Fetch JSONP fallback failed, trying dynamic script injection:', fetchErr);
-  }
-
-  // Fallback to traditional script injection JSONP with 45s timeout for Apps Script cold start tolerance
-  return new Promise<T>((resolve, reject) => {
     const script = document.createElement('script');
-    script.src = fullUrl;
+    const separator = url.indexOf('?') === -1 ? '?' : '&';
+    const queryParts = [`callback=${callbackName}`];
+    Object.entries(params).forEach(([key, value]) => {
+      queryParts.push(`${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`);
+    });
+    
+    script.src = url + separator + queryParts.join('&');
     script.async = true;
 
     const timeoutId = setTimeout(() => {
       cleanup();
       reject(new Error('JSONP request timed out'));
-    }, 45000);
+    }, 15000);
 
     const cleanup = () => {
       clearTimeout(timeoutId);
@@ -86,16 +56,7 @@ async function jsonpRequest<T>(url: string, params: Record<string, string | numb
       delete (window as any)[callbackName];
     };
 
-    (window as any)[callbackName] = (data: T) => {
-      cleanup();
-      resolve(data);
-    };
-
-    script.onerror = (event: any) => {
-      if (event && typeof event !== 'string') {
-        if (typeof (event as any).preventDefault === 'function') (event as any).preventDefault();
-        if (typeof (event as any).stopPropagation === 'function') (event as any).stopPropagation();
-      }
+    script.onerror = () => {
       cleanup();
       reject(new Error('JSONP request failed'));
     };
@@ -128,13 +89,13 @@ export function CustomerInfoView() {
     // Only prefill if the user went through a flow that asks for language
     if (isNewResume || isSurat || isLainLain) {
       if (Array.isArray(state.resumeLangs)) {
-        if (state.resumeLangs.length === 2) initBahasa = '2 Bahasa';
+        if (state.resumeLangs.length === 2) initBahasa = '2 bahasa';
         else if (state.resumeLangs.length === 1) initBahasa = state.resumeLangs[0];
       }
     }
 
     let initJenis = '';
-    if (state.urgency === 'noturgent' || state.urgency === 'standard') initJenis = 'Tak Urgent';
+    if (state.urgency === 'noturgent' || state.urgency === 'standard') initJenis = appLanguage === 'ms' ? 'Tak Urgent' : 'Not Urgent';
     else if (state.urgency === 'urgent') initJenis = 'Urgent';
     else if (state.urgency === 'super') initJenis = 'Super Urgent';
     else if (state.urgency === 'semi') initJenis = 'Semi Urgent';
@@ -166,14 +127,12 @@ export function CustomerInfoView() {
           }
         } else if (a === 'ATS Resume' || a === 'ATS') {
           initAddOnList.push('ATS');
-        } else if (a === 'Custom') {
-          initAddOnList.push(toProperCase(state.customDoc || '').trim() || 'Custom');
         } else {
-          initAddOnList.push(toProperCase(a));
+          initAddOnList.push(a);
         }
       });
     }
-    const initAddOn = formatAddOnString(initAddOnList.join(', '));
+    const initAddOn = initAddOnList.join(', ');
 
     const validDropdownOptions = [
       'Editable softcopy BI',
@@ -243,7 +202,7 @@ export function CustomerInfoView() {
       initType: state.mainType || 'Resume',
       initSubType: state.subType || '',
       initUrgency: state.urgency || 'normal',
-      initJenis: state.customerJenis ? normalizeJenis(String(state.customerJenis)) : initJenis, 
+      initJenis: state.customerJenis ? String(state.customerJenis) : initJenis, 
       initDue, 
       initDueTimestamp: state.dueTimestamp || dl.getTime(),
       initTemplate: state.customerTemplate || initTemplate, 
@@ -283,11 +242,21 @@ export function CustomerInfoView() {
   const [showToast, setShowToast] = useState(false);
   const [showSetup, setShowSetup] = useState(false);
   
-  // Form session recovery state
-  const [showResumeBanner, setShowResumeBanner] = useState(false);
+  // Google Docs Integration
   const [googleUser, setGoogleUser] = useState<User | null>(null);
   const [isGeneratingDoc, setIsGeneratingDoc] = useState(false);
+
+  // Form session recovery state
+  const [showResumeBanner, setShowResumeBanner] = useState(false);
   const isInitializingRef = useRef(true);
+
+  useEffect(() => {
+    const unsubscribe = initAuth(
+      (u) => setGoogleUser(u),
+      () => setGoogleUser(null)
+    );
+    return () => unsubscribe();
+  }, []);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -569,7 +538,7 @@ Dokumen Dijana Secara Automatik`;
       }, 500);
       return () => clearTimeout(timer);
     }
-  }, [isActive]); // fetch when mounted or when switching views
+  }, [isActive, state.historyId, state.timestamp]); // fetch when mounted or when switching orders
 
   const handleResumeProgress = () => {
     try {
@@ -604,9 +573,9 @@ Dokumen Dijana Secara Automatik`;
   };
 
   const syncStateAndSave = (isDraftSave = false) => {
-    if (isSaving || saved) return;
-
-    const formValues = {
+    // Sync state one last time before saving
+    setState(prev => ({
+      ...prev,
       customerName: name,
       customerPhone: phone,
       customerOrder: order,
@@ -621,21 +590,15 @@ Dokumen Dijana Secara Automatik`;
       googleSheetLink: link,
       orderId: orderId,
       price: price ? parseFloat(price) : undefined,
-    };
-
+    }));
+    
     if (isDraftSave) {
         // Only save draft if it's a transient draft, NOT a completed order in local history or remote search result
-        const checkId = state.historyId;
-        const isRealOrder = checkId && (!checkId.startsWith('draft_') || history?.some(item => item.id === checkId));
+        const isRealOrder = state.historyId && (!state.historyId.startsWith('draft_') || history?.some(item => item.id === state.historyId));
         if (!isRealOrder) {
-          contextSaveAsDraft(formValues);
+          contextSaveAsDraft();
           showToastMessage(appLanguage === 'ms' ? 'Draf disimpan secara lokal!' : 'Draft saved locally!');
         }
-    } else {
-        setState(prev => ({
-          ...prev,
-          ...formValues,
-        }));
     }
   };
 
@@ -645,13 +608,13 @@ Dokumen Dijana Secara Automatik`;
 
   // Debounced Auto-Save
   useEffect(() => {
-    if (isActive && !isSaving && !saved) {
+    if (isActive) {
       const timer = setTimeout(() => {
         syncStateAndSave(true);
       }, 5000); 
       return () => clearTimeout(timer);
     }
-  }, [name, phone, order, template, bahasa, addOn, jenis, due, info, link, orderId, isActive, isSaving, saved]);
+  }, [name, phone, order, template, bahasa, addOn, jenis, due, info, link, orderId, isActive]);
 
   // Save form progress to localStorage with a debounce
   useEffect(() => {
@@ -680,170 +643,132 @@ Dokumen Dijana Secara Automatik`;
   }, [name, phone, info, link, order, template, bahasa, addOn, jenis, due, dueTimestamp, orderId, price, isActive, showResumeBanner]);
 
   const handleSaveInfo = async () => {
-    if (isSaving) return;
     if (!name.trim() || !phone.trim()) {
       setErrorMsg(appLanguage === 'ms' ? 'Sila isi semua ruangan.' : 'Please fill all fields.');
       return;
     }
     
+    // Cleanup draft if it exists
+    if (state.historyId) {
+        deleteDraft(state.historyId);
+    }
+
+    const parsedObj = parseDateStringToTimestamp(due, dueTimestamp);
+    const parsedTimestamp = parsedObj.timestamp;
+    const targetDate = parsedObj.date;
+
+    const orderYear = String(targetDate.getFullYear());
+    let resolvedSpreadsheetId = spreadsheetId || state.spreadsheetId || '1kUAJYUVhr9bPYErtpnohpvuGGyhBSvJyEOIyzEFivJo';
+    let resolvedWebhookUrl = webhookUrl.trim();
+
+    try {
+      const savedSheets = localStorage.getItem('db_annual_sheets');
+      if (savedSheets) {
+        const parsed = JSON.parse(savedSheets);
+        if (Array.isArray(parsed)) {
+          const matches = parsed.find(s => s.year === orderYear);
+          if (matches) {
+            if (matches.spreadsheetId && matches.spreadsheetId.trim()) {
+              const rawInput = matches.spreadsheetId.trim();
+              if (rawInput.includes('docs.google.com/spreadsheets/d/')) {
+                const matchedId = rawInput.match(/\/d\/([a-zA-Z0-9-_]+)/);
+                resolvedSpreadsheetId = matchedId ? matchedId[1] : rawInput;
+              } else {
+                resolvedSpreadsheetId = rawInput;
+              }
+            }
+            if (matches.scriptUrl && matches.scriptUrl.trim()) {
+              resolvedWebhookUrl = matches.scriptUrl.trim();
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.error("Error reading db_annual_sheets:", err);
+    }
+
+    // Default fallbacks for each year if not customized
+    if (resolvedSpreadsheetId === '1kUAJYUVhr9bPYErtpnohpvuGGyhBSvJyEOIyzEFivJo' || !resolvedSpreadsheetId) {
+      if (orderYear === '2024') {
+        resolvedSpreadsheetId = '1B9zdWXVLnvj0jNNVnKxcb6cJnS1VLCIdB4j-RR3wOlg';
+      } else if (orderYear === '2025') {
+        resolvedSpreadsheetId = '1myU9apnYWWtU3snnCw14qI6ZS05i4DY6oOswLz1sCwo';
+      } else if (orderYear === '2026') {
+        resolvedSpreadsheetId = '1kUAJYUVhr9bPYErtpnohpvuGGyhBSvJyEOIyzEFivJo';
+      }
+    }
+// Format phone first using our universal helper
+const formattedPhone = formatPhoneUniversal(phone);
+setPhone(formattedPhone);
+
+const updatedInfo = info.replace(
+  /(No\.?\s*Telefon|Phone Number)\s*:\s*.*/i,
+  `$1: ${formattedPhone}`
+);
+
+setInfo(updatedInfo);
+
+const oldIdToSend = orderId;
+let finalOrderId = orderId;
+
+// Check if we need to upgrade a temporary ID or empty ID to a permanent one
+if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-") === 0) {
+  finalOrderId = generateOrderId();
+  setOrderId(finalOrderId);
+  console.log("Pre-upgraded ID client-side:", oldIdToSend, "->", finalOrderId);
+
+  // 1. Rename existing history item in local memory (so updateOrderHistoryState updates it instead of duplicating)
+  setHistory(prev => {
+    return prev.map(item => {
+      if (item.id === state.historyId || item.id === oldIdToSend || (item.state && item.state.orderId === oldIdToSend)) {
+        return {
+          ...item,
+          id: finalOrderId,
+          state: {
+            ...item.state,
+            orderId: finalOrderId,
+            historyId: finalOrderId,
+          }
+        };
+      }
+      return item;
+    });
+  });
+}
+
+    // Format name and template correctly
+    const finalFormattedName = name.trim().replace(/\w\S*/g, (txt) => txt.charAt(0).toUpperCase() + txt.substring(1).toLowerCase());
+    const finalFormattedTemplate = template.trim().toUpperCase();
+
+    // Save the new values to global state + history with syncing status
+    updateOrderHistoryState({
+      customerName: finalFormattedName,
+      customerPhone: formattedPhone,
+      customerInfo: updatedInfo,
+      orderLink: link,
+      googleSheetLink: link,
+      customerOrder: order,
+      customerTemplate: finalFormattedTemplate,
+      customerBahasa: bahasa,
+      customerAddOn: addOn,
+      customerJenis: jenis,
+      customerDue: due,
+      dueTimestamp: parsedTimestamp,
+      hasNotified: false,
+      orderId: finalOrderId,
+      historyId: finalOrderId,
+      price: price ? parseFloat(price) : undefined,
+      spreadsheetId: resolvedSpreadsheetId,
+      scriptUrl: resolvedWebhookUrl,
+      syncStatus: 'syncing',
+    });
+
+    setDueTimestamp(parsedTimestamp);
+    setErrorMsg('');
     setIsSaving(true);
     setSaved(false);
 
     try {
-      // Cleanup draft if it exists
-      if (state.historyId && state.historyId.startsWith('draft_')) {
-          deleteDraft(state.historyId);
-      }
-
-      const parsedObj = parseDateStringToTimestamp(due, dueTimestamp);
-      const parsedTimestamp = parsedObj.timestamp;
-      const targetDate = parsedObj.date;
-
-      const orderYear = String(targetDate.getFullYear());
-      let resolvedSpreadsheetId = spreadsheetId || state.spreadsheetId || '1kUAJYUVhr9bPYErtpnohpvuGGyhBSvJyEOIyzEFivJo';
-      let resolvedWebhookUrl = webhookUrl.trim();
-
-      try {
-        const savedSheets = localStorage.getItem('db_annual_sheets');
-        if (savedSheets) {
-          const parsed = JSON.parse(savedSheets);
-          if (Array.isArray(parsed)) {
-            const matches = parsed.find(s => s.year === orderYear);
-            if (matches) {
-              if (matches.spreadsheetId && matches.spreadsheetId.trim()) {
-                const rawInput = matches.spreadsheetId.trim();
-                if (rawInput.includes('docs.google.com/spreadsheets/d/')) {
-                  const matchedId = rawInput.match(/\/d\/([a-zA-Z0-9-_]+)/);
-                  resolvedSpreadsheetId = matchedId ? matchedId[1] : rawInput;
-                } else {
-                  resolvedSpreadsheetId = rawInput;
-                }
-              }
-              if (matches.scriptUrl && matches.scriptUrl.trim()) {
-                resolvedWebhookUrl = matches.scriptUrl.trim();
-              }
-            }
-          }
-        }
-      } catch (err) {
-        console.error("Error reading db_annual_sheets:", err);
-      }
-
-      // Default fallbacks for each year if not customized
-      if (resolvedSpreadsheetId === '1kUAJYUVhr9bPYErtpnohpvuGGyhBSvJyEOIyzEFivJo' || !resolvedSpreadsheetId) {
-        if (orderYear === '2024') {
-          resolvedSpreadsheetId = '1B9zdWXVLnvj0jNNVnKxcb6cJnS1VLCIdB4j-RR3wOlg';
-        } else if (orderYear === '2025') {
-          resolvedSpreadsheetId = '1myU9apnYWWtU3snnCw14qI6ZS05i4DY6oOswLz1sCwo';
-        } else if (orderYear === '2026') {
-          resolvedSpreadsheetId = '1kUAJYUVhr9bPYErtpnohpvuGGyhBSvJyEOIyzEFivJo';
-        }
-      }
-      
-      // Format phone first using our universal helper
-      const formattedPhone = formatPhoneUniversal(phone);
-      setPhone(formattedPhone);
-
-      const updatedInfo = info.replace(
-        /(No\.?\s*Telefon|Phone Number)\s*:\s*.*/i,
-        `$1: ${formattedPhone}`
-      );
-
-      setInfo(updatedInfo);
-
-      const oldIdToSend = orderId;
-      let finalOrderId = orderId;
-
-      // Check if we need to upgrade a temporary ID or empty ID to a permanent one
-      if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-") === 0) {
-        finalOrderId = generateOrderId();
-        setOrderId(finalOrderId);
-
-        // Rename existing history item in local memory (so updateOrderHistoryState updates it instead of duplicating)
-        setHistory(prev => {
-          return prev.map(item => {
-            if (item.id === state.historyId || item.id === oldIdToSend || (item.state && item.state.orderId === oldIdToSend)) {
-              return {
-                ...item,
-                id: finalOrderId,
-                state: {
-                  ...item.state,
-                  orderId: finalOrderId,
-                  historyId: finalOrderId,
-                }
-              };
-            }
-            return item;
-          });
-        });
-      }
-
-      // Format name and template correctly
-      const finalFormattedName = name.trim().replace(/\w\S*/g, (txt) => txt.charAt(0).toUpperCase() + txt.substring(1).toLowerCase());
-      const finalFormattedTemplate = template.trim().toUpperCase();
-
-      let finalMainType = 'Resume';
-      let finalIsEditMode = false;
-      if (order === 'Edit Resume') {
-        finalMainType = 'Resume';
-        finalIsEditMode = true;
-      } else if (order === 'Surat') {
-        finalMainType = 'Surat';
-        finalIsEditMode = false;
-      } else if (order === 'Edit PDF') {
-        finalMainType = 'Edit PDF';
-        finalIsEditMode = false;
-      } else if (order === 'Lain2' || order === 'Lain-lain') {
-        finalMainType = 'Lain-lain';
-        finalIsEditMode = false;
-      } else {
-        finalMainType = 'Resume';
-        finalIsEditMode = false;
-      }
-
-      const finalFormattedAddOn = formatAddOnString(addOn);
-
-      const normalizedJenisVal = normalizeJenis(jenis);
-
-      // Save the new values to global state + history with syncing status
-      const updatedState = {
-        ...state,
-        customerName: finalFormattedName,
-        customerPhone: formattedPhone,
-        customerInfo: updatedInfo,
-        orderLink: link,
-        googleSheetLink: link,
-        customerOrder: order,
-        customerTemplate: finalFormattedTemplate,
-        customerBahasa: normalizeBahasa(bahasa),
-        customerAddOn: finalFormattedAddOn,
-        customerJenis: normalizedJenisVal,
-        customerDue: due,
-        dueTimestamp: parsedTimestamp,
-        hasNotified: false,
-        orderId: finalOrderId,
-        historyId: finalOrderId,
-        price: price ? parseFloat(price) : undefined,
-        spreadsheetId: resolvedSpreadsheetId,
-        scriptUrl: resolvedWebhookUrl,
-        syncStatus: 'syncing' as const,
-        mainType: finalMainType,
-        isEditMode: finalIsEditMode
-      };
-
-      updateOrderHistoryState(updatedState, true);
-      setDueTimestamp(parsedTimestamp);
-      setErrorMsg('');
-
-      if (isFirestoreCanary) {
-        try {
-          await promoteDraftToFinalInFirestore(state.historyId || '', updatedState);
-          console.log('[orderService] [CustomerInfoView] Saved to Firestore canary successfully.');
-        } catch (err) {
-          console.error('[orderService] [CustomerInfoView] Failed to save to Firestore canary:', err);
-        }
-      }
-
       // Columns: Checkbox, Nama, Phone Number, Order, Template, Bahasa, Add On, Jenis, Due, Link, Order ID
       const orderRow = [
         state.isDelivered || false,
@@ -851,9 +776,9 @@ Dokumen Dijana Secara Automatik`;
         formattedPhone,
         order,
         finalFormattedTemplate || "",
-        normalizeBahasa(bahasa),
-        finalFormattedAddOn || "",
-        normalizedJenisVal,
+        bahasa || "",
+        addOn || "",
+        jenis,
         due,
         link || "",
         finalOrderId || "",
@@ -875,6 +800,8 @@ Dokumen Dijana Secara Automatik`;
         spreadsheetId: resolvedSpreadsheetId
       };
       
+      console.log("Submitting payload to Google Apps Script:", JSON.stringify(payload, null, 2));
+
       // Offline check & queue
       if (!navigator.onLine) {
         try {
@@ -907,27 +834,25 @@ Dokumen Dijana Secara Automatik`;
         phone: formattedPhone,
         order: order,
         template: finalFormattedTemplate || "",
-        bahasa: normalizeBahasa(bahasa),
+        bahasa: bahasa || "",
         addon: addOn || "",
-        jenis: normalizedJenisVal,
+        jenis: jenis,
         due: due,
         link: link || "",
         price: price ? price.toString() : ""
       };
 
       const triggerPostFallback = () => {
+        console.log("Executing no-cors POST update_order fallback...");
         fetch(resolvedWebhookUrl, {
           method: 'POST',
           mode: 'no-cors',
           headers: {
             'Content-Type': 'text/plain;charset=utf-8'
           },
-          body: JSON.stringify({
-  ...payload,
-  action: 'update_order',
-  oldOrderId: oldIdToSend || '',
-})
+          body: JSON.stringify(payload)
         }).then(() => {
+          console.log("no-cors POST fallback succeeded!");
           updateOrderHistoryState({
             syncStatus: 'synced',
             syncLastSuccess: Date.now(),
@@ -946,8 +871,10 @@ Dokumen Dijana Secara Automatik`;
       jsonpRequest<{status: string; message?: string; orderId?: string; isUpgraded?: boolean}>(resolvedWebhookUrl, jsonpParams)
         .then((resp) => {
           if (resp && resp.status === 'success') {
+            console.log("JSONP update_order successful:", resp);
             const returnedId = resp.orderId || finalOrderId;
             if (returnedId && returnedId !== finalOrderId) {
+              console.log("Upgraded orderId from", finalOrderId, "to", returnedId);
               
               // Update matching history item's ID & internal state
               setHistory(prev => {
@@ -986,17 +913,8 @@ Dokumen Dijana Secara Automatik`;
                 lastModifiedLocally: Date.now()
               });
             }
-          } else if (resp && resp.status === 'error') {
-            console.error("JSONP update_order returned error response:", JSON.stringify(resp));
-            updateOrderHistoryState({
-              syncStatus: 'failed',
-              syncLastAttempt: Date.now(),
-              lastModifiedLocally: Date.now()
-            });
-            setErrorMsg(resp.message || 'Server returned an error');
-            showToastMessage(appLanguage === 'ms' ? 'Ralat pelayan: Gagal di-sync' : 'Server error: Sync failed');
           } else {
-            console.error("JSONP update_order failed or returned invalid response:", resp);
+            console.error("JSONP update_order returned error response:", resp);
             triggerPostFallback();
           }
         })
@@ -1059,7 +977,7 @@ Dokumen Dijana Secara Automatik`;
     if (bahasaMatch && bahasaMatch[1]) {
       const val = bahasaMatch[1].toUpperCase();
       if (val.includes('2 BAHASA') || val.includes('DUA BAHASA') || val.includes('BOTH') || (val.includes('BM') && val.includes('BI'))) {
-        newBahasa = '2 Bahasa';
+        newBahasa = '2 bahasa';
       } else if (val.includes('BM') || val.includes('MELAYU')) {
         newBahasa = 'Melayu';
       } else if (val.includes('BI') || val.includes('ENGLISH') || val.includes('INGGERIS')) {
@@ -1121,20 +1039,14 @@ Dokumen Dijana Secara Automatik`;
             <div className="flex gap-2 w-full sm:w-auto shrink-0 pt-0.5 sm:pt-0">
               <button
                 type="button"
-                onClick={() => {
-                  triggerHaptic('medium');
-                  handleResumeProgress();
-                }}
+                onClick={handleResumeProgress}
                 className="flex-1 sm:flex-none px-3.5 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-black text-xs active:scale-95 transition-all shadow-sm"
               >
                 {appLanguage === 'ms' ? 'Pulihkan' : 'Resume'}
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  triggerHaptic('medium');
-                  handleDismissProgress();
-                }}
+                onClick={handleDismissProgress}
                 className="flex-1 sm:flex-none px-3 py-1.5 rounded-xl bg-white dark:bg-gray-800 border border-amber-200/40 dark:border-amber-800/30 hover:bg-amber-100/30 text-amber-900 dark:text-amber-200 font-bold text-xs transition-colors"
               >
                 {appLanguage === 'ms' ? 'Padam' : 'Discard'}
@@ -1225,7 +1137,7 @@ Dokumen Dijana Secara Automatik`;
             >
               <option value="Melayu">Melayu</option>
               <option value="English">English</option>
-              <option value="2 Bahasa">2 Bahasa</option>
+              <option value="2 bahasa">2 bahasa</option>
               <option value=""></option>
             </select>
             <div className="absolute top-0 right-4 h-full flex items-center pointer-events-none">
@@ -1298,7 +1210,6 @@ Dokumen Dijana Secara Automatik`;
               type="text"
               value={addOn}
               onChange={(e) => setAddOn(e.target.value)}
-              onBlur={() => setAddOn(formatAddOnString(addOn))}
               placeholder={appLanguage === 'ms' ? 'Pilihan terpilih (boleh taip atau edit secara manual di sini)...' : 'Selected options (type or edit manually here)...'}
               className="w-full h-[40px] bg-surface rounded-xl px-4 font-bold text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all text-xs placeholder:text-gray-300 placeholder:font-semibold" 
             />
@@ -1315,10 +1226,10 @@ Dokumen Dijana Secara Automatik`;
                 selectColorClass = "border-super focus:border-super focus:ring-super/20 text-super font-black bg-super/5 dark:bg-super/10 ml-0";
               } else if (v.includes('semi')) {
                 selectColorClass = "border-semi focus:border-semi focus:ring-semi/20 text-semi font-black bg-semi/5 dark:bg-semi/10 ml-0";
-              } else if (v.includes('tak') || v.includes('normal') || v.includes('not') || v.includes('tidak')) {
-                selectColorClass = "border-noturgent focus:border-noturgent focus:ring-noturgent/20 text-noturgent font-black bg-noturgent/5 dark:bg-noturgent/10 ml-0";
               } else if (v.includes('urgent')) {
                 selectColorClass = "border-urgent focus:border-urgent focus:ring-urgent/20 text-urgent font-black bg-urgent/5 dark:bg-urgent/10 ml-0";
+              } else if (v.includes('tak') || v.includes('normal') || v.includes('not') || v.includes('tidak')) {
+                selectColorClass = "border-noturgent focus:border-noturgent focus:ring-noturgent/20 text-noturgent font-black bg-noturgent/5 dark:bg-noturgent/10 ml-0";
               }
               return (
                 <select 
@@ -1367,20 +1278,11 @@ Dokumen Dijana Secara Automatik`;
 
         <div className="space-y-1">
           <label className="text-xs font-black text-gray-400 ml-1 uppercase tracking-widest">{appLanguage === 'ms' ? 'Harga (RM)' : 'Price (RM)'}</label>
-          <input
-          data-price-field="text-version"
-          type="text"
-          inputMode="decimal"
-          value={price}
-          onChange={(e) => {
-  const value = e.target.value
-    .replace(',', '.')
-    .replace(/[^\d.]/g, '');
-
-  if (value === '' || /^\d*\.?\d{0,2}$/.test(value)) {
-    setPrice(value);
-  }
-}}
+          <input 
+            type="number"
+            step="0.01"
+            value={price}
+            onChange={(e) => setPrice(e.target.value)}
             placeholder={appLanguage === 'ms' ? 'Contoh: 50.00' : 'Example: 50.00'}
             className="w-full h-[46px] bg-surface rounded-xl px-4 font-bold text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all text-sm placeholder:text-gray-300"
           />
@@ -1391,6 +1293,22 @@ Dokumen Dijana Secara Automatik`;
             <label className="text-xs font-black text-gray-400 uppercase tracking-widest">
               {appLanguage === 'ms' ? 'Link (Asingkan dengan enter/koma untuk lebih 1 link)' : 'Links (Separate multiple links with enter/comma)'}
             </label>
+            {!(order === 'Resume' || order === 'Edit Resume') && (
+              <button
+                type="button"
+                onClick={handleGenerateDoc}
+                disabled={isGeneratingDoc}
+                className="h-7 px-2.5 bg-purple-50 hover:bg-purple-100 text-purple-700 rounded-lg border border-purple-100/50 flex items-center gap-1.5 font-black text-[10px] uppercase tracking-wider transition-colors disabled:opacity-50 cursor-pointer"
+                title={appLanguage === 'ms' ? "Jana Dokumen Google" : "Generate Google Doc"}
+              >
+                {isGeneratingDoc ? (
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                ) : (
+                  <FileText className="w-3 h-3" />
+                )}
+                <span>{appLanguage === 'ms' ? 'Auto Doc' : 'Auto Doc'}</span>
+              </button>
+            )}
           </div>
           
           <div className="relative">
@@ -1450,10 +1368,7 @@ Dokumen Dijana Secara Automatik`;
               {appLanguage === 'ms' ? 'Maklumat Pelanggan' : 'Customer Information'}
             </label>
             <button
-              onClick={() => {
-                triggerHaptic('light');
-                handleAutoFill();
-              }}
+              onClick={handleAutoFill}
               className="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-lg hover:bg-blue-100 transition-colors active:scale-95"
             >
               {appLanguage === 'ms' ? 'Auto-isi' : 'Auto-fill'}
@@ -1476,10 +1391,7 @@ Dokumen Dijana Secara Automatik`;
 
         <div className="pt-2 space-y-2">
           <button
-            onClick={() => {
-              triggerHaptic('medium');
-              handleSaveDraft();
-            }}
+            onClick={handleSaveDraft}
             className="w-full h-[48px] bg-white dark:bg-gray-800 text-blue-600 border-2 border-blue-600/20 font-bold text-sm rounded-2xl flex items-center justify-center space-x-2 active:scale-[0.98] transition-all hover:bg-blue-50 dark:hover:bg-blue-900/10"
           >
             <RefreshCcw className="w-4 h-4" />
@@ -1487,10 +1399,7 @@ Dokumen Dijana Secara Automatik`;
           </button>
 
           <button
-            onClick={() => {
-              triggerHaptic('heavy');
-              handleSaveInfo();
-            }}
+            onClick={handleSaveInfo}
             disabled={isSaving}
             className="w-full h-[58px] bg-blue-600 hover:bg-blue-700 text-white font-black text-base sm:text-base rounded-2xl flex items-center justify-center space-x-2 active:scale-[0.98] transition-all disabled:opacity-70 shadow-md shadow-blue-500/10"
           >

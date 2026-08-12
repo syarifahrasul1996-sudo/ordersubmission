@@ -1,44 +1,33 @@
-import React, { useState, useEffect, Suspense } from 'react';
+import React, { useState, Suspense, lazy } from 'react';
 import { AppProvider, useAppContext } from './AppContext';
 import { Header } from './components/Header';
 import { ViewSection } from './components/ViewSection';
 import { Toast } from './components/Toast';
 import { FloatingControls } from './components/FloatingControls';
-import { trackEvent } from './utils/analytics';
 
-// Import views directly
-import { HomeView } from './views/HomeView';
-import { ResumeTypeView } from './views/ResumeTypeView';
-import { ResumeFormFieldsView } from './views/ResumeFormFieldsView';
-import { GeneralFormView } from './views/GeneralFormView';
-import { ConfirmationView } from './views/ConfirmationView';
-import { OutputView } from './views/OutputView';
-import { HistoryView } from './views/HistoryView';
-import { CustomerInfoView } from './views/CustomerInfoView';
-import { DashboardView } from './views/DashboardView';
-import { ContactsSyncView } from './views/ContactsSyncView';
-import { OthersView } from './views/OthersView';
+// Dynamically import views for code splitting
+const HomeView = lazy(() => import('./views/HomeView').then(m => ({ default: m.HomeView })));
+const ResumeTypeView = lazy(() => import('./views/ResumeTypeView').then(m => ({ default: m.ResumeTypeView })));
+const ResumeFormFieldsView = lazy(() => import('./views/ResumeFormFieldsView').then(m => ({ default: m.ResumeFormFieldsView })));
+const GeneralFormView = lazy(() => import('./views/GeneralFormView').then(m => ({ default: m.GeneralFormView })));
+const ConfirmationView = lazy(() => import('./views/ConfirmationView').then(m => ({ default: m.ConfirmationView })));
+const OutputView = lazy(() => import('./views/OutputView').then(m => ({ default: m.OutputView })));
+const HistoryView = lazy(() => import('./views/HistoryView').then(m => ({ default: m.HistoryView })));
+const CustomerInfoView = lazy(() => import('./views/CustomerInfoView').then(m => ({ default: m.CustomerInfoView })));
+const DashboardView = lazy(() => import('./views/DashboardView').then(m => ({ default: m.DashboardView })));
+const ContactsSyncView = lazy(() => import('./views/ContactsSyncView').then(m => ({ default: m.ContactsSyncView })));
+const OthersView = lazy(() => import('./views/OthersView').then(m => ({ default: m.OthersView })));
 
 import { BottomNavigation } from './components/BottomNavigation';
-import { getAuth } from './lib/firebase';
-const auth = getAuth();
-import { onAuthStateChanged } from 'firebase/auth';
 
 
 import { DesktopSidebar } from './components/DesktopSidebar';
 
 function AppContent() {
-  const { viewStack, state } = useAppContext();
+  const { viewStack } = useAppContext();
   const [showToast, setShowToast] = useState(false);
 
   const handleCopy = async (txt: string) => {
-    // Track content copied event in analytics
-    trackEvent('order_output_copied', {
-      view: viewStack[viewStack.length - 1] || 'none',
-      mainType: state.mainType || 'none',
-      subType: state.subType || 'none',
-      text_length: txt.length
-    });
     try {
       await navigator.clipboard.writeText(txt);
     } catch (e) {

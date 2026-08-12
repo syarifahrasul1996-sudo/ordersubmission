@@ -12,7 +12,6 @@ import {
 } from 'lucide-react';
 import { useAppContext } from '../AppContext';
 import { cn } from '../cn';
-import { triggerHaptic } from '../utils/haptics';
 
 export function BottomNavigation() {
   const { 
@@ -20,7 +19,6 @@ export function BottomNavigation() {
     changeTab,
     pushView,
     startNewOrder,
-    startNewCustomer,
     appLanguage 
   } = useAppContext();
   
@@ -38,10 +36,7 @@ export function BottomNavigation() {
       <div className="w-full bg-white/95 dark:bg-zinc-900/95 backdrop-blur-xl border-t border-gray-100 dark:border-zinc-850 px-2 py-2.5 flex items-center justify-between shrink-0 z-40 pb-[calc(env(safe-area-inset-bottom)+0.6rem)] shadow-[0_-4px_20px_rgba(0,0,0,0.03)]">
         {/* TAB 1: HOME */}
         <button
-          onClick={() => {
-            triggerHaptic('light');
-            changeTab('home');
-          }}
+          onClick={() => changeTab('home')}
           className={cn(
             "flex flex-col items-center justify-center flex-1 py-1 transition-all active:scale-95 cursor-pointer",
             currentView === 'home' ? "text-primary font-black" : "text-subtext/70 dark:text-zinc-500 font-medium"
@@ -56,10 +51,7 @@ export function BottomNavigation() {
 
         {/* TAB 2: ORDER */}
         <button
-          onClick={() => {
-            triggerHaptic('light');
-            changeTab('history');
-          }}
+          onClick={() => changeTab('history')}
           className={cn(
             "flex flex-col items-center justify-center flex-1 py-1 transition-all active:scale-95 cursor-pointer",
             currentView === 'history' ? "text-primary font-black" : "text-subtext/70 dark:text-zinc-500 font-medium"
@@ -75,10 +67,7 @@ export function BottomNavigation() {
         {/* TAB 3: PLUS (+) BUTTON FOR ADD ORDER */}
         <div className="flex-1 flex justify-center -mt-6">
           <button
-            onClick={() => {
-              triggerHaptic('medium');
-              setShowAddMenu(true);
-            }}
+            onClick={() => setShowAddMenu(true)}
             className="w-13 h-13 bg-primary text-white rounded-full flex items-center justify-center shadow-lg active:scale-90 transition-transform cursor-pointer border-4 border-white dark:border-zinc-900 hover:bg-primary/95"
             id="btn-nav-add"
             aria-label="Add Order"
@@ -90,10 +79,7 @@ export function BottomNavigation() {
 
         {/* TAB 4: BUSINESS ANALYTICS */}
         <button
-          onClick={() => {
-            triggerHaptic('light');
-            changeTab('dashboard');
-          }}
+          onClick={() => changeTab('dashboard')}
           className={cn(
             "flex flex-col items-center justify-center flex-1 py-1 transition-all active:scale-95 cursor-pointer",
             currentView === 'dashboard' ? "text-primary font-black" : "text-subtext/70 dark:text-zinc-500 font-medium"
@@ -108,10 +94,7 @@ export function BottomNavigation() {
 
         {/* TAB 5: OTHERS */}
         <button
-          onClick={() => {
-            triggerHaptic('light');
-            changeTab('others');
-          }}
+          onClick={() => changeTab('others')}
           className={cn(
             "flex flex-col items-center justify-center flex-1 py-1 transition-all active:scale-95 cursor-pointer",
             currentView === 'others' ? "text-primary font-black" : "text-subtext/70 dark:text-zinc-500 font-medium"
@@ -127,13 +110,7 @@ export function BottomNavigation() {
 
       {/* Slide-up bottom sheet menu for Adding Order */}
       {showAddMenu && (
-        <div 
-          className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-end justify-center z-50 animate-fade-in" 
-          onClick={() => {
-            triggerHaptic('light');
-            setShowAddMenu(false);
-          }}
-        >
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-end justify-center z-50 animate-fade-in" onClick={() => setShowAddMenu(false)}>
           <div 
             className="w-full max-w-[500px] bg-white dark:bg-[#1C1C1E] rounded-t-[32px] p-5 pb-[calc(env(safe-area-inset-bottom)+1.5rem)] space-y-4 animate-slide-up shadow-2xl border-t border-gray-100 dark:border-zinc-800"
             onClick={(e) => e.stopPropagation()}
@@ -149,10 +126,7 @@ export function BottomNavigation() {
                 </p>
               </div>
               <button 
-                onClick={() => {
-                  triggerHaptic('light');
-                  setShowAddMenu(false);
-                }}
+                onClick={() => setShowAddMenu(false)}
                 className="w-8 h-8 bg-gray-100 dark:bg-zinc-800 rounded-full flex items-center justify-center text-text active:scale-90 transition-transform cursor-pointer"
               >
                 <X className="w-4 h-4 stroke-[2.5]" />
@@ -164,7 +138,6 @@ export function BottomNavigation() {
               {/* Option 1: Resume */}
               <button
                 onClick={() => {
-                  triggerHaptic('medium');
                   setShowAddMenu(false);
                   startNewOrder('resume-type', { mainType: 'Resume' });
                 }}
@@ -181,7 +154,6 @@ export function BottomNavigation() {
               {/* Option 2: Surat */}
               <button
                 onClick={() => {
-                  triggerHaptic('medium');
                   setShowAddMenu(false);
                   startNewOrder('general-form', { mainType: 'Surat' });
                 }}
@@ -200,7 +172,6 @@ export function BottomNavigation() {
               {/* Option 3: Lain-lain */}
               <button
                 onClick={() => {
-                  triggerHaptic('medium');
                   setShowAddMenu(false);
                   startNewOrder('general-form', { mainType: 'Lain-lain' });
                 }}
@@ -219,10 +190,8 @@ export function BottomNavigation() {
               {/* Option 4: Maklumat Pelanggan */}
               <button
                 onClick={() => {
-                  triggerHaptic('medium');
                   setShowAddMenu(false);
-                  localStorage.removeItem('customer_form_progress');
-                  startNewOrder('customer-info', {});
+                  pushView('customer-info');
                 }}
                 className="flex items-center gap-3.5 p-2.5 bg-gray-50/50 hover:bg-gray-50 dark:bg-zinc-900/40 dark:hover:bg-zinc-900/70 border border-gray-100 dark:border-zinc-800/80 rounded-2xl text-left transition-all active:scale-[0.98] cursor-pointer group"
               >

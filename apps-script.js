@@ -378,18 +378,35 @@ function syncRecentOrders(e) {
 
       if (lastRow < 2) return;
 
-      var values = sheet.getRange(2, 1, lastRow - 1, 12).getValues();
+      var values = sheet.getRange(2, 1, lastRow - 1, 11).getValues();
 
-      values.forEach(function(rowData) {
+      values.forEach(function(rowData, rowIndex) {
         var dueDate = parseDueDate(rowData[8]);
+
+        var currentOrderId = String(rowData[10] || "").trim();
+
+if (!currentOrderId || currentOrderId.indexOf("SYNC-") === 0) {
+  currentOrderId = generateAppsScriptOrderId();
+
+  var actualRow = rowIndex + 2;
+
+  sheet
+    .getRange(actualRow, 11)
+    .setValue(currentOrderId);
+
+  rowData[10] = currentOrderId;
+}
 
         if (!dueDate) return;
 
         var today = new Date();
         today.setHours(0, 0, 0, 0);
 
-        var startDate = new Date(today);
-        startDate.setDate(today.getDate() - 2);
+        var startDate = new Date(
+  today.getFullYear(),
+  today.getMonth() - 1,
+  1
+);
 
         var endDate = new Date(today);
         endDate.setDate(today.getDate() + 3);
@@ -408,8 +425,7 @@ function syncRecentOrders(e) {
           jenis: rowData[7] || "",
           due: formatDateValue(rowData[8]),
           link: String(rowData[9] || ""),
-          orderId: String(rowData[10] || ""),
-          price: rowData.length > 11 ? String(rowData[11] || "") : ""
+          orderId: String(rowData[10] || "")
         });
       });
     });
@@ -556,9 +572,18 @@ function findRowByOrderId(sheet, orderId, optionalContent) {
 }
 
 function generateAppsScriptOrderId() {
-  var now = new Date();
-  var pad = function(n) { return String(n).padStart(2, "0"); };
-  return "ORD-" + now.getFullYear() + pad(now.getMonth() + 1) + pad(now.getDate()) + "-" + pad(now.getHours()) + pad(now.getMinutes()) + pad(now.getSeconds());
+  var timestamp = Utilities.formatDate(
+    new Date(),
+    Session.getScriptTimeZone(),
+    "yyyyMMdd-HHmmss"
+  );
+
+  var uniquePart = Utilities
+    .getUuid()
+    .slice(0, 8)
+    .toUpperCase();
+
+  return "ORD-" + timestamp + "-" + uniquePart;
 }
 
 function findRowByFallbackKey(sheet, name, phone, due, orderType) {
@@ -649,7 +674,7 @@ function getCurrentAndNextMonthSheetNames() {
 
   var names = [];
 
-  for (var offset = 0; offset <= 1; offset++) {
+  for (var offset = -1; offset <= 1; offset++) {
     var date = new Date(now.getFullYear(), now.getMonth() + offset, 1);
 
     names.push(monthNamesEn[date.getMonth()] + " " + date.getFullYear());
@@ -892,7 +917,6 @@ function updateOrder(e) {
     var jenis = e.parameter.jenis || e.parameter.customerJenis || "";
     var due = e.parameter.due || e.parameter.customerDue || "";
     var link = e.parameter.link || e.parameter.googleSheetLink || e.parameter.orderLink || "";
-    var price = e.parameter.price || "";
 
     var foundRow = null;
     var foundSheet = null;
@@ -986,8 +1010,7 @@ function updateOrder(e) {
       jenis,
       due,
       link,
-      finalOrderId,
-      price
+      finalOrderId
     ];
 
     var targetDate = new Date();
@@ -1043,88 +1066,78 @@ function updateOrder(e) {
     });
   }
 }
+
 function formatPhoneForSheet(phone) {
   var original = String(phone || "").trim();
-
-  if (!original) return "";
-
-  var hasPlusPrefix = original.indexOf("+") === 0;
-  var hasDoubleZeroPrefix = original.indexOf("00") === 0;
   var digits = original.replace(/\D/g, "");
 
   if (!digits) return "";
 
-  // Convert 00 international prefix to normal international digits.
-  if (hasDoubleZeroPrefix && digits.indexOf("00") === 0) {
-    digits = digits.substring(2);
-    hasPlusPrefix = true;
-  }
-
-  // Malaysian local number: 011... → 6011...
-  if (!hasPlusPrefix && digits.indexOf("0") === 0) {
-    digits = "60" + digits.substring(1);
-  }
+  var countryCode = "";
+  var local = "";
 
   // Malaysia
   if (digits.indexOf("60") === 0) {
-    var malaysiaLocal = digits.substring(2);
-
-    // Remove accidental zero after country code: 60011... → 6011...
-    if (malaysiaLocal.indexOf("0") === 0) {
-      malaysiaLocal = malaysiaLocal.substring(1);
-    }
-
-    // 011 numbers: 60 11-1118 4471
-    if (
-      malaysiaLocal.indexOf("11") === 0 &&
-      malaysiaLocal.length === 10
-    ) {
-      return (
-        "60 11-" +
-        malaysiaLocal.substring(2, 6) +
-        " " +
-        malaysiaLocal.substring(6)
-      );
-    }
-
-    // Other Malaysian mobile numbers: 60 13-923 7396
-    if (
-      malaysiaLocal.indexOf("1") === 0 &&
-      malaysiaLocal.length === 9
-    ) {
-      return (
-        "60 " +
-        malaysiaLocal.substring(0, 2) +
-        "-" +
-        malaysiaLocal.substring(2, 5) +
-        " " +
-        malaysiaLocal.substring(5)
-      );
-    }
-
-    // Preserve unusual Malaysian numbers without guessing grouping.
-    return "60 " + malaysiaLocal;
+    countryCode = "60";
+    local = digits.substring(2);
+  }
+  // Singapore
+  else if (digits.indexOf("65") === 0) {
+    countryCode = "65";
+    local = digits.substring(2);
+  }
+  // Indonesia
+  else if (digits.indexOf("62") === 0) {
+    countryCode = "62";
+    local = digits.substring(2);
+  }
+  // Brunei
+  else if (digits.indexOf("673") === 0) {
+    countryCode = "673";
+    local = digits.substring(3);
+  }
+  // Thailand
+  else if (digits.indexOf("66") === 0) {
+    countryCode = "66";
+    local = digits.substring(2);
+  }
+  // Local Malaysian number
+  else if (digits.indexOf("0") === 0) {
+    countryCode = "60";
+    local = digits.substring(1);
+  }
+  // Unknown country: keep first 2 digits as country code
+  else {
+    countryCode = digits.substring(0, 2);
+    local = digits.substring(2);
   }
 
-  // Singapore: 65 8057 4517
-  if (digits.indexOf("65") === 0 && digits.length === 10) {
-    var singaporeLocal = digits.substring(2);
-
+  // Malaysian style: 60 12-906 6817
+  if (countryCode === "60" && local.length >= 8) {
     return (
-      "65 " +
-      singaporeLocal.substring(0, 4) +
+      countryCode +
       " " +
-      singaporeLocal.substring(4)
+      local.substring(0, 2) +
+      "-" +
+      local.substring(2, 5) +
+      " " +
+      local.substring(5)
     );
   }
 
-  // Other explicitly international numbers:
-  // +628123456789, +441234567890, etc.
-  if (hasPlusPrefix) {
-    return "+" + digits;
+  // Singapore style: 65 8057 4517
+  if (countryCode === "65" && local.length === 8) {
+    return (
+      countryCode +
+      " " +
+      local.substring(0, 4) +
+      " " +
+      local.substring(4)
+    );
   }
 
-  // Unknown format: preserve exactly what the user entered.
-  // Do not guess the country code or rearrange the number.
-  return original;
+  // General fallback: country code + grouped local number
+  var groupedLocal = local.replace(/(\d{3})(?=\d)/g, "$1 ").trim();
+
+  return (countryCode + " " + groupedLocal).trim();
 }

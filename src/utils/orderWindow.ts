@@ -106,38 +106,51 @@ export function isOrderInsideActiveWindow(
  */
 export function isActivePendingOrder(
   item: OrderHistoryItem,
-  referenceDate: Date = new Date()
+  _referenceDate: Date = new Date()
 ): boolean {
   if (!item?.state) {
     return false;
   }
 
-  // Filter out empty orders
-  const stateVal = item.state as any;
-  const hasName = String(stateVal?.customerName || stateVal?.name || '').trim();
-  const hasOrder = String(stateVal?.customerOrder || stateVal?.order || stateVal?.jenisTempahan || stateVal?.mainType || '').trim();
-  const hasPhone = String(stateVal?.customerPhone || stateVal?.phone || '').trim();
-  if (!hasName && !hasOrder && !hasPhone) {
-    return false;
-  }
-
-  // whatever only saved locally, that is a draft. dont take into account
-  if (stateVal.syncStatus === 'draft' || stateVal.status === 'draft') {
-    return false;
-  }
-
-  const isTruthy = (value: any): boolean => 
-    value === true || value === 'true' || value === 1 || value === '1';
-
   if (
-    isTruthy(item.state.isDelivered) ||
-    isTruthy(item.state.isDeleted)
+    item.state.isDelivered === true ||
+    item.state.isDeleted === true
   ) {
     return false;
   }
 
-  return isOrderInsideActiveWindow(
-    item,
-    referenceDate
-  );
+  return true;
+}
+
+export function removeStalePendingOrders(
+  orders: OrderHistoryItem[],
+  referenceDate: Date = new Date()
+): OrderHistoryItem[] {
+  const { startTimestamp } =
+    getActiveOrderWindow(referenceDate);
+
+  return orders.filter(order => {
+    if (!order?.state) {
+      return false;
+    }
+
+    // Keep delivered and deleted orders as history.
+    if (
+      order.state.isDelivered === true ||
+      order.state.isDeleted === true
+    ) {
+      return true;
+    }
+
+    const dueTimestamp = getOrderDueTimestamp(order);
+
+    // Keep records with missing or invalid due dates.
+    // We do not want to delete uncertain data automatically.
+    if (dueTimestamp === null) {
+      return true;
+    }
+
+    // Remove unfinished orders older than two days ago.
+    return dueTimestamp >= startTimestamp;
+  });
 }

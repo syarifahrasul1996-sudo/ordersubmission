@@ -76,16 +76,6 @@ async function startServer() {
     res.json({ publicKey: vapidKeys.publicKey });
   });
 
-  // API to log the active user's UID and email
-  app.post("/api/log-uid", (req, res) => {
-    const { uid, email } = req.body;
-    if (uid) {
-      console.log(`LOGGED_UID: ${uid} for ${email}`);
-      fs.writeFileSync("firebase_user_session.json", JSON.stringify({ uid, email, timestamp: Date.now() }, null, 2));
-    }
-    res.json({ success: true });
-  });
-
   // API to schedule/update/delete push notifications for any order
   app.post("/api/schedule-push", (req, res) => {
     try {
@@ -174,7 +164,7 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), 'dist', 'client');
+    const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));

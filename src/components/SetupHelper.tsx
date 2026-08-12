@@ -75,11 +75,19 @@ export function SetupHelper({ onClose, appLanguage }: SetupHelperProps) {
     var existingRow = findRowByOrderId(sheet, orderId);
 
     if (existingRow) {
-      var existingCheckbox = sheet.getRange(existingRow, 1).getValue();
-      if (rowData[0] === true || existingCheckbox === true || String(existingCheckbox).toUpperCase() === "TRUE") {
-        rowData[0] = true;
+      if (typeof rowData[0] === "boolean") {
+        // preserve explicitly passed boolean status
       } else {
-        rowData[0] = false;
+        var dVal = String(rowData[0]).trim().toLowerCase();
+        if (dVal === "true" || dVal === "1" || dVal === "yes" || dVal === "done" || dVal === "siap" || dVal === "selesai" || dVal === "ya") {
+          rowData[0] = true;
+        } else if (dVal === "false" || dVal === "0" || dVal === "no") {
+          rowData[0] = false;
+        } else {
+          var existingCheckbox = sheet.getRange(existingRow, 1).getValue();
+          var eVal = String(existingCheckbox).trim().toLowerCase();
+          rowData[0] = (existingCheckbox === true || eVal === "true" || eVal === "1" || eVal === "yes" || eVal === "done" || eVal === "siap" || eVal === "selesai" || eVal === "ya");
+        }
       }
 
       sheet.getRange(existingRow, 1, 1, rowData.length).setValues([rowData]);
@@ -127,11 +135,10 @@ function ensureSheetSetup(sheet) {
       "Jenis",
       "Due",
       "Link",
-      "Order ID",
-      "Harga"
+      "Order ID"
     ]);
 
-    sheet.appendRow(["", "", "", "", "", "", "", "", "", "", "", ""]);
+    sheet.appendRow(["", "", "", "", "", "", "", "", "", "", ""]);
     applyRowTemplate(sheet, 2);
   }
 }
@@ -139,13 +146,13 @@ function ensureSheetSetup(sheet) {
 function findRowByOrderId(sheet, orderId) {
   var lastRow = sheet.getLastRow();
 
-  if (lastRow < 2) return null;
+  if (lastRow < 3) return null;
 
-  var values = sheet.getRange(2, 11, lastRow - 1, 1).getValues();
+  var values = sheet.getRange(3, 11, lastRow - 2, 1).getValues();
 
   for (var i = 0; i < values.length; i++) {
     if (String(values[i][0] || "").trim() === orderId) {
-      return i + 2;
+      return i + 3;
     }
   }
 
@@ -184,142 +191,6 @@ function jsonResponse(obj) {
 function doGet(e) {
   var action = e.parameter.action;
   
-  if (action === "update_order") {
-    var spreadsheetId = e.parameter.spreadsheetId;
-    var orderId = e.parameter.orderId;
-    var oldOrderId = e.parameter.oldOrderId;
-    var callback = e.parameter.callback;
-
-    var name = e.parameter.name || "";
-    var phone = e.parameter.phone || "";
-    var orderVal = e.parameter.order || "";
-    var template = e.parameter.template || "";
-    var bahasa = e.parameter.bahasa || "";
-    var addon = e.parameter.addon || "";
-    var jenis = e.parameter.jenis || "";
-    var due = e.parameter.due || "";
-    var link = e.parameter.link || "";
-    var price = e.parameter.price || "";
-    var isDelivered = e.parameter.isDelivered === "true" || e.parameter.isDelivered === true || e.parameter.isDelivered === "1";
-
-    var lock = LockService.getScriptLock();
-    var hasLock = false;
-
-    try {
-      lock.waitLock(10000);
-      hasLock = true;
-
-      if (!spreadsheetId) {
-        throw new Error("Missing spreadsheetId");
-      }
-
-      var ss = SpreadsheetApp.openById(spreadsheetId);
-      
-      var monthNamesEn = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-      var monthNamesMs = ["Januari", "Februari", "Mac", "April", "Mei", "Jun", "Julai", "Ogos", "September", "Oktober", "November", "Disember"];
-      
-      var sheetName = monthNamesEn[new Date().getMonth()] + " " + new Date().getFullYear();
-      if (due && due.indexOf("/") !== -1) {
-        var cleanDue = due.replace(/\s+at\s+/i, " ").trim();
-        var dateParts = cleanDue.split(" ")[0].split("/");
-        if (dateParts.length === 3) {
-          var dMonth = parseInt(dateParts[1], 10) - 1;
-          var dYear = parseInt(dateParts[2], 10);
-          if (!isNaN(dMonth) && !isNaN(dYear) && dMonth >= 0 && dMonth < 12) {
-            sheetName = monthNamesEn[dMonth] + " " + dYear;
-          }
-        }
-      }
-
-      var sheet = ss.getSheetByName(sheetName) || ss.getSheetByName(sheetName.replace(monthNamesEn[new Date().getMonth()], monthNamesMs[new Date().getMonth()]));
-      if (!sheet) {
-        var foundSheet = null;
-        for (var i = 0; i < 12; i++) {
-          if (sheetName.indexOf(monthNamesEn[i]) !== -1) {
-            var msName = sheetName.replace(monthNamesEn[i], monthNamesMs[i]);
-            foundSheet = ss.getSheetByName(msName);
-            if (foundSheet) {
-              sheet = foundSheet;
-              break;
-            }
-          }
-        }
-        if (!sheet) {
-          sheet = ss.insertSheet(sheetName);
-        }
-      }
-
-      ensureSheetSetup(sheet);
-
-      var rowData = [
-        isDelivered,
-        name,
-        phone,
-        orderVal,
-        template,
-        bahasa,
-        addon,
-        jenis,
-        due,
-        link,
-        orderId,
-        price
-      ];
-
-      var searchId = oldOrderId || orderId;
-      var existingRow = findRowByOrderId(sheet, searchId);
-
-      if (existingRow) {
-        var existingCheckbox = sheet.getRange(existingRow, 1).getValue();
-        if (isDelivered === true || existingCheckbox === true || String(existingCheckbox).toUpperCase() === "TRUE") {
-          rowData[0] = true;
-        } else {
-          rowData[0] = false;
-        }
-
-        sheet.getRange(existingRow, 1, 1, rowData.length).setValues([rowData]);
-        applyRowTemplate(sheet, existingRow);
-
-        var result = {
-          status: "success",
-          message: "Updated order via GET " + orderId,
-          orderId: orderId
-        };
-        if (callback) {
-          return ContentService.createTextOutput(callback + '(' + JSON.stringify(result) + ')')
-            .setMimeType(ContentService.MimeType.JAVASCRIPT);
-        }
-        return jsonResponse(result);
-      }
-
-      sheet.appendRow(rowData);
-      var newRow = sheet.getLastRow();
-      applyRowTemplate(sheet, newRow);
-
-      var result = {
-        status: "success",
-        message: "Created order via GET " + orderId,
-        orderId: orderId
-      };
-      if (callback) {
-        return ContentService.createTextOutput(callback + '(' + JSON.stringify(result) + ')')
-          .setMimeType(ContentService.MimeType.JAVASCRIPT);
-      }
-      return jsonResponse(result);
-
-    } catch (error) {
-      var errResult = { status: "error", message: error.toString() };
-      if (callback) {
-        return ContentService.createTextOutput(callback + '(' + JSON.stringify(errResult) + ')')
-          .setMimeType(ContentService.MimeType.JAVASCRIPT);
-      }
-      return jsonResponse(errResult);
-
-    } finally {
-      if (hasLock) lock.releaseLock();
-    }
-  }
-
   if (action === "update_delivered") {
     var orderId = e.parameter.orderId;
     var spreadsheetId = e.parameter.spreadsheetId;
@@ -357,9 +228,10 @@ function doGet(e) {
     }
   }
 
-  if (action === "sync_recent") {
+  if (action === "sync_recent" || action === "get_dashboard_orders" || action === "search_database") {
     var spreadsheetId = e.parameter.spreadsheetId;
     var callback = e.parameter.callback;
+    var query = (e.parameter.query || "").trim().toLowerCase();
 
     try {
       var ss = SpreadsheetApp.openById(spreadsheetId);
@@ -369,35 +241,61 @@ function doGet(e) {
       var monthNamesMs = ["Januari", "Februari", "Mac", "April", "Mei", "Jun", "Julai", "Ogos", "September", "Oktober", "November", "Disember"];
       
       var targetSheets = [];
-      for (var mOffset = 0; mOffset <= 1; mOffset++) {
+      for (var mOffset = -3; mOffset <= 6; mOffset++) {
         var d = new Date(now.getFullYear(), now.getMonth() + mOffset, 1);
         targetSheets.push(monthNamesEn[d.getMonth()] + " " + d.getFullYear());
         targetSheets.push(monthNamesMs[d.getMonth()] + " " + d.getFullYear());
       }
       
+      var matchedAnyTarget = false;
+      for (var checkIndex = 0; checkIndex < sheets.length; checkIndex++) {
+        if (targetSheets.indexOf(sheets[checkIndex].getName()) !== -1) {
+          matchedAnyTarget = true;
+          break;
+        }
+      }
+
       var recentOrders = [];
       for (var s = 0; s < sheets.length; s++) {
         var sheet = sheets[s];
-        if (targetSheets.indexOf(sheet.getName()) !== -1) {
+        if (!matchedAnyTarget || action === "search_database" || action === "get_dashboard_orders" || targetSheets.indexOf(sheet.getName()) !== -1) {
           var lastRow = sheet.getLastRow();
-          if (lastRow >= 2) {
-            var values = sheet.getRange(2, 1, lastRow - 1, 11).getValues();
+          if (lastRow >= 3) {
+            var values = sheet.getRange(3, 1, lastRow - 2, 11).getValues();
             for (var r = 0; r < values.length; r++) {
               var rowData = values[r];
-              var doneVal = String(rowData[0]).toLowerCase();
-              var isDeliveredVal = (doneVal === "true" || doneVal === "1" || doneVal === "yes");
+              if (!rowData[1] && !rowData[2] && !rowData[3]) continue;
+              var doneVal = String(rowData[0]).trim().toLowerCase();
+              var isDeliveredVal = (doneVal === "true" || doneVal === "1" || doneVal === "yes" || doneVal === "done" || doneVal === "siap" || doneVal === "selesai" || doneVal === "ya" || doneVal === "y" || doneVal === "v" || doneVal === "✓" || rowData[0] === true);
+              
+              var nameVal = String(rowData[1] || "");
+              var phoneVal = String(rowData[2] || "");
+              var orderVal = String(rowData[3] || "");
+              var templateVal = String(rowData[4] || "");
+              var bahasaVal = String(rowData[5] || "");
+              var addonVal = String(rowData[6] || "");
+              var jenisVal = String(rowData[7] || "");
+              var dueVal = String(rowData[8] || "");
+              var linkVal = String(rowData[9] || "");
+              var orderIdVal = String(rowData[10] || "");
+
+              if (query !== "") {
+                var fullSearchStr = (nameVal + " " + phoneVal + " " + orderVal + " " + templateVal + " " + orderIdVal).toLowerCase();
+                if (fullSearchStr.indexOf(query) === -1) continue;
+              }
+
               recentOrders.push({
                 isDelivered: isDeliveredVal,
-                name: rowData[1] || "",
-                phone: rowData[2] || "",
-                order: rowData[3] || "",
-                template: rowData[4] || "",
-                bahasa: rowData[5] || "",
-                addon: rowData[6] || "",
-                jenis: rowData[7] || "",
-                due: rowData[8] || "",
-                link: String(rowData[9] || ""),
-                orderId: String(rowData[10] || "")
+                name: nameVal,
+                phone: phoneVal,
+                order: orderVal,
+                template: templateVal,
+                bahasa: bahasaVal,
+                addon: addonVal,
+                jenis: jenisVal,
+                due: dueVal,
+                link: linkVal,
+                orderId: orderIdVal
               });
             }
           }

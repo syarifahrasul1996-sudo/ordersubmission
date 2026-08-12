@@ -1,324 +1,9 @@
-import React, { createContext, useContext, useState, ReactNode, useEffect, useRef } from 'react';
-import { AppState, INITIAL_STATE, ViewType, OrderHistoryItem, InAppNotification } from './types';
+import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
+import { AppState, INITIAL_STATE, ViewType, OrderHistoryItem } from './types';
 import { getSubscription, syncPushNotifications, clearPushNotifications } from './lib/push';
-import { getOperationalOrders, getOverdueOrders, getArchivedOrders, isFirestoreCanary, saveOrderToFirestore, deleteOrderFromFirestore } from './services/firestoreOrders';
-import { saveDraftToFirestore, deleteDraftFromFirestore, getDraftsFromFirestore } from './services/firestoreSubmission';
-import { trackEvent } from './utils/analytics';
-import { parseDateStringToTimestamp, normalizeBahasa, parseTimestampFromId, normalizeJenis } from './utils';
+import { useBackgroundSync } from './utils/backgroundSync';
+import { deduplicateHistoryList } from './utils';
 
-const parseDueTimestamp = (value: unknown): number => {
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return value;
-  }
-  if (typeof value === 'string' && /^\d+$/.test(value.trim())) {
-    const num = Number(value.trim());
-    if (Number.isFinite(num)) {
-      return num;
-    }
-  }
-  if (typeof value !== 'string' || !value.trim()) {
-    return 0;
-  }
-  return parseDateStringToTimestamp(value, 0).timestamp;
-};
-
-const getDueDayTimestamp = (value: unknown): number => {
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    const d = new Date(value);
-    d.setHours(0, 0, 0, 0);
-    return d.getTime();
-  }
-  if (typeof value === 'string' && /^\d+$/.test(value.trim())) {
-    const num = Number(value.trim());
-    if (Number.isFinite(num)) {
-      const d = new Date(num);
-      d.setHours(0, 0, 0, 0);
-      return d.getTime();
-    }
-  }
-  if (typeof value !== 'string' || !value.trim()) {
-    return 0;
-  }
-  const { date } = parseDateStringToTimestamp(value, 0);
-  const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
-  return d.getTime();
-};
-
-const deduplicateHistory = (items: OrderHistoryItem[]): OrderHistoryItem[] => {
-  if (!Array.isArray(items)) return [];
-
-  const isTemp = (item: OrderHistoryItem) => {
-    const state: Partial<AppState> = item.state || {};
-    const id = String(state.orderId || item.id || '');
-    const markers = ['SYNC-', 'draft_', 'saved_locally', 'syncing', 'failed', 'sent_unverified'];
-    return markers.some(marker => id.includes(marker)) || 
-           markers.some(marker => String(state.syncStatus).includes(marker));
-  };
-
-  const normalizeText = (value: unknown) =>
-    String(value || '')
-      .trim()
-      .toLowerCase()
-      .replace(/\s+/g, ' ');
-
-  const normalizePhone = (value: unknown) =>
-    String(value || '').replace(/\D/g, '');
-
-  const result: OrderHistoryItem[] = [];
-
-  for (const item of items) {
-    if (!item || !item.id) continue;
-
-    const localState: Partial<AppState> = item.state || {};
-    
-    // Check if there is an existing item in result that is a duplicate of this item
-    const duplicateIdx = result.findIndex(existing => {
-      const existingState: Partial<AppState> = existing.state || {};
-
-      // 1. Direct ID matching
-      if (
-        item.id === existing.id ||
-        (localState.orderId && localState.orderId === existing.id) ||
-        (existingState.orderId && existingState.orderId === item.id) ||
-        (localState.orderId && existingState.orderId && localState.orderId === existingState.orderId)
-      ) {
-        return true;
-      }
-
-      // 2. Fallback content matching (to prevent duplicate records on the same day)
-      // Only use content fallback matching when at least one record is temporary or unsynced.
-      if (!isTemp(item) && !isTemp(existing)) {
-        return false;
-      }
-
-      // Require non-empty customerName, non-empty customerPhone, valid due date, and non-empty order type for fallback matching.
-      const itemDue = parseDueTimestamp(localState.customerDue || localState.dueTimestamp);
-      const existingDue = parseDueTimestamp(existingState.customerDue || existingState.dueTimestamp);
-      
-      if (!localState.customerName || !localState.customerPhone || itemDue <= 0 || !localState.customerOrder) {
-        return false;
-      }
-      if (!existingState.customerName || !existingState.customerPhone || existingDue <= 0 || !existingState.customerOrder) {
-        return false;
-      }
-
-      const sameName =
-        normalizeText(localState.customerName) === normalizeText(existingState.customerName);
-      
-      const samePhone =
-        normalizePhone(localState.customerPhone) === normalizePhone(existingState.customerPhone);
-
-      const sameDueDay =
-        getDueDayTimestamp(localState.customerDue || localState.dueTimestamp) ===
-        getDueDayTimestamp(existingState.customerDue || existingState.dueTimestamp);
-
-      const sameOrder =
-        normalizeText(localState.customerOrder || localState.mainType) ===
-        normalizeText(existingState.customerOrder || existingState.mainType);
-
-      return (sameName && samePhone && sameDueDay && sameOrder);
-    });
-
-    if (duplicateIdx !== -1) {
-      // We found a duplicate! Let's choose the better one to keep.
-      const existing = result[duplicateIdx];
-      const existingState: Partial<AppState> = existing.state || {};
-      const isExistingTemp = isTemp(existing);
-      const isLocalTemp = isTemp(item);
-
-      let preferNew = false;
-      if (isExistingTemp && !isLocalTemp) {
-        preferNew = true;
-      } else if (isLocalTemp && !isExistingTemp) {
-        preferNew = false;
-      } else {
-        const existingSynced = existingState.syncStatus === 'synced';
-        const localSynced = localState.syncStatus === 'synced';
-        if (!existingSynced && localSynced) {
-          preferNew = true;
-        } else if (existingSynced && !localSynced) {
-          preferNew = false;
-        } else {
-          // If both have the same sync state, compare the due timestamps
-          const existingTime = parseDueTimestamp(existingState.customerDue || existingState.dueTimestamp);
-          const localTime = parseDueTimestamp(localState.customerDue || localState.dueTimestamp);
-          
-          if (localTime > existingTime) {
-            preferNew = true;
-          } else if (localTime < existingTime) {
-            preferNew = false;
-          } else {
-            const existingKeys = Object.keys(existingState).length;
-            const localKeys = Object.keys(localState).length;
-            if (localKeys > existingKeys) {
-              preferNew = true;
-            }
-          }
-        }
-      }
-
-      if (preferNew) {
-        result[duplicateIdx] = item;
-      }
-    } else {
-      result.push(item);
-    }
-  }
-
-  return result;
-};
-
-export function mergeSyncedOrders(
-  prevHistory: OrderHistoryItem[],
-  syncedOrders: OrderHistoryItem[]
-): OrderHistoryItem[] {
-  console.log(`[Sync Debug] Merging orders. Local items before sync: ${prevHistory.length}. Remote fetched: ${syncedOrders.length}.`);
-
-  const mergedMap = new Map<string, OrderHistoryItem>();
-  
-  // First, populate with all existing local history items
-  for (const localItem of prevHistory) {
-    if (localItem && localItem.id) {
-      // Filter out empty local orders
-      const state = localItem.state as any;
-      const hasName = String(state?.customerName || state?.name || '').trim();
-      
-      let ts = Number(localItem.timestamp) || Number(state?.timestamp);
-      if (!ts) {
-        ts = parseTimestampFromId(localItem.id) || Date.now();
-        localItem.timestamp = ts;
-        if (state) state.timestamp = ts;
-      }
-      
-      if (!hasName) {
-        console.warn(`[Sync Debug] Filtering out invalid LOCAL order (ID: ${localItem.id}): name is empty`);
-        continue;
-      }
-      mergedMap.set(localItem.id, { ...localItem });
-    }
-  }
-
-  let newOrdersAddedCount = 0;
-  let existingOrdersUpdatedCount = 0;
-  let duplicatesSkippedCount = 0;
-
-  // Now, merge with remote synced orders
-  for (const remoteItem of syncedOrders) {
-    // Filter out orders missing mandatory fields
-    const state = remoteItem.state as any;
-    const hasName = String(state?.customerName || state?.name || '').trim();
-    
-    let ts = Number(remoteItem.timestamp) || Number(state?.timestamp);
-    if (!ts) {
-      ts = parseTimestampFromId(remoteItem.id) || Date.now();
-      remoteItem.timestamp = ts;
-      if (state) state.timestamp = ts;
-    }
-    
-    if (!hasName) {
-      console.warn(`[Sync Debug] Filtering out invalid REMOTE order (ID: ${remoteItem.id}): name is empty`);
-      continue;
-    }
-
-    const id = remoteItem.id;
-    if (!id) continue;
-
-    const existingItem = mergedMap.get(id);
-
-    if (existingItem) {
-      // The order already exists locally! We need to merge them carefully.
-      const localState: AppState = (existingItem.state || {}) as AppState;
-      const remoteState: AppState = (remoteItem.state || {}) as AppState;
-
-      const localModified = Number(localState.lastModifiedLocally) || 0;
-      const remoteModified = Number(remoteState.lastModifiedLocally) || 0;
-
-      const localLastUpdated = Number(localState.lastUpdated) || 0;
-      const remoteLastUpdated = Number(remoteState.lastUpdated) || 0;
-      const localVersion = Number(localState.version) || 1;
-      const remoteVersion = Number(remoteState.version) || 1;
-
-      // Remote is newer if its database timestamp (lastUpdated) is newer,
-      // or if timestamps are equal but the version number is higher,
-      // or as a fallback if the local modify time is older.
-      let isRemoteNewer = false;
-      if (remoteLastUpdated > localLastUpdated) {
-        isRemoteNewer = true;
-      } else if (remoteLastUpdated === localLastUpdated && remoteVersion > localVersion) {
-        isRemoteNewer = true;
-      } else if (remoteLastUpdated === localLastUpdated && remoteVersion === localVersion) {
-        isRemoteNewer = remoteModified > localModified;
-      }
-
-      const isLocalNewer = !isRemoteNewer;
-
-      // Build the merged state
-      const mergedState: AppState = isRemoteNewer
-        ? {
-            ...localState,
-            ...remoteState,
-          }
-        : {
-            ...remoteState,
-            ...localState,
-          };
-
-      // Specifically check each important field:
-      // "Preserve local delivered/deleted/edited state if it is newer or only exists locally"
-      if (localState.isDelivered !== undefined && (isLocalNewer || remoteState.isDelivered === undefined)) {
-        mergedState.isDelivered = localState.isDelivered;
-      }
-      if (localState.isDeleted !== undefined && (isLocalNewer || remoteState.isDeleted === undefined)) {
-        mergedState.isDeleted = localState.isDeleted;
-      }
-      if (localState.status !== undefined && (isLocalNewer || remoteState.status === undefined)) {
-        mergedState.status = localState.status;
-      }
-
-      // Preserve other local fields that remote does not provide
-      for (const key of Object.keys(localState)) {
-        const typedKey = key as keyof AppState;
-        if (remoteState[typedKey] === undefined || remoteState[typedKey] === null || remoteState[typedKey] === '') {
-          (mergedState as any)[typedKey] = localState[typedKey];
-        }
-      }
-
-      // Preserve existing timestamp instead of replacing it
-      const finalTimestamp = Number(existingItem.timestamp) || Number(remoteItem.timestamp) || 0;
-
-      mergedMap.set(id, {
-        ...existingItem,
-        timestamp: finalTimestamp,
-        state: {
-          ...mergedState,
-          timestamp: finalTimestamp, // Sync state's inner timestamp too
-          syncedAt: Date.now()
-        },
-        messages: existingItem.messages && existingItem.messages.length > 0 ? existingItem.messages : (remoteItem.messages || [])
-      });
-
-      existingOrdersUpdatedCount++;
-    } else {
-      // Genuinely new remote order!
-      // Add it to local history
-      mergedMap.set(id, {
-        ...remoteItem,
-        state: {
-          ...(remoteItem.state || {}),
-          syncedAt: Date.now()
-        } as AppState
-      });
-      newOrdersAddedCount++;
-    }
-  }
-
-  const mergedList = Array.from(mergedMap.values());
-  
-  console.log(`[Sync Debug] Merge completed. Final local history items: ${mergedList.length}. New added: ${newOrdersAddedCount}. Existing updated: ${existingOrdersUpdatedCount}. Duplicates skipped: ${duplicatesSkippedCount}.`);
-
-  return mergedList;
-}
 
 interface AppContextType {
   state: AppState;
@@ -327,7 +12,6 @@ interface AppContextType {
   pushView: (view: ViewType, updates?: Partial<AppState>) => void;
   changeTab: (tab: ViewType) => void;
   startNewOrder: (view: ViewType, updates: Partial<AppState>) => void;
-  startNewCustomer: () => void;
   popView: () => void;
   goHome: () => void;
   reset: () => void;
@@ -336,7 +20,7 @@ interface AppContextType {
   history: OrderHistoryItem[];
   setHistory: React.Dispatch<React.SetStateAction<OrderHistoryItem[]>>;
   saveOrderToHistory: (messages: string[]) => void;
-  updateOrderHistoryState: (updates: Partial<AppState>, skipFirestoreSave?: boolean) => void;
+  updateOrderHistoryState: (updates: Partial<AppState>) => void;
   updateSpecificHistoryItem: (id: string, updates: Partial<AppState>) => void;
   deleteOrderFromHistory: (id: string) => void;
   restoreOrderFromHistory: (id: string) => void;
@@ -344,7 +28,7 @@ interface AppContextType {
   clearHistory: () => void;
   loadOrder: (item: OrderHistoryItem) => void;
   drafts: OrderHistoryItem[];
-  saveAsDraft: (formUpdates?: Partial<AppState>) => void;
+  saveAsDraft: () => void;
   deleteDraft: (id: string) => void;
   loadDraft: (item: OrderHistoryItem) => void;
   theme: 'light' | 'dark';
@@ -353,28 +37,15 @@ interface AppContextType {
   toggleLanguage: () => void;
   isOnline: boolean;
   isSyncing: boolean;
-  isHistoryReady: boolean;
   queueSize: number;
   lastSyncTime: number | null;
-  setLastSyncTime: (val: number | null) => void;
-  lastSyncFetchedCount: number;
-  setLastSyncFetchedCount: (val: number) => void;
-  syncTotalItems?: number;
-  setSyncTotalItems?: (val: number) => void;
-  syncError: string | null;
-  setSyncError: (val: string | null) => void;
   syncOfflineQueue: () => Promise<void>;
-  addToOfflineQueue: (payload: any, webhookUrl: string, orderId: string) => void;
+  addToOfflineQueue: (payload: any, webhookUrl: string, orderId?: string) => void;
   deletedOrderIds: string[];
   historyDeliveryFilter: 'all' | 'delivered' | 'pending';
   setHistoryDeliveryFilter: (val: 'all' | 'delivered' | 'pending') => void;
   historyPendingTimeFilter: 'all' | 'today' | 'tomorrow' | '2days' | '3days';
   setHistoryPendingTimeFilter: (val: 'all' | 'today' | 'tomorrow' | '2days' | '3days') => void;
-  syncOrders: () => Promise<void>;
-  inAppNotifications: InAppNotification[];
-  markNotificationAsRead: (id: string) => void;
-  clearAllNotifications: () => void;
-  addInAppNotification: (title: string, body: string, type?: 'soon' | 'due' | 'sync' | 'status_query', dedupeKey?: string) => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -422,29 +93,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [viewStack, setViewStack] = useState<ViewType[]>(() => {
     try {
       const saved = localStorage.getItem('viewStack');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          const validViews: ViewType[] = [
-            'home',
-            'resume-type',
-            'resume-form-fields',
-            'general-form',
-            'confirmation',
-            'output',
-            'history',
-            'customer-info',
-            'dashboard',
-            'contacts-sync',
-            'others'
-          ];
-          const filtered = parsed.filter((v): v is ViewType => validViews.includes(v as ViewType));
-          if (filtered.length > 0) {
-            return filtered;
-          }
-        }
-      }
-      return ['home'];
+      return saved ? JSON.parse(saved) : ['home'];
     } catch {
       return ['home'];
     }
@@ -459,25 +108,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   });
 
-  const [history, setHistoryState] = useState<OrderHistoryItem[]>(() => {
-    try {
-      const saved = localStorage.getItem('orderHistory');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        return Array.isArray(parsed) ? deduplicateHistory(parsed) : [];
-      }
-      return [];
-    } catch {
+ const [history, setHistory] = useState<OrderHistoryItem[]>(() => {
+  try {
+    const saved = localStorage.getItem('orderHistory');
+
+    if (!saved) {
       return [];
     }
-  });
 
-  const setHistory = (value: React.SetStateAction<OrderHistoryItem[]>) => {
-    setHistoryState(prev => {
-      const next = typeof value === 'function' ? (value as any)(prev) : value;
-      return deduplicateHistory(next);
-    });
-  };
+    const parsed = JSON.parse(saved);
+
+    return Array.isArray(parsed) ? deduplicateHistoryList(parsed) : [];
+  } catch (error) {
+    console.error(
+      'Failed to load order history:',
+      error
+    );
+
+    return [];
+  }
+});
 
   const [deletedOrderIds, setDeletedOrderIds] = useState<string[]>(() => {
     try {
@@ -493,25 +143,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('deletedOrderIds', JSON.stringify(deletedOrderIds));
   }, [deletedOrderIds]);
 
-  const [drafts, setDraftsState] = useState<OrderHistoryItem[]>(() => {
+  const [drafts, setDrafts] = useState<OrderHistoryItem[]>(() => {
     try {
       const saved = localStorage.getItem('orderDrafts');
       if (saved) {
         const parsed = JSON.parse(saved);
-        return Array.isArray(parsed) ? deduplicateHistory(parsed) : [];
+        return Array.isArray(parsed) ? parsed : [];
       }
       return [];
     } catch {
       return [];
     }
   });
-
-  const setDrafts = (value: React.SetStateAction<OrderHistoryItem[]>) => {
-    setDraftsState(prev => {
-      const next = typeof value === 'function' ? (value as any)(prev) : value;
-      return deduplicateHistory(next);
-    });
-  };
 
   useEffect(() => {
     localStorage.setItem('appState', JSON.stringify(state));
@@ -520,23 +163,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     localStorage.setItem('viewStack', JSON.stringify(viewStack));
   }, [viewStack]);
-
-  // Automatic active view tracking for analytics
-  const activeView = viewStack[viewStack.length - 1];
-  const lastTrackedViewRef = useRef<ViewType | null>(null);
-
-  useEffect(() => {
-    if (activeView && activeView !== lastTrackedViewRef.current) {
-      trackEvent('view_changed', {
-        from_view: lastTrackedViewRef.current,
-        to_view: activeView,
-        mainType: state.mainType || 'none',
-        subType: state.subType || 'none',
-        urgency: state.urgency || 'none'
-      });
-      lastTrackedViewRef.current = activeView;
-    }
-  }, [activeView, state.mainType, state.subType, state.urgency]);
 
   useEffect(() => {
     localStorage.setItem('generatedMessages', JSON.stringify(generatedMessages));
@@ -565,47 +191,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('appLanguage', appLanguage);
   }, [appLanguage]);
 
-  const [inAppNotifications, setInAppNotifications] = useState<InAppNotification[]>(() => {
-    try {
-      const saved = localStorage.getItem('inAppNotifications');
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
-
   useEffect(() => {
-    localStorage.setItem('inAppNotifications', JSON.stringify(inAppNotifications));
-  }, [inAppNotifications]);
-
-  const addInAppNotification = (title: string, body: string, type?: 'soon' | 'due' | 'sync' | 'status_query', dedupeKey?: string) => {
-    setInAppNotifications(prev => {
-        if (dedupeKey) {
-            const exists = prev.some(n => n.dedupeKey === dedupeKey && !n.isRead);
-            if (exists) return prev;
-        }
-        const newNotif: InAppNotification = {
-          id: `notif_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-          title,
-          body,
-          timestamp: Date.now(),
-          isRead: false,
-          type,
-          dedupeKey
-        };
-        return [newNotif, ...prev];
-    });
-  };
-
-  const markNotificationAsRead = (id: string) => {
-    setInAppNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
-  };
-
-  const clearAllNotifications = () => {
-    setInAppNotifications([]);
-  };
-
-
     const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbw5KpBvJyFpIXmsHueg4XPSRkZ0mg6kxHqjMGp3WEs8Hx_JodvKSoKEg6RMsdH54iCa/exec';
 
     const extractId = (input: string) => {
@@ -639,38 +225,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return GOOGLE_SCRIPT_URL;
     };
 
-    const jsonpRequest = async (url: URL, callbackName: string): Promise<any> => {
-      // Try standard fetch GET first as it is much more robust against ad-blockers and CSP that block dynamic scripts
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout for fetch
-        const response = await fetch(url.toString(), {
-          method: 'GET',
-          signal: controller.signal
-        });
-        clearTimeout(timeoutId);
-        if (response.ok) {
-          const text = await response.text();
-          const match = text.match(/^[a-zA-Z0-9_]+\(([\s\S]*)\);?\s*$/);
-          if (match) {
-            try {
-              return JSON.parse(match[1]);
-            } catch (err) {
-              console.warn('JSONP regex match parse failed', err);
-            }
-          } else {
-            try {
-              return JSON.parse(text);
-            } catch (err) {
-              console.warn('JSONP response body raw parse failed', err);
-            }
-          }
-        }
-      } catch (fetchErr) {
-        console.warn('Fetch JSONP fallback failed, trying dynamic script injection:', fetchErr);
-      }
-
-      // Fallback to traditional script injection JSONP
+    const jsonpRequest = (url: URL, callbackName: string): Promise<any> => {
       return new Promise((resolve, reject) => {
         const script = document.createElement('script');
         script.src = url.toString();
@@ -707,14 +262,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       });
     };
 
-  useEffect(() => {
     const checkAlerts = () => {
       const now = Date.now();
       const TWENTY_MINS = 20 * 60 * 1000;
       const THREE_HOURS = 3 * 60 * 60 * 1000;
       
-      const alertsToTrigger: Array<{ title: string; body: string; type: 'soon' | 'due' | 'status_query'; dedupeKey: string }> = [];
-
       setHistory(prevHistory => {
         let updatedHistory = false;
         const newHistory = prevHistory.map(item => {
@@ -727,60 +279,41 @@ export function AppProvider({ children }: { children: ReactNode }) {
             const timeUntilDue = dueTimestamp - now;
 
             // 1. Check 3 hours logic: 3 hours before due time
-            if (timeUntilDue > 0 && timeUntilDue <= THREE_HOURS && !hasThreeHourChecked) {
+            if (
+  timeUntilDue > 0 &&
+  timeUntilDue <= THREE_HOURS &&
+  !hasThreeHourChecked
+) {
               newState.hasThreeHourChecked = true;
               itemUpdated = true;
 
-              if (isFirestoreCanary) {
-                newState.threeHourAlerted = true;
-              } else {
-                const spreadsheetId = item.state?.spreadsheetId || '1kUAJYUVhr9bPYErtpnohpvuGGyhBSvJyEOIyzEFivJo';
-                const oId = item.state?.orderId;
+              const spreadsheetId = item.state?.spreadsheetId || '1kUAJYUVhr9bPYErtpnohpvuGGyhBSvJyEOIyzEFivJo';
+              const oId = item.state?.orderId;
 
-                if (oId && spreadsheetId) {
-                  const callbackName = 'jsonp_auto_sync_' + Math.round(100000 * Math.random()) + '_' + item.id;
-                  const url = new URL(getActiveScriptUrl(spreadsheetId));
-                  url.searchParams.append('action', 'get_link');
-                  url.searchParams.append('orderId', oId);
-                  url.searchParams.append('spreadsheetId', spreadsheetId);
-                  url.searchParams.append('callback', callbackName);
+              if (oId && spreadsheetId) {
+                const callbackName = 'jsonp_auto_sync_' + Math.round(100000 * Math.random()) + '_' + item.id;
+                const url = new URL(getActiveScriptUrl(spreadsheetId));
+                url.searchParams.append('action', 'get_link');
+                url.searchParams.append('orderId', oId);
+                url.searchParams.append('spreadsheetId', spreadsheetId);
+                url.searchParams.append('callback', callbackName);
 
-                  jsonpRequest(url, callbackName)
-                    .then((data) => {
-                      if (data && data.status === 'success' && data.link) {
-                        // Update successfully and save link
-                        updateSpecificHistoryItem(item.id, {
-                          googleSheetLink: data.link,
-                          orderLink: data.link,
-                          hasThreeHourChecked: true,
-                          threeHourAlerted: true
-                        });
-                      } else {
-                        // Not updated, send custom status query notification!
-                        if (!item.state.googleSheetLink || item.state.googleSheetLink.trim() === '') {
-                          const notifyTitle = appLanguage === 'ms' ? 'Status Tempahan' : 'Ask Order Status';
-                          const notifyBody = `${customerName || 'Customer'} (${mainType || 'Tempahan'}) - Dah siap ke belum? Link masih belum dimasukkan.`;
-                          
-                          addInAppNotification(notifyTitle, notifyBody, 'status_query', `status_query_${item.id}`);
-                          try {
-                            if ('Notification' in window && Notification.permission === 'granted') {
-                              new Notification(notifyTitle, { body: notifyBody });
-                            }
-                          } catch (e) { console.warn(e); }
-                        }
-                        updateSpecificHistoryItem(item.id, {
-                          hasThreeHourChecked: true,
-                          threeHourAlerted: true
-                        });
-                      }
-                    })
-                    .catch((err) => {
-                      console.warn('Auto background sync failed:', err);
+                jsonpRequest(url, callbackName)
+                  .then((data) => {
+                    if (data && data.status === 'success' && data.link) {
+                      // Update successfully and save link
+                      updateSpecificHistoryItem(item.id, {
+                        googleSheetLink: data.link,
+                        orderLink: data.link,
+                        hasThreeHourChecked: true,
+                        threeHourAlerted: true
+                      });
+                    } else {
+                      // Not updated, send custom status query notification!
                       if (!item.state.googleSheetLink || item.state.googleSheetLink.trim() === '') {
                         const notifyTitle = appLanguage === 'ms' ? 'Status Tempahan' : 'Ask Order Status';
                         const notifyBody = `${customerName || 'Customer'} (${mainType || 'Tempahan'}) - Dah siap ke belum? Link masih belum dimasukkan.`;
                         
-                        addInAppNotification(notifyTitle, notifyBody, 'status_query', `status_query_${item.id}`);
                         try {
                           if ('Notification' in window && Notification.permission === 'granted') {
                             new Notification(notifyTitle, { body: notifyBody });
@@ -791,22 +324,38 @@ export function AppProvider({ children }: { children: ReactNode }) {
                         hasThreeHourChecked: true,
                         threeHourAlerted: true
                       });
+                    }
+                  })
+                  .catch((err) => {
+                    console.warn('Auto background sync failed:', err);
+                    if (!item.state.googleSheetLink || item.state.googleSheetLink.trim() === '') {
+                      const notifyTitle = appLanguage === 'ms' ? 'Status Tempahan' : 'Ask Order Status';
+                      const notifyBody = `${customerName || 'Customer'} (${mainType || 'Tempahan'}) - Dah siap ke belum? Link masih belum dimasukkan.`;
+                      
+                      try {
+                        if ('Notification' in window && Notification.permission === 'granted') {
+                          new Notification(notifyTitle, { body: notifyBody });
+                        }
+                      } catch (e) { console.warn(e); }
+                    }
+                    updateSpecificHistoryItem(item.id, {
+                      hasThreeHourChecked: true,
+                      threeHourAlerted: true
                     });
-                } else {
-                  // No spreadsheetId or orderId, just ask for status if no link
-                  if (!item.state.googleSheetLink || item.state.googleSheetLink.trim() === '') {
-                    const notifyTitle = appLanguage === 'ms' ? 'Status Tempahan' : 'Ask Order Status';
-                    const notifyBody = `${customerName || 'Customer'} (${mainType || 'Tempahan'}) - Dah siap ke belum? Link masih belum dimasukkan.`;
-                    
-                    alertsToTrigger.push({ title: notifyTitle, body: notifyBody, type: 'status_query', dedupeKey: `status_query_${item.id}` });
-                    try {
-                      if ('Notification' in window && Notification.permission === 'granted') {
-                        new Notification(notifyTitle, { body: notifyBody });
-                      }
-                    } catch (e) { console.warn(e); }
-                  }
-                  newState.threeHourAlerted = true;
+                  });
+              } else {
+                // No spreadsheetId or orderId, just ask for status if no link
+                if (!item.state.googleSheetLink || item.state.googleSheetLink.trim() === '') {
+                  const notifyTitle = appLanguage === 'ms' ? 'Status Tempahan' : 'Ask Order Status';
+                  const notifyBody = `${customerName || 'Customer'} (${mainType || 'Tempahan'}) - Dah siap ke belum? Link masih belum dimasukkan.`;
+                  
+                  try {
+                    if ('Notification' in window && Notification.permission === 'granted') {
+                      new Notification(notifyTitle, { body: notifyBody });
+                    }
+                  } catch (e) { console.warn(e); }
                 }
+                newState.threeHourAlerted = true;
               }
             }
 
@@ -817,7 +366,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
                 ? `Pesanan untuk ${customerName || 'Pelanggan'} (${mainType} ${subType}) berbaki kurang dari 20 minit!`
                 : `Order for ${customerName || 'Customer'} (${mainType} ${subType}) is due in less than 20 minutes!`;
               
-              alertsToTrigger.push({ title, body, type: 'soon', dedupeKey: `soon_${item.id}` });
               try {
                 if ('Notification' in window && Notification.permission === 'granted') {
                   new Notification(title, { body });
@@ -834,7 +382,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
                 ? `Tempahan untuk ${customerName || 'Pelanggan'} (${mainType} ${subType}) sudah sampai tempoh sekarang!`
                 : `Order for ${customerName || 'Customer'} (${mainType} ${subType}) is due now!`;
               
-              alertsToTrigger.push({ title, body, type: 'due', dedupeKey: `due_${item.id}` });
               try {
                 if ('Notification' in window && Notification.permission === 'granted') {
                   new Notification(title, { body });
@@ -857,29 +404,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
         return updatedHistory ? newHistory : prevHistory;
       });
-
-      if (alertsToTrigger.length > 0) {
-        setInAppNotifications(prev => {
-          const filteredAlerts = alertsToTrigger.filter(a => {
-            if (a.dedupeKey) {
-                const exists = prev.some(n => n.dedupeKey === a.dedupeKey && !n.isRead);
-                return !exists;
-            }
-            return true;
-          });
-
-          const newAlerts = filteredAlerts.map(a => ({
-            id: `notif_${Date.now()}_${Math.round(Math.random() * 1000000)}`,
-            title: a.title,
-            body: a.body,
-            timestamp: Date.now(),
-            isRead: false,
-            type: a.type as any,
-            dedupeKey: a.dedupeKey
-          }));
-          return [...newAlerts, ...prev];
-        });
-      }
     };
 
     // Ask for permission and trigger PWA/Web Push subscription registration if supported
@@ -891,20 +415,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
 
     const interval = setInterval(checkAlerts, 60000); // Check every minute
-    const syncInterval = setInterval(syncOrders, 60000); // Sync every minute
     checkAlerts(); // Check right away
     
-    return () => {
-        clearInterval(interval);
-        clearInterval(syncInterval);
-    };
+    return () => clearInterval(interval);
   }, [appLanguage]);
 
   const [isOnline, setIsOnline] = useState<boolean>(() => typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [historyDeliveryFilter, setHistoryDeliveryFilter] = useState<'all' | 'delivered' | 'pending'>('all');
   const [historyPendingTimeFilter, setHistoryPendingTimeFilter] = useState<'all' | 'today' | 'tomorrow' | '2days' | '3days'>('all');
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
-  const [isHistoryReady, setIsHistoryReady] = useState<boolean>(false);
   const [queueSize, setQueueSize] = useState<number>(() => {
     try {
       const q = localStorage.getItem('db_offline_sync_queue');
@@ -924,23 +443,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   });
 
-  const [lastSyncFetchedCount, setLastSyncFetchedCount] = useState<number>(() => {
-    try {
-      const c = localStorage.getItem('db_sync_total_items');
-      return c ? parseInt(c, 10) : 0;
-    } catch {
-      return 0;
-    }
-  });
-
-  const [syncError, setSyncError] = useState<string | null>(() => {
-    try {
-      return localStorage.getItem('db_sync_error');
-    } catch {
-      return null;
-    }
-  });
-
   const updateQueueSize = () => {
     try {
       const q = localStorage.getItem('db_offline_sync_queue');
@@ -953,7 +455,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setQueueSize(0);
   };
 
-  const addToOfflineQueue = (payload: any, webhookUrl: string, orderId: string) => {
+  const addToOfflineQueue = (payload: any, webhookUrl: string, orderId: string = '') => {
     try {
       const queueStr = localStorage.getItem('db_offline_sync_queue');
       const queue = queueStr ? JSON.parse(queueStr) : [];
@@ -1039,16 +541,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setLastSyncTime(now);
       localStorage.setItem('db_last_sync_time', String(now));
 
-      const title = appLanguage === 'ms' ? 'Kemaskini Selesai' : 'Sync Completed';
-      const body = appLanguage === 'ms' 
-        ? `${processedCount} rekod luar talian telah berjaya dikemaskini.` 
-        : `${processedCount} records from queue synced.`;
-
-      addInAppNotification(title, body, 'sync', 'sync_offline_queue');
-
       try {
         if ('Notification' in window && Notification.permission === 'granted') {
-          new Notification(title, { body });
+          new Notification(appLanguage === 'ms' ? 'Kemaskini Selesai' : 'Sync Completed', { 
+            body: appLanguage === 'ms' 
+              ? `${processedCount} rekod luar talian telah berjaya dikemaskini.` 
+              : `${processedCount} records from queue synced.` 
+          });
         }
       } catch(e) {}
     }
@@ -1075,7 +574,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     // Initial check
     syncOfflineQueue();
-    syncOrders();
 
     return () => {
       window.removeEventListener('online', handleOnline);
@@ -1084,246 +582,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     };
   }, [appLanguage]);
 
-  const syncOrders = async () => {
-    setIsSyncing(true);
-    setSyncError(null);
-    localStorage.removeItem('db_sync_error');
-    try {
-      const savedSheets = localStorage.getItem('db_annual_sheets');
-      const annualSheets = savedSheets ? JSON.parse(savedSheets) : [
-        { year: '2024', spreadsheetId: '1B9zdWXVLnvj0jNNVnKxcb6cJnS1VLCIdB4j-RR3wOlg', scriptUrl: '' },
-        { year: '2025', spreadsheetId: '1myU9apnYWWtU3snnCw14qI6ZS05i4DY6oOswLz1sCwo', scriptUrl: '' },
-        { year: '2026', spreadsheetId: '1kUAJYUVhr9bPYErtpnohpvuGGyhBSvJyEOIyzEFivJo', scriptUrl: '' }
-      ];
-
-      let hasErrors = false;
-      let errorMsgs: string[] = [];
-
-      const [operational, overdue, archived, ...sheetResults] = await Promise.all([
-        isFirestoreCanary
-          ? getOperationalOrders().catch(err => {
-              console.warn("Failed to load operational orders from Firestore:", err);
-              hasErrors = true;
-              errorMsgs.push(`Firestore Operational: ${err.message || err}`);
-              return [];
-            })
-          : Promise.resolve([]),
-        isFirestoreCanary
-          ? getOverdueOrders().catch(err => {
-              console.warn("Failed to load overdue orders from Firestore:", err);
-              hasErrors = true;
-              errorMsgs.push(`Firestore Overdue: ${err.message || err}`);
-              return [];
-            })
-          : Promise.resolve([]),
-        isFirestoreCanary
-          ? getArchivedOrders().catch(err => {
-              console.warn("Failed to load archived orders from Firestore:", err);
-              hasErrors = true;
-              errorMsgs.push(`Firestore Archived: ${err.message || err}`);
-              return [];
-            })
-          : Promise.resolve([]),
-        ...(isFirestoreCanary ? [] : annualSheets).map(async (sheet: any) => {
-          if (!sheet.spreadsheetId?.trim()) return [];
-          const url = new URL(sheet.scriptUrl?.trim() || 'https://script.google.com/macros/s/AKfycbw5KpBvJyFpIXmsHueg4XPSRkZ0mg6kxHqjMGp3WEs8Hx_JodvKSoKEg6RMsdH54iCa/exec');
-          url.searchParams.append('action', 'sync_recent');
-          url.searchParams.append('spreadsheetId', sheet.spreadsheetId.trim());
-          const callbackName = 'jsonp_callback_sync_' + Math.round(100000 * Math.random());
-          url.searchParams.append('callback', callbackName);
-          try {
-            const data = await jsonpRequest(url, callbackName);
-            if (data && data.status === 'success' && Array.isArray(data.orders)) {
-              return data.orders;
-            } else {
-              hasErrors = true;
-              errorMsgs.push(`Sheet ${sheet.year}: ${data?.message || 'Invalid format'}`);
-              return [];
-            }
-          } catch (e) {
-            console.warn('Sheet sync failed', e);
-            hasErrors = true;
-            errorMsgs.push(`Sheet ${sheet.year}: ${e instanceof Error ? e.message : String(e)}`);
-            return [];
-          }
-        })
-      ]);
-      
-      const allFirestoreOrders = [...operational, ...overdue, ...archived];
-      
-      const filteredOrders: OrderHistoryItem[] = [];
-
-      const processOrder = (order: any, isFirestore: boolean) => {
-        if (order.status === 'draft') return;
-        
-        // Normalize properties so that the filter and state shape are consistent
-        const name = String(order.customerName || order.name || '').trim();
-        const phone = String(order.customerPhone || order.phone || '').trim();
-        const orderType = String(order.customerOrder || order.order || order.jenisTempahan || '').trim();
-        
-        // Filter out "empty" orders that lack essential information
-        if (!name && !orderType && !phone) return;
-
-        const mainType = order.mainType || (orderType === 'Resume' ? 'Resume' : orderType === 'Surat' ? 'Surat' : 'Lain-lain');
-
-        const id = order.orderId || order.historyId || `SYNC-${name || 'UNKNOWN'}-${phone || ''}-${order.originalDue || order.due || order.customerDue || ''}`.replace(/[^a-zA-Z0-9-]/g, '');
-        if (id) {
-          let resolvedTimestamp = parseTimestampFromId(id);
-          if (!resolvedTimestamp) {
-            const rawTs = Number(order.timestamp);
-            if (!isNaN(rawTs) && rawTs > 0) {
-              resolvedTimestamp = rawTs;
-            } else {
-              const trimmedTsStr = String(order.timestamp || '').trim();
-              if (trimmedTsStr) {
-                const parsed = new Date(trimmedTsStr).getTime();
-                if (!isNaN(parsed) && parsed > 0) {
-                  resolvedTimestamp = parsed;
-                } else {
-                  const res = parseDateStringToTimestamp(trimmedTsStr, 0);
-                  if (res.timestamp > 0) {
-                    resolvedTimestamp = res.timestamp;
-                  }
-                }
-              }
-            }
-          }
-          if (!resolvedTimestamp) {
-            resolvedTimestamp = parseDueTimestamp(order.originalDue || order.due || order.customerDue) || Date.now();
-          }
-          
-          const rawPrice = order.price !== undefined && order.price !== null
-            ? (typeof order.price === 'number' ? order.price : parseFloat(String(order.price).replace(/RM/gi, '').replace(/,/g, '')) || undefined)
-            : undefined;
-
-          // Map to standard AppState shape to ensure full consistency!
-          const normalizedState = {
-            ...order,
-            isDelivered: !!(order.isDelivered === true || order.isDelivered === 'true' || order.isDelivered === 1 || order.isDelivered === '1'),
-            spreadsheetId: order.spreadsheetId || '',
-            customerName: name,
-            customerPhone: phone,
-            customerOrder: orderType,
-            template: order.template || order.customerTemplate || '',
-            customerTemplate: order.template || order.customerTemplate || '',
-            customerBahasa: normalizeBahasa(order.bahasa || order.customerBahasa || ''),
-            customerAddOn: order.addon || order.customerAddOn || '',
-            customerJenis: order.jenis || order.customerJenis || '',
-            customerDue: order.originalDue || order.due || order.customerDue || '',
-            orderLink: order.link || order.orderLink || '',
-            googleSheetLink: order.link || order.googleSheetLink || '',
-            orderId: id,
-            price: rawPrice,
-            dueTimestamp: order.dueTimestamp || parseDueTimestamp(order.originalDue || order.due || order.customerDue),
-            syncStatus: isFirestore ? order.syncStatus || 'synced' : 'synced',
-            mainType: mainType,
-            subType: order.subType || '',
-            timestamp: resolvedTimestamp,
-            lastUpdated: Number(order.lastUpdated) || 0,
-            version: typeof order.version === 'number' ? order.version : 1,
-            lastModifiedLocally: Number(order.lastModifiedLocally) || 0
-          };
-
-          const existingIdx = filteredOrders.findIndex(item => item.id === id);
-          if (existingIdx !== -1) {
-            const existingState = filteredOrders[existingIdx].state;
-            const existingLastUpdated = Number(existingState.lastUpdated) || 0;
-            const existingVersion = Number(existingState.version) || 1;
-            const existingModified = Number(existingState.lastModifiedLocally) || 0;
-
-            const incomingLastUpdated = Number(normalizedState.lastUpdated) || 0;
-            const incomingVersion = Number(normalizedState.version) || 1;
-            const incomingModified = Number(normalizedState.lastModifiedLocally) || 0;
-
-            let isIncomingNewer = false;
-            if (incomingLastUpdated > existingLastUpdated) {
-              isIncomingNewer = true;
-            } else if (incomingLastUpdated === existingLastUpdated && incomingVersion > existingVersion) {
-              isIncomingNewer = true;
-            } else if (incomingLastUpdated === existingLastUpdated && incomingVersion === existingVersion) {
-              isIncomingNewer = incomingModified > existingModified;
-            }
-
-            if (isIncomingNewer) {
-              filteredOrders[existingIdx] = {
-                id: id,
-                timestamp: resolvedTimestamp,
-                state: normalizedState,
-                messages: order.messages || []
-              };
-            }
-          } else {
-            filteredOrders.push({
-              id: id,
-              timestamp: resolvedTimestamp,
-              state: normalizedState,
-              messages: order.messages || []
-            });
-          }
-        }
-      };
-
-      for (const order of allFirestoreOrders) {
-          processOrder(order, true);
-      }
-      
-      for (const sheetResult of sheetResults) {
-          for (const order of sheetResult) {
-              processOrder(order, false);
-          }
-      }
-
-      setHistory(prevHistory => mergeSyncedOrders(prevHistory, filteredOrders));
-
-      if (isFirestoreCanary) {
-        try {
-          const firestoreDrafts = await getDraftsFromFirestore();
-          const formattedDrafts = firestoreDrafts.map(state => ({
-            id: state.historyId || state.orderId || '',
-            timestamp: state.timestamp || Date.now(),
-            state: state,
-            messages: []
-          }));
-          setDrafts(formattedDrafts);
-        } catch (draftErr) {
-          console.warn("Failed to sync drafts from Firestore:", draftErr);
-        }
-      }
-
-      const count = filteredOrders.length;
-      setLastSyncFetchedCount(count);
-      localStorage.setItem('db_sync_total_items', String(count));
-
-      const now = Date.now();
-      setLastSyncTime(now);
-      localStorage.setItem('db_last_sync_time', String(now));
-
-      if (hasErrors && errorMsgs.length > 0) {
-        const joined = errorMsgs.join('; ');
-        setSyncError(joined);
-        localStorage.setItem('db_sync_error', joined);
-      }
-    } catch (e) {
-      console.warn("Sync failed", e);
-      const msg = e instanceof Error ? e.message : String(e);
-      setSyncError(msg);
-      localStorage.setItem('db_sync_error', msg);
-    } finally {
-      setIsSyncing(false);
-      setIsHistoryReady(true);
-    }
-  };
-
-  const toggleTheme = () => {
-    const nextTheme = theme === 'light' ? 'dark' : 'light';
-    trackEvent('theme_toggled', { to_theme: nextTheme });
-    setTheme(nextTheme);
-  };
-  const toggleLanguage = () => {
-    const nextLang = appLanguage === 'ms' ? 'en' : 'ms';
-    trackEvent('language_toggled', { to_language: nextLang });
-    setAppLanguage(nextLang);
-  };
+  const toggleTheme = () => setTheme(t => t === 'light' ? 'dark' : 'light');
+  const toggleLanguage = () => setAppLanguage(l => l === 'ms' ? 'en' : 'ms');
 
   const saveOrderToHistory = (messages: string[]) => {
     let currentId = state.historyId;
@@ -1334,22 +594,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       currentTimestamp = Date.now();
     }
     
-    // Track order submission in analytics
-    trackEvent('order_submitted', {
-      urgency: state.urgency || 'none',
-      mainType: state.mainType || 'none',
-      subType: state.subType || 'none',
-      addons_count: state.addons ? state.addons.length : 0,
-      has_softcopy: state.addons ? (state.addons.includes('Editable softcopy BI') || state.addons.includes('Editable softcopy BM')) : false,
-      cl_langs_count: state.clLangs ? state.clLangs.length : 0,
-      resume_langs_count: state.resumeLangs ? state.resumeLangs.length : 0,
-      is_edit_mode: state.isEditMode || false,
-      extra_hours: state.extraHours || 0,
-      messages_count: messages.length,
-      price: state.price || 0
-    });
-    
-    const finalState = { ...state, historyId: currentId, timestamp: currentTimestamp, messages, lastModifiedLocally: Date.now() };
+    const finalState = { ...state, historyId: currentId, timestamp: currentTimestamp };
     
     const newItem: OrderHistoryItem = {
       id: currentId,
@@ -1368,24 +613,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     
     setState(finalState);
     syncPushNotifications(newItem, appLanguage).catch(console.warn);
-
-    if (isFirestoreCanary) {
-      saveOrderToFirestore(finalState).then(result => {
-        if (result) {
-          setHistory(prev => prev.map(item => 
-            item.id === currentId 
-              ? { ...item, state: { ...item.state, lastUpdated: result.lastUpdated, version: result.version, syncStatus: 'synced' } } 
-              : item
-          ));
-          setState(s => s.historyId === currentId ? { ...s, lastUpdated: result.lastUpdated, version: result.version, syncStatus: 'synced' } : s);
-        }
-      }).catch(err => {
-        console.error("Failed to save order to Firestore inside saveOrderToHistory:", err);
-      });
-    }
   };
   
-  const updateOrderHistoryState = (updates: Partial<AppState>, skipFirestoreSave = false) => {
+  const updateOrderHistoryState = (updates: Partial<AppState>) => {
     const finalState = { ...state, ...updates, lastModifiedLocally: Date.now() };
     setState(finalState);
     if (finalState.historyId) {
@@ -1406,26 +636,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
            id: finalState.historyId as string,
            timestamp: finalState.timestamp || Date.now(),
            state: finalState,
-           messages: finalState.messages || []
+           messages: []
          };
          syncPushNotifications(newItem, appLanguage).catch(console.warn);
          return [newItem, ...prev];
        });
-
-       if (isFirestoreCanary && !skipFirestoreSave) {
-         saveOrderToFirestore(finalState).then(result => {
-           if (result) {
-             setHistory(prev => prev.map(item => 
-               item.id === finalState.historyId 
-                 ? { ...item, state: { ...item.state, lastUpdated: result.lastUpdated, version: result.version, syncStatus: 'synced' } } 
-                 : item
-             ));
-             setState(s => s.historyId === finalState.historyId ? { ...s, lastUpdated: result.lastUpdated, version: result.version, syncStatus: 'synced' } : s);
-           }
-         }).catch(err => {
-           console.error("Failed to save order to Firestore inside updateOrderHistoryState:", err);
-         });
-       }
     }
   };
 
@@ -1434,22 +649,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (item.id === id) {
         const updatedItem = { ...item, state: { ...item.state, ...updates, lastModifiedLocally: Date.now() } };
         syncPushNotifications(updatedItem, appLanguage).catch(console.warn);
-
-        if (isFirestoreCanary) {
-          saveOrderToFirestore(updatedItem.state).then(result => {
-            if (result) {
-              setHistory(prev => prev.map(item => 
-                item.id === id 
-                  ? { ...item, state: { ...item.state, lastUpdated: result.lastUpdated, version: result.version, syncStatus: 'synced' } } 
-                  : item
-              ));
-              setState(s => s.historyId === id ? { ...s, lastUpdated: result.lastUpdated, version: result.version, syncStatus: 'synced' } : s);
-            }
-          }).catch(err => {
-            console.error("Failed to save order to Firestore inside updateSpecificHistoryItem:", err);
-          });
-        }
-
         return updatedItem;
       }
       return item;
@@ -1474,13 +673,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
           ? { ...item, state: { ...item.state, isDeleted: true, lastModifiedLocally: Date.now() } } 
           : item
       ));
-
-      if (isFirestoreCanary) {
-        const oId = itemToDelete.state?.orderId || id;
-        deleteOrderFromFirestore(oId).catch(err => {
-          console.error("Failed to delete order from Firestore inside deleteOrderFromHistory:", err);
-        });
-      }
     }
 
     clearPushNotifications(id).catch(console.warn);
@@ -1497,27 +689,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return prev.filter(x => !blacklisted.includes(x));
       });
 
-      const now = Date.now();
       setHistory(prev => prev.map(item => 
         item.id === id 
-          ? { ...item, state: { ...item.state, isDeleted: false, syncStatus: 'failed', lastModifiedLocally: now } } 
+          ? { ...item, state: { ...item.state, isDeleted: false, syncStatus: 'failed', lastModifiedLocally: Date.now() } } 
           : item
       ));
-
-      if (isFirestoreCanary && itemToRestore.state) {
-        const restoredState = { ...itemToRestore.state, isDeleted: false, lastModifiedLocally: now };
-        saveOrderToFirestore(restoredState).then(result => {
-          if (result) {
-            setHistory(prev => prev.map(item => 
-              item.id === id 
-                ? { ...item, state: { ...item.state, lastUpdated: result.lastUpdated, version: result.version, syncStatus: 'synced' } } 
-                : item
-            ));
-          }
-        }).catch(err => {
-          console.error("Failed to save restored order to Firestore inside restoreOrderFromHistory:", err);
-        });
-      }
 
       if (itemToRestore.state) {
         const {
@@ -1546,13 +722,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
             customerPhone || '',
             customerOrder || '',
             customerTemplate || template || '',
-            normalizeBahasa(customerBahasa),
+            customerBahasa || '',
             customerAddOn || '',
-            normalizeJenis(customerJenis || ''),
+            customerJenis || '',
             customerDue || '',
             orderLink || googleSheetLink || '',
-            orderId,
-            itemToRestore.state.price ? itemToRestore.state.price.toString() : ''
+            orderId
           ];
           addToOfflineQueue({
             action: 'update_order',
@@ -1569,28 +744,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setHistory(prev => prev.filter(item => item.id !== id));
   };
 
-  const saveAsDraft = (formUpdates?: Partial<AppState>) => {
-    const currentState = formUpdates ? { ...state, ...formUpdates } : state;
-
+  const saveAsDraft = () => {
     // If this is a real order (not starting with 'draft_' or already present in history), do not save it as a draft
-    if (currentState.historyId && (!currentState.historyId.startsWith('draft_') || history.some(item => item.id === currentState.historyId))) {
+    if (state.historyId && (!state.historyId.startsWith('draft_') || history.some(item => item.id === state.historyId))) {
       return;
     }
 
-    // Track draft saved in analytics
-    trackEvent('draft_saved', {
-      mainType: currentState.mainType || 'none',
-      subType: currentState.subType || 'none',
-      urgency: currentState.urgency || 'none'
-    });
-
-    const draftId = currentState.historyId || `draft_${Date.now()}`;
-    const timestamp = currentState.timestamp || Date.now();
+    const draftId = state.historyId || `draft_${Date.now()}`;
+    const timestamp = state.timestamp || Date.now();
     
     const draftItem: OrderHistoryItem = {
       id: draftId,
       timestamp,
-      state: { ...currentState, historyId: draftId, timestamp },
+      state: { ...state, historyId: draftId, timestamp },
       messages: []
     };
     
@@ -1602,34 +768,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return [draftItem, ...prev];
     });
     
-    setState(prev => ({ ...prev, ...formUpdates, historyId: draftId, timestamp }));
-
-    if (isFirestoreCanary) {
-      saveDraftToFirestore(draftItem.state).catch(err => {
-        console.error("Failed to save draft to Firestore:", err);
-      });
-    }
+    setState(prev => ({ ...prev, historyId: draftId, timestamp }));
   };
 
   const deleteDraft = (id: string) => {
     setDrafts(prev => prev.filter(d => d.id !== id));
-    if (isFirestoreCanary) {
-      deleteDraftFromFirestore(id).catch(err => {
-        console.error("Failed to delete draft from Firestore:", err);
-      });
-    }
   };
 
   const loadDraft = (item: OrderHistoryItem) => {
     const s = (item.state || {}) as any;
-    
-    // Track draft loaded in analytics
-    trackEvent('draft_loaded', {
-      id: item.id,
-      mainType: s.mainType || 'none',
-      subType: s.subType || 'none'
-    });
-
     setState({
       ...INITIAL_STATE,
       ...s,
@@ -1638,7 +785,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       addons: Array.isArray(s.addons) ? s.addons : INITIAL_STATE.addons,
       clLangs: Array.isArray(s.clLangs) ? s.clLangs : INITIAL_STATE.clLangs,
       resumeLangs: Array.isArray(s.resumeLangs) ? s.resumeLangs : INITIAL_STATE.resumeLangs,
-      price: s.price ? Number(String(s.price).replace(/[^0-9.]/g, '')) : undefined,
       timestamp: item.timestamp,
       historyId: item.id,
       isEditMode: true
@@ -1674,35 +820,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
       addons: Array.isArray(s.addons) ? s.addons : INITIAL_STATE.addons,
       clLangs: Array.isArray(s.clLangs) ? s.clLangs : INITIAL_STATE.clLangs,
       resumeLangs: Array.isArray(s.resumeLangs) ? s.resumeLangs : INITIAL_STATE.resumeLangs,
-      price: s.price ? Number(String(s.price).replace(/[^0-9.]/g, '')) : undefined,
       timestamp: item.timestamp,
       historyId: item.id,
-      isEditMode: s.isEditMode === true || s.customerOrder === 'Edit Resume'
+      isEditMode: true
     });
     setViewStack(['home', 'history', 'customer-info']);
   };
 
-  const startNewCustomer = () => {
-    localStorage.removeItem('customer_form_progress');
-    // Track order flow start for a customer info flow
-    trackEvent('order_flow_start', {
-      start_type: 'new_customer'
-    });
-    setState(prev => ({
-      ...INITIAL_STATE,
-      spreadsheetId: prev.spreadsheetId
-    }));
-    setViewStack(['home', 'customer-info']);
-  };
-
   const startNewOrder = (view: ViewType, updates: Partial<AppState>) => {
-    // Track order flow start for a specific template/type flow
-    trackEvent('order_flow_start', {
-      start_type: 'new_order',
-      view,
-      mainType: updates.mainType || 'none',
-      subType: updates.subType || 'none'
-    });
     setState({ ...INITIAL_STATE, ...updates });
     setViewStack(['home', view]);
   };
@@ -1742,8 +867,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem('generatedMessages');
   };
 
+  // Background synchronization utility checking for new order updates every 5 minutes when active
+  useBackgroundSync(setHistory, deletedOrderIds);
+
   return (
-    <AppContext.Provider value={{ state, setState, viewStack, pushView, changeTab, startNewOrder, startNewCustomer, popView, goHome, reset, generatedMessages, setGeneratedMessages, history, setHistory, saveOrderToHistory, updateOrderHistoryState, updateSpecificHistoryItem, deleteOrderFromHistory, restoreOrderFromHistory, permanentlyDeleteOrderFromHistory, clearHistory, loadOrder, drafts, saveAsDraft, deleteDraft, loadDraft, theme, toggleTheme, appLanguage, toggleLanguage, isOnline, isSyncing, isHistoryReady, queueSize, lastSyncTime, setLastSyncTime, lastSyncFetchedCount, setLastSyncFetchedCount, syncTotalItems: lastSyncFetchedCount, setSyncTotalItems: setLastSyncFetchedCount, syncError, setSyncError, syncOfflineQueue, addToOfflineQueue, deletedOrderIds, historyDeliveryFilter, setHistoryDeliveryFilter, historyPendingTimeFilter, setHistoryPendingTimeFilter, syncOrders, inAppNotifications, markNotificationAsRead, clearAllNotifications, addInAppNotification }}>
+    <AppContext.Provider value={{ state, setState, viewStack, pushView, changeTab, startNewOrder, popView, goHome, reset, generatedMessages, setGeneratedMessages, history, setHistory, saveOrderToHistory, updateOrderHistoryState, updateSpecificHistoryItem, deleteOrderFromHistory, restoreOrderFromHistory, permanentlyDeleteOrderFromHistory, clearHistory, loadOrder, drafts, saveAsDraft, deleteDraft, loadDraft, theme, toggleTheme, appLanguage, toggleLanguage, isOnline, isSyncing, queueSize, lastSyncTime, syncOfflineQueue, addToOfflineQueue, deletedOrderIds, historyDeliveryFilter, setHistoryDeliveryFilter, historyPendingTimeFilter, setHistoryPendingTimeFilter }}>
       {children}
     </AppContext.Provider>
   );

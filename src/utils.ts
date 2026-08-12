@@ -1,13 +1,10 @@
+import type { OrderHistoryItem } from './types';
+
 export function calculateDeadline(state: any, appLanguage: string) {
   const now = state.timestamp ? new Date(state.timestamp) : new Date();
   const isSuperUrgent = state.urgency === 'super';
   const addonHours = (state.mainType === 'Resume' && !state.isEditMode && isSuperUrgent && state.addons) ? state.addons.length : 0;
-  let rawTotal = (state.baseHours || 0) + (state.extraHours || 0) + addonHours;
-  
-  if (typeof rawTotal !== 'number' || isNaN(rawTotal) || rawTotal < 0) {
-    rawTotal = 0;
-  }
-  const total = rawTotal;
+  const total = (state.baseHours || 0) + (state.extraHours || 0) + addonHours;
   
   const dl = new Date(now.getTime() + total * 3600000);
   const timeStr = dl.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
@@ -17,11 +14,11 @@ export function calculateDeadline(state: any, appLanguage: string) {
   const diff = Math.round((new Date(dl.toDateString()).getTime() - new Date(now.toDateString()).getTime()) / 86400000);
   
   let dateStr = '';
-  if (diff <= 0) {
+  if (diff === 0) {
     dateStr = appLanguage === 'ms' ? `hari ini ${timeStr}` : `today at ${timeStr}`;
   } else if (diff === 1) {
     dateStr = appLanguage === 'ms' ? `esok ${timeStr}` : `tomorrow at ${timeStr}`;
-  } else {
+  } else if (diff > 1) {
     if (appLanguage === 'ms') {
       dateStr = `pada hari ${daysMs[dl.getDay()]} (${String(dl.getDate()).padStart(2,'0')}/${String(dl.getMonth()+1).padStart(2,'0')}) ${timeStr}`;
     } else {
@@ -29,32 +26,7 @@ export function calculateDeadline(state: any, appLanguage: string) {
     }
   }
   
-  const isDays = state.urgency === 'semi' || state.urgency === 'noturgent';
-  const displayDuration = total > 0 ? (isDays ? Math.ceil(total / 24) : total) : 0;
-  
-  return { formatted: dateStr, total, displayDuration };
-}
-
-export function toProperCase(str: string): string {
-  if (!str) return '';
-  return str
-    .trim()
-    .replace(/\w\S*/g, (txt) => {
-      const upper = txt.toUpperCase();
-      if (['ATS', 'BI', 'BM', 'PDF', 'CV'].includes(upper)) {
-        return upper;
-      }
-      return txt.charAt(0).toUpperCase() + txt.substring(1).toLowerCase();
-    });
-}
-
-export function formatAddOnString(addOnStr: string): string {
-  if (!addOnStr) return '';
-  return addOnStr
-    .split(',')
-    .map(item => toProperCase(item))
-    .filter(Boolean)
-    .join(', ');
+  return { formatted: dateStr, total };
 }
 
 export function generateMessages(state: any, dl: { formatted: string, total: number }, appLanguage: string) {
@@ -62,25 +34,14 @@ export function generateMessages(state: any, dl: { formatted: string, total: num
   let raw = state.mainType === 'Lain-lain' ? ((state.customDoc || '').trim() || 'Dokumen') : state.mainType;
   const docLabel = raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase();
   
-  let addsForDisplay: string[] = [];
-  if (state.customerAddOn && String(state.customerAddOn).trim()) {
-    addsForDisplay = String(state.customerAddOn)
-      .split(',')
-      .map((s: string) => toProperCase(s))
-      .filter(Boolean);
-  } else {
-    addsForDisplay = (state.addons || []).map((a: string) => {
+  const addsForDisplay = (state.addons || []).map((a: string) => {
       if (a === 'Soft Copy Word') return `Soft Copy Word (${state.softcopyLang})`;
       if (a === 'Cover Letter') {
           const clText = ['Melayu', 'English'].filter(l => state.clLangs && state.clLangs.includes(l)).join(' & ');
           return `Cover Letter (${clText})`;
       }
-      if (a === 'Custom') {
-          return toProperCase(state.customDoc || '').trim() || 'Custom';
-      }
       return a;
-    });
-  }
+  });
   
   const title = docLabel + (addsForDisplay.length > 0 && !isE ? " + " + addsForDisplay.join(" + ") : "");
   
@@ -241,155 +202,228 @@ export function formatPhoneUniversal(phone?: any): string {
  * in a robust manner. Returns both the timestamp and a Date object.
  */
 export function parseDateStringToTimestamp(dueText: string, defaultTimestamp: number): { timestamp: number; date: Date } {
-  if (!dueText) {
+  if (!dueText || !dueText.trim()) {
     return { timestamp: defaultTimestamp, date: new Date(defaultTimestamp) };
   }
 
-  // Strip all invisible formatting marks/Unicode directional controls (e.g. \u202a, \u202c)
-  // and normalize all types of spaces (regular, non-breaking, wide spaces) to regular space
-  const sanitized = String(dueText)
-    .replace(/[\u200B-\uFEFF\u200E\u200F\u202A-\u202E]/g, '')
-    .replace(/[\s\xa0\u2002\u2003\u2009]+/g, ' ')
-    .trim();
+const cleanText = dueText
+  .replace(/\s+at\s+/i, ' ')
+  .trim();
 
-  if (!sanitized) {
-    return { timestamp: defaultTimestamp, date: new Date(defaultTimestamp) };
+// Parse DD/MM/YYYY or DD-MM-YYYY first.
+// This prevents JavaScript from reading 06/07/2026 as June 7.
+const localDateMatch = cleanText.match(
+  /^(\d{1,2})[/-](\d{1,2})[/-](\d{4})(?:\s+(\d{1,2})(?::(\d{1,2}))?(?::(\d{1,2}))?\s*(AM|PM)?)?$/i
+);
+
+if (localDateMatch) {
+  const day = Number(localDateMatch[1]);
+  const month = Number(localDateMatch[2]);
+  const year = Number(localDateMatch[3]);
+
+  let hours = Number(localDateMatch[4] || 0);
+  const minutes = Number(localDateMatch[5] || 0);
+  const seconds = Number(localDateMatch[6] || 0);
+  const meridiem = String(
+    localDateMatch[7] || ''
+  ).toUpperCase();
+
+  if (meridiem === 'PM' && hours < 12) {
+    hours += 12;
   }
 
-  const cleanText = sanitized.replace(/\s+at\s+/i, ' ').trim();
+  if (meridiem === 'AM' && hours === 12) {
+    hours = 0;
+  }
 
-  // Robustly extract date segments: support /, -, or . separators
-  const datePattern = /(\d{1,4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,4})/;
-  const match = cleanText.match(datePattern);
+  const parsedDate = new Date(
+    year,
+    month - 1,
+    day,
+    hours,
+    minutes,
+    seconds,
+    0
+  );
 
-  if (match) {
-    let day = 0, month = 0, year = 0;
-    const part1 = match[1];
-    const part2 = match[2];
-    const part3 = match[3];
+  const isValid =
+    parsedDate.getFullYear() === year &&
+    parsedDate.getMonth() === month - 1 &&
+    parsedDate.getDate() === day &&
+    parsedDate.getHours() === hours &&
+    parsedDate.getMinutes() === minutes &&
+    parsedDate.getSeconds() === seconds;
 
-    if (part1.length === 4) {
-      // YYYY-MM-DD
-      year = parseInt(part1, 10);
-      month = parseInt(part2, 10) - 1;
-      day = parseInt(part3, 10);
+  if (isValid) {
+    return {
+      timestamp: parsedDate.getTime(),
+      date: parsedDate
+    };
+  }
+
+  return {
+    timestamp: defaultTimestamp,
+    date: new Date(defaultTimestamp)
+  };
+}
+
+// Only use JavaScript's general parser after checking
+// the explicit DD/MM/YYYY format.
+const directDate = new Date(cleanText);
+
+if (!isNaN(directDate.getTime())) {
+  return {
+    timestamp: directDate.getTime(),
+    date: directDate
+  };
+}
+
+return {
+  timestamp: defaultTimestamp,
+  date: new Date(defaultTimestamp)
+};
+}
+
+export function normalizePhoneDigits(phone?: any): string {
+  if (!phone) return '';
+  let digits = String(phone).replace(/\D/g, '');
+  if (digits.startsWith('60')) digits = digits.slice(2);
+  else if (digits.startsWith('0')) digits = digits.slice(1);
+  return digits;
+}
+
+export function normalizeNameStr(name?: string): string {
+  if (!name) return '';
+  return String(name).trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+export function parseMainType(orderVal?: string): string {
+  if (!orderVal) return 'Pesanan';
+  const trimmed = String(orderVal).trim();
+  const lower = trimmed.toLowerCase();
+  
+  if (lower.includes('resume') || lower.includes('cv')) return 'Resume';
+  if (lower.includes('surat') || lower.includes('letter')) return 'Surat';
+  if (lower.includes('edit')) return 'Edit PDF';
+  if (lower.includes('borang')) return 'Borang';
+  
+  return trimmed || 'Pesanan';
+}
+
+export function reconcileOrdersByUniqueId<T extends OrderHistoryItem = OrderHistoryItem>(items: T[]): T[] {
+  if (!items || !Array.isArray(items) || items.length === 0) return [];
+
+  const orderIdMap = new Map<string, T>();
+  const unmatched: T[] = [];
+
+  for (const item of items) {
+    if (!item) continue;
+    const itemState: any = item.state || {};
+    const rawOrderId = String(itemState.orderId || item.id || '').trim();
+    const cleanOrderId = rawOrderId.toLowerCase();
+    const isTemp = !cleanOrderId || cleanOrderId.startsWith('sync-') || cleanOrderId.startsWith('temp-');
+
+    if (!isTemp) {
+      if (!orderIdMap.has(cleanOrderId)) {
+        orderIdMap.set(cleanOrderId, item);
+      } else {
+        const existing = orderIdMap.get(cleanOrderId)!;
+        orderIdMap.set(cleanOrderId, mergeOrderRecords(existing, item));
+      }
     } else {
-      // DD-MM-YYYY
-      day = parseInt(part1, 10);
-      month = parseInt(part2, 10) - 1;
-      year = parseInt(part3, 10);
-      // Normalize 2-digit years
-      if (year < 100) {
-        if (year >= 50) year += 1900;
-        else year += 2000;
-      }
+      unmatched.push(item);
     }
+  }
 
-    // Robustly extract time segments: support : or . delimiters with optional AM/PM
-    const timePattern = /(\d{1,2})[\:\.](\d{2})(?:[\:\.](\d{2}))?\s*(AM|PM)?/i;
-    const timeMatch = cleanText.match(timePattern);
+  const result: T[] = Array.from(orderIdMap.values());
 
-    let hours = 0;
-    let minutes = 0;
-    let seconds = 0;
+  for (const item of unmatched) {
+    const itemState: any = item.state || {};
+    const normName = normalizeNameStr(itemState.customerName || itemState.name);
+    const normPhone = normalizePhoneDigits(itemState.customerPhone || itemState.phone);
+    const rawOrderType = String(itemState.customerOrder || itemState.mainType || '').trim().toLowerCase();
 
-    if (timeMatch) {
-      hours = parseInt(timeMatch[1], 10);
-      minutes = parseInt(timeMatch[2], 10);
-      if (timeMatch[3]) {
-        seconds = parseInt(timeMatch[3], 10);
+    let matchIdx = -1;
+
+    for (let i = 0; i < result.length; i++) {
+      const existing = result[i];
+      const exState: any = existing.state || {};
+      const exName = normalizeNameStr(exState.customerName || exState.name);
+      const exPhone = normalizePhoneDigits(exState.customerPhone || exState.phone);
+      const exOrderType = String(exState.customerOrder || exState.mainType || '').trim().toLowerCase();
+
+      // 1. Name + Phone match
+      if (normName && normPhone && exName && exPhone) {
+        if (normName === exName && normPhone === exPhone) {
+          matchIdx = i;
+          break;
+        }
       }
-      const ampm = timeMatch[4];
-      if (ampm) {
-        if (ampm.toUpperCase() === 'PM' && hours < 12) {
-          hours += 12;
-        } else if (ampm.toUpperCase() === 'AM' && hours === 12) {
-          hours = 0;
+
+      // 2. Name + Order type match
+      if (normName && exName && normName === exName) {
+        if (!rawOrderType || !exOrderType || rawOrderType === exOrderType) {
+          matchIdx = i;
+          break;
         }
       }
     }
 
-    const parsedDME = new Date(year, month, day, hours, minutes, seconds);
-    if (!isNaN(parsedDME.getTime())) {
-      return { timestamp: parsedDME.getTime(), date: parsedDME };
+    if (matchIdx !== -1) {
+      result[matchIdx] = mergeOrderRecords(result[matchIdx], item);
+    } else {
+      result.push(item);
     }
   }
 
-  // Fallback to standard new Date() for formats other than custom DD/MM/YYYY
-  const directDate = new Date(cleanText);
-  if (!isNaN(directDate.getTime())) {
-    return { timestamp: directDate.getTime(), date: directDate };
-  }
-
-  return { timestamp: defaultTimestamp, date: new Date(defaultTimestamp) };
+  return result;
 }
 
-export function normalizeBahasa(val: string): string {
-  const clean = (val || '').trim();
-  if (!clean) return 'Melayu';
-  const lower = clean.toLowerCase();
-  if (lower === '2 bahasa' || lower === 'dua bahasa' || lower === 'both') return '2 Bahasa';
-  if (lower === 'melayu' || lower === 'bm') return 'Melayu';
-  if (lower === 'english' || lower === 'bi') return 'English';
-  return clean;
+function mergeOrderRecords<T extends OrderHistoryItem = OrderHistoryItem>(a: T, b: T): T {
+  const aState: any = a.state || {};
+  const bState: any = b.state || {};
+
+  const aId = String(aState.orderId || a.id || '').trim();
+  const bId = String(bState.orderId || b.id || '').trim();
+  const aIsTemp = !aId || aId.toLowerCase().startsWith('sync-') || aId.toLowerCase().startsWith('temp-');
+  const bIsTemp = !bId || bId.toLowerCase().startsWith('sync-') || bId.toLowerCase().startsWith('temp-');
+
+  const preferredOrderId = !aIsTemp ? aId : !bIsTemp ? bId : aId || bId;
+  const preferredId = !aIsTemp ? (a.id || aId) : !bIsTemp ? (b.id || bId) : a.id || b.id || 'ORDER-' + Date.now();
+
+  const aLink = aState.orderLink || aState.googleSheetLink || '';
+  const bLink = bState.orderLink || bState.googleSheetLink || '';
+  const validLink = (bLink && !bLink.includes('Belum dimasukkan')) ? bLink : aLink;
+
+  const mergedDelivered = !!(aState.isDelivered || bState.isDelivered);
+  const newerTimestamp = Math.max(Number(a.timestamp) || 0, Number(b.timestamp) || 0, Date.now());
+
+  const mergedState = {
+    ...aState,
+    ...bState,
+    orderId: preferredOrderId,
+    isDelivered: mergedDelivered,
+    orderLink: validLink,
+    googleSheetLink: validLink,
+    customerName: bState.customerName || aState.customerName || '',
+    customerPhone: bState.customerPhone || aState.customerPhone || '',
+    mainType: bState.mainType || aState.mainType || parseMainType(bState.customerOrder || aState.customerOrder),
+    customerOrder: bState.customerOrder || aState.customerOrder || bState.mainType || aState.mainType || 'Resume',
+    dueTimestamp: bState.dueTimestamp || aState.dueTimestamp || 0,
+    customerDue: bState.customerDue || aState.customerDue || '',
+    syncStatus: (bState.syncStatus === 'synced' || aState.syncStatus === 'synced') ? ('synced' as const) : (bState.syncStatus || aState.syncStatus || 'synced')
+  };
+
+  const baseItem = (Number(a.timestamp) || 0) >= (Number(b.timestamp) || 0) ? a : b;
+
+  return {
+    ...baseItem,
+    id: preferredId,
+    timestamp: newerTimestamp,
+    state: mergedState
+  };
 }
 
-export function normalizeJenis(val: string): string {
-  const v = (val || '').trim().toLowerCase();
-  if (v.includes('super')) return 'Super Urgent';
-  if (v.includes('semi')) return 'Semi Urgent';
-  if (v.includes('normal') || v.includes('tak') || v.includes('not') || v.includes('tidak')) return 'Tak Urgent';
-  if (v.includes('urgent')) return 'Urgent';
-  return 'Tak Urgent'; // default fallback
+export function deduplicateHistoryList(items: any[]): any[] {
+  return reconcileOrdersByUniqueId(items);
 }
-
-export function parseTimestampFromId(id: string): number | null {
-  if (!id) return null;
-  
-  // Format: ORD-YYYYMMDD-HHMMSS (e.g. ORD-20260709-115815)
-  const ordMatch = id.match(/ORD-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})/);
-  if (ordMatch) {
-    const [_, y, m, d, hh, mm, ss] = ordMatch;
-    const parsedDate = new Date(Number(y), Number(m) - 1, Number(d), Number(hh), Number(mm), Number(ss));
-    if (!isNaN(parsedDate.getTime())) {
-      return parsedDate.getTime();
-    }
-  }
-
-  // Format: SYNC-Willy-6018-4601993-10072026at237PM or SYNC-...-10072026at1437
-  const syncMatch = id.match(/(\d{2})(\d{2})(\d{4})at(\d+)(\d{2})(AM|PM)?/i);
-  if (syncMatch) {
-    const [_, d, m, y, hh, mm, ampm] = syncMatch;
-    let hour = Number(hh);
-    if (ampm) {
-      if (ampm.toUpperCase() === 'PM' && hour < 12) hour += 12;
-      if (ampm.toUpperCase() === 'AM' && hour === 12) hour = 0;
-    }
-    const parsedDate = new Date(Number(y), Number(m) - 1, Number(d), hour, Number(mm));
-    if (!isNaN(parsedDate.getTime())) {
-      return parsedDate.getTime();
-    }
-  }
-
-  // Format: SYNC-Willy-6018-4601993-10072026 (DDMMYYYY) at the end of ID
-  const syncMatchNoTime = id.match(/(\d{2})(\d{2})(\d{4})$/);
-  if (syncMatchNoTime) {
-    const [_, d, m, y] = syncMatchNoTime;
-    const parsedDate = new Date(Number(y), Number(m) - 1, Number(d));
-    if (!isNaN(parsedDate.getTime())) {
-      return parsedDate.getTime();
-    }
-  }
-
-  // General fallback check for any numbers of length 13 (typical JS timestamps)
-  const tsMatch = id.match(/\b\d{13}\b/);
-  if (tsMatch) {
-    const tsVal = Number(tsMatch[0]);
-    if (tsVal > 1500000000000 && tsVal < 2500000000000) {
-      return tsVal;
-    }
-  }
-
-  return null;
-}
-

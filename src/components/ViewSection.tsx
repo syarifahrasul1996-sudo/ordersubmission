@@ -12,7 +12,6 @@ export function ViewSection({
   children: ReactNode; 
   className?: string; 
 }) {
-  if (!active) return null;
   return (
     <div
       id={id}
