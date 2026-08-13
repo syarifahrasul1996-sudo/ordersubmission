@@ -35,6 +35,9 @@ export interface AppState {
   googleSheetLink?: string;
   orderId?: string;
   price?: number;
+  itemPrice?: number;
+  harga?: number;
+  bayaran?: number;
   hasThreeHourChecked?: boolean;
   threeHourAlerted?: boolean;
   syncStatus?: 'saved_locally' | 'syncing' | 'synced' | 'failed' | 'sent_unverified';

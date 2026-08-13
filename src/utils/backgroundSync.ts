@@ -1,49 +1,14 @@
 import React, { useEffect, useRef } from 'react';
 import type { OrderHistoryItem, AppState } from '../types';
-import { parseDateStringToTimestamp, normalizeNameStr, normalizePhoneDigits, parseMainType, deduplicateHistoryList } from '../utils';
+import { parseDateStringToTimestamp, normalizeNameStr, normalizePhoneDigits, parseMainType, deduplicateHistoryList, extractPendapatanValue, smartFetchGoogleScript } from '../utils';
 
 export const BACKGROUND_SYNC_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
 /**
- * Performs JSONP request specifically for silent background sync
+ * Performs resilient fetch/JSONP request specifically for background sync
  */
 export function jsonpSyncRequest<T = any>(url: URL, callbackName: string): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const script = document.createElement('script');
-    script.src = url.toString();
-    script.async = true;
-
-    const timeout = setTimeout(() => {
-      cleanup();
-      reject(new Error('Background sync request timeout'));
-    }, 30000);
-
-    const cleanup = () => {
-      clearTimeout(timeout);
-      try {
-        if (script.parentNode) {
-          script.parentNode.removeChild(script);
-        }
-      } catch (e) {}
-      delete (window as any)[callbackName];
-    };
-
-    (window as any)[callbackName] = (data: T) => {
-      cleanup();
-      resolve(data);
-    };
-
-    script.onerror = (event: any) => {
-      if (event && typeof event !== 'string') {
-        if (typeof (event as any).preventDefault === 'function') (event as any).preventDefault();
-        if (typeof (event as any).stopPropagation === 'function') (event as any).stopPropagation();
-      }
-      cleanup();
-      reject(new Error('Background script load error'));
-    };
-
-    document.body.appendChild(script);
-  });
+  return smartFetchGoogleScript<T>(url, callbackName, 50000);
 }
 
 const DEFAULT_SCRIPT_URL =
@@ -264,6 +229,7 @@ export async function silentBackgroundSync(
             : '';
 
           const parsedType = parseMainType(orderData.order);
+          const parsedPrice = extractPendapatanValue(orderData);
 
           const newState = {
             isDelivered: !!orderData.isDelivered,
@@ -284,7 +250,11 @@ export async function silentBackgroundSync(
             syncStatus: 'synced' as const,
             syncLastSuccess: currentNow,
             mainType: parsedType,
-            subType: ''
+            subType: '',
+            itemPrice: parsedPrice,
+            price: parsedPrice,
+            harga: parsedPrice,
+            bayaran: parsedPrice
           };
 
           if (existingIdx !== -1) {

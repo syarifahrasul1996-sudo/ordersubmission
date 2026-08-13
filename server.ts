@@ -76,6 +76,57 @@ async function startServer() {
     res.json({ publicKey: vapidKeys.publicKey });
   });
 
+  // Server-side proxy for Google Apps Script requests to bypass browser CORS & script injection limits
+  app.get("/api/sync-proxy", async (req, res) => {
+    const controller = new AbortController();
+    let isTimeout = false;
+    const timeoutId = setTimeout(() => {
+      isTimeout = true;
+      controller.abort();
+    }, 50000);
+
+    req.on("close", () => {
+      clearTimeout(timeoutId);
+      if (!res.headersSent) {
+        controller.abort();
+      }
+    });
+
+    try {
+      const targetUrl = req.query.url as string;
+      if (!targetUrl || (!targetUrl.startsWith("https://script.google.com/") && !targetUrl.startsWith("http://script.google.com/"))) {
+        clearTimeout(timeoutId);
+        return res.status(400).json({ error: "Invalid or missing target URL" });
+      }
+
+      const response = await fetch(targetUrl, {
+        signal: controller.signal,
+        redirect: "follow",
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+      });
+      clearTimeout(timeoutId);
+
+      const text = await response.text();
+      if (!res.headersSent) {
+        res.setHeader("Content-Type", "application/json");
+        res.send(text);
+      }
+    } catch (err: any) {
+      clearTimeout(timeoutId);
+      if (res.headersSent) return;
+
+      if (err.name === 'AbortError' || isTimeout) {
+        console.warn("Sync proxy request timed out or client disconnected.");
+        return res.status(504).json({ error: "Google Script request timed out" });
+      }
+
+      console.error("Sync proxy error:", err?.message || err);
+      res.status(500).json({ error: err?.message || "Proxy request failed" });
+    }
+  });
+
   // API to schedule/update/delete push notifications for any order
   app.post("/api/schedule-push", (req, res) => {
     try {

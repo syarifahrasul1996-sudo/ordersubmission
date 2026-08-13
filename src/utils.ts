@@ -342,6 +342,7 @@ export function reconcileOrdersByUniqueId<T extends OrderHistoryItem = OrderHist
     const normName = normalizeNameStr(itemState.customerName || itemState.name);
     const normPhone = normalizePhoneDigits(itemState.customerPhone || itemState.phone);
     const rawOrderType = String(itemState.customerOrder || itemState.mainType || '').trim().toLowerCase();
+    const itemTs = Number(item.timestamp) || Number(itemState.timestamp) || 0;
 
     let matchIdx = -1;
 
@@ -351,8 +352,15 @@ export function reconcileOrdersByUniqueId<T extends OrderHistoryItem = OrderHist
       const exName = normalizeNameStr(exState.customerName || exState.name);
       const exPhone = normalizePhoneDigits(exState.customerPhone || exState.phone);
       const exOrderType = String(exState.customerOrder || exState.mainType || '').trim().toLowerCase();
+      const exTs = Number(existing.timestamp) || Number(exState.timestamp) || 0;
 
-      // 1. Name + Phone match
+      // 1. Same historyId match
+      if (itemState.historyId && exState.historyId && itemState.historyId === exState.historyId) {
+        matchIdx = i;
+        break;
+      }
+
+      // 2. Name + Phone match
       if (normName && normPhone && exName && exPhone) {
         if (normName === exName && normPhone === exPhone) {
           matchIdx = i;
@@ -360,11 +368,21 @@ export function reconcileOrdersByUniqueId<T extends OrderHistoryItem = OrderHist
         }
       }
 
-      // 2. Name + Order type match
+      // 3. Name + Order type match
       if (normName && exName && normName === exName) {
         if (!rawOrderType || !exOrderType || rawOrderType === exOrderType) {
           matchIdx = i;
           break;
+        }
+      }
+
+      // 4. Unnamed ghost item match (merges empty draft created during message generation into populated customer order)
+      if (!normName && !normPhone && (exName || exPhone)) {
+        if (rawOrderType && exOrderType && rawOrderType === exOrderType) {
+          if (itemTs === 0 || exTs === 0 || Math.abs(itemTs - exTs) < 3600000) {
+            matchIdx = i;
+            break;
+          }
         }
       }
     }
@@ -376,7 +394,28 @@ export function reconcileOrdersByUniqueId<T extends OrderHistoryItem = OrderHist
     }
   }
 
-  return result;
+  // Filter out any lingering completely empty ghost records if a populated record for the same type exists
+  const populatedTypes = new Set<string>();
+  result.forEach(item => {
+    const s: any = item.state || {};
+    const name = (s.customerName || s.name || '').trim();
+    const phone = (s.customerPhone || s.phone || '').trim();
+    const type = String(s.customerOrder || s.mainType || '').trim().toLowerCase();
+    if (name || phone) {
+      if (type) populatedTypes.add(type);
+    }
+  });
+
+  return result.filter(item => {
+    const s: any = item.state || {};
+    const name = (s.customerName || s.name || '').trim();
+    const phone = (s.customerPhone || s.phone || '').trim();
+    const type = String(s.customerOrder || s.mainType || '').trim().toLowerCase();
+    if (!name && !phone && type && populatedTypes.has(type)) {
+      return false;
+    }
+    return true;
+  });
 }
 
 function mergeOrderRecords<T extends OrderHistoryItem = OrderHistoryItem>(a: T, b: T): T {
@@ -426,4 +465,196 @@ function mergeOrderRecords<T extends OrderHistoryItem = OrderHistoryItem>(a: T, 
 
 export function deduplicateHistoryList(items: any[]): any[] {
   return reconcileOrdersByUniqueId(items);
+}
+
+/**
+ * Explicitly maps specific source columns/properties (e.g. Column L 'BAYARAN', harga, itemPrice, price, pendapatan)
+ * to the 'Pendapatan' numeric value.
+ * Safely handles null, undefined, NaN, formatted currency strings (RM 50.00), and ignores non-numeric descriptions.
+ */
+export function extractPendapatanValue(source: any): number {
+  if (source === null || source === undefined) return 0;
+
+  const parseNumber = (val: any): number => {
+    if (val === null || val === undefined) return 0;
+    if (typeof val === 'number') {
+      return isFinite(val) && !isNaN(val) ? Math.max(0, val) : 0;
+    }
+    const strVal = String(val).trim();
+    if (!strVal) return 0;
+
+    // Check if string contains digits
+    if (!/\d/.test(strVal)) return 0;
+
+    // Standardize comma to dot for decimal conversion and strip non-numeric characters except dot
+    const cleanedStr = strVal.replace(/,/g, '.').replace(/[^0-9.]/g, '');
+    if (!cleanedStr) return 0;
+
+    const parsed = parseFloat(cleanedStr);
+    return isFinite(parsed) && !isNaN(parsed) ? Math.max(0, parsed) : 0;
+  };
+
+  // 1. Array source (e.g. Google Sheet row array: Column L = Index 11 [BAYARAN])
+  if (Array.isArray(source)) {
+    // Check index 11 (Column L - Bayaran) first
+    const valL = parseNumber(source[11]);
+    if (valL > 0) return valL;
+
+    // Check index 12 if present
+    const valM = parseNumber(source[12]);
+    if (valM > 0) return valM;
+
+    // Fallback to index 6 only if it resolves to a valid number
+    const valG = parseNumber(source[6]);
+    if (valG > 0) return valG;
+
+    return 0;
+  } 
+
+  // 2. Object source (e.g. Order object, item, or item.state)
+  if (typeof source === 'object') {
+    const st = source.state || source;
+
+    // List of candidate fields in order of precedence
+    const candidates = [
+      st.bayaran,
+      st.harga,
+      st.itemPrice,
+      st.price,
+      st.pendapatan,
+      st.amount,
+      st.totalPrice,
+      source.bayaran,
+      source.harga,
+      source.itemPrice,
+      source.price,
+      source.pendapatan
+    ];
+
+    for (const c of candidates) {
+      if (c !== undefined && c !== null && c !== '') {
+        const val = parseNumber(c);
+        if (val > 0) return val;
+      }
+    }
+
+    return 0;
+  } 
+
+  // 3. Direct primitive value (number or string)
+  return parseNumber(source);
+}
+
+/**
+ * Utility to safely parse raw JSON or JSONP text response (e.g. callbackName({...}))
+ */
+export function parseJsonpOrJson(text: string): any {
+  if (!text) return null;
+  const trimmed = text.trim();
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    return JSON.parse(trimmed);
+  }
+  const match = trimmed.match(/^[a-zA-Z0-9_$]+\s*\(([\s\S]*)\)\s*;?$/);
+  if (match && match[1]) {
+    return JSON.parse(match[1]);
+  }
+  throw new Error('Invalid JSON/JSONP payload format');
+}
+
+/**
+ * Executes a Google Apps Script request using multi-level fallback strategy:
+ * 1. Express backend proxy `/api/sync-proxy?url=...`
+ * 2. Direct browser `fetch()`
+ * 3. Dynamic `<script>` tag insertion (JSONP)
+ */
+export async function smartFetchGoogleScript<T = any>(
+  urlInput: URL | string,
+  callbackName?: string,
+  timeoutMs = 50000
+): Promise<T> {
+  const urlStr = urlInput.toString();
+  const cbName = callbackName || ('jsonp_cb_' + Math.round(1000000 * Math.random()));
+
+  let requestUrl = urlStr;
+  if (!requestUrl.includes('callback=')) {
+    const separator = requestUrl.includes('?') ? '&' : '?';
+    requestUrl = `${requestUrl}${separator}callback=${cbName}`;
+  }
+
+  // Strategy 1: Server-side proxy
+  try {
+    const proxyUrl = `/api/sync-proxy?url=${encodeURIComponent(requestUrl)}`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), Math.min(timeoutMs, 50000));
+
+    const resp = await fetch(proxyUrl, { signal: controller.signal });
+    clearTimeout(timeoutId);
+
+    if (resp.ok) {
+      const text = await resp.text();
+      if (text && text.trim()) {
+        const parsed = parseJsonpOrJson(text);
+        if (parsed) return parsed as T;
+      }
+    }
+  } catch (e) {
+    // Proxy failed or unavailable, fallback to next strategy
+  }
+
+  // Strategy 2: Direct browser fetch
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), Math.min(timeoutMs, 50000));
+
+    const resp = await fetch(requestUrl, { signal: controller.signal });
+    clearTimeout(timeoutId);
+
+    if (resp.ok) {
+      const text = await resp.text();
+      if (text && text.trim()) {
+        const parsed = parseJsonpOrJson(text);
+        if (parsed) return parsed as T;
+      }
+    }
+  } catch (e) {
+    // Direct fetch failed or CORS blocked, fallback to script element
+  }
+
+  // Strategy 3: Dynamic <script> tag insertion (JSONP)
+  return new Promise<T>((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = requestUrl;
+    script.async = true;
+
+    const timeoutId = setTimeout(() => {
+      cleanup();
+      reject(new Error(`Google Sheet request timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    const cleanup = () => {
+      clearTimeout(timeoutId);
+      try {
+        if (script.parentNode) {
+          script.parentNode.removeChild(script);
+        }
+      } catch (e) {}
+      delete (window as any)[cbName];
+    };
+
+    (window as any)[cbName] = (data: T) => {
+      cleanup();
+      resolve(data);
+    };
+
+    script.onerror = (event: any) => {
+      if (event && typeof event !== 'string') {
+        if (typeof (event as any).preventDefault === 'function') (event as any).preventDefault();
+        if (typeof (event as any).stopPropagation === 'function') (event as any).stopPropagation();
+      }
+      cleanup();
+      reject(new Error('Google Sheet script loading failed'));
+    };
+
+    document.body.appendChild(script);
+  });
 }

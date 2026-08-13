@@ -2,7 +2,7 @@ import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { useAppContext } from '../AppContext';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LabelList, CartesianGrid } from 'recharts';
 import { RefreshCcw, AlertCircle, Clock, X, ChevronDown } from 'lucide-react';
-import { calculateDeadline, generateMessages, parseDateStringToTimestamp } from '../utils';
+import { calculateDeadline, generateMessages, parseDateStringToTimestamp, extractPendapatanValue, smartFetchGoogleScript } from '../utils';
 import { AppState } from '../types';
 
 const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbw5KpBvJyFpIXmsHueg4XPSRkZ0mg6kxHqjMGp3WEs8Hx_JodvKSoKEg6RMsdH54iCa/exec';
@@ -16,38 +16,7 @@ const extractId = (input: string) => {
 };
 
 const jsonpRequest = (url: URL, callbackName: string) => {
-  return new Promise<any>((resolve, reject) => {
-    const script = document.createElement('script');
-    script.src = url.toString();
-    script.async = true;
-
-    const timeoutId = setTimeout(() => {
-      cleanup();
-      reject(new Error('Request timed out'));
-    }, 45000);
-
-    const cleanup = () => {
-      clearTimeout(timeoutId);
-      if (script.parentNode) script.parentNode.removeChild(script);
-      delete (window as any)[callbackName];
-    };
-
-    (window as any)[callbackName] = (data: any) => {
-      cleanup();
-      resolve(data);
-    };
-
-    script.onerror = (event: any) => {
-      if (event && typeof event !== 'string') {
-        if (typeof (event as any).preventDefault === 'function') (event as any).preventDefault();
-        if (typeof (event as any).stopPropagation === 'function') (event as any).stopPropagation();
-      }
-      cleanup();
-      reject(new Error('JSONP request failed'));
-    };
-
-    document.body.appendChild(script);
-  });
+  return smartFetchGoogleScript(url, callbackName);
 };
 
 interface SafeResponsiveContainerProps {
@@ -247,7 +216,25 @@ export function DashboardView() {
   }, [filterYear, annualSheets, globalScriptUrl]);
 
   const stats = useMemo(() => {
-    const orders = remoteOrders;
+    const orders = remoteOrders.length > 0 
+      ? remoteOrders 
+      : history
+          .filter(item => !item.state?.isDeleted)
+          .map(item => ({
+            ...item.state,
+            name: item.state?.customerName || item.state?.name || '',
+            phone: item.state?.customerPhone || item.state?.phone || '',
+            order: item.state?.customerOrder || item.state?.mainType || '',
+            template: item.state?.customerTemplate || item.state?.template || '',
+            bahasa: item.state?.customerBahasa || '',
+            addon: item.state?.customerAddOn || '',
+            jenis: item.state?.customerJenis || '',
+            due: item.state?.customerDue || '',
+            link: item.state?.orderLink || item.state?.googleSheetLink || '',
+            orderId: item.state?.orderId || item.id,
+            dueTimestamp: item.state?.dueTimestamp || item.timestamp,
+            price: extractPendapatanValue(item)
+          }));
     
     const availableYearsSet = new Set<string>(annualSheets.filter((s:any) => s.year).map((s:any) => s.year));
     if (filterYear !== 'all' && !availableYearsSet.has(filterYear)) {
@@ -297,8 +284,10 @@ export function DashboardView() {
     // Create a lookup map for local history prices
     const historyPrices = new Map<string, number>();
     history.forEach(item => {
-      if (item.state.price !== undefined && item.state.orderId) {
-        historyPrices.set(item.state.orderId, item.state.price);
+      const orderId = item.state?.orderId || item.id;
+      const price = extractPendapatanValue(item);
+      if (orderId && price > 0) {
+        historyPrices.set(orderId, price);
       }
     });
 
@@ -307,16 +296,12 @@ export function DashboardView() {
       if (String(order.name || '').trim() !== '') {
         totalOrders++;
         
-        // Income calculation
+        // Income calculation via extractPendapatanValue with local history fallback
         const orderId = order.orderId;
-        const localPrice = orderId ? historyPrices.get(orderId) : undefined;
-        const remotePrice = parseFloat(order.price || order.harga); // in case backend is updated in future
+        const localPrice = orderId ? (historyPrices.get(orderId) || 0) : 0;
+        const remotePrice = extractPendapatanValue(order);
         
-        if (!isNaN(remotePrice)) {
-          totalIncome += remotePrice;
-        } else if (localPrice !== undefined) {
-          totalIncome += localPrice;
-        }
+        totalIncome += (remotePrice > 0 ? remotePrice : localPrice);
       }
 
       // Customer Phone normalization
@@ -436,7 +421,7 @@ export function DashboardView() {
       invalidDatesCount,
       invalidOrdersList
     };
-  }, [remoteOrders, appLanguage, filterYear, filterMonth, annualSheets]);
+  }, [remoteOrders, appLanguage, filterYear, filterMonth, annualSheets, history]);
 
   const [showInvalidModal, setShowInvalidModal] = useState(false);
 

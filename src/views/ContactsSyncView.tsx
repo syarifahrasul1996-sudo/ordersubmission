@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { parseDateStringToTimestamp } from '../utils';
+import { parseDateStringToTimestamp, smartFetchGoogleScript } from '../utils';
 import { 
   Users, 
   RefreshCw, 
@@ -135,38 +135,7 @@ export function ContactsSyncView() {
 
     // Helper JSONP request
     const jsonpRequestLocal = (url: URL, callbackName: string) => {
-      return new Promise<any>((resolve, reject) => {
-        const script = document.createElement('script');
-        script.src = url.toString();
-        script.async = true;
-
-        const timeoutId = setTimeout(() => {
-          cleanup();
-          reject(new Error('Request timed out'));
-        }, 30000);
-
-        const cleanup = () => {
-          clearTimeout(timeoutId);
-          delete (window as any)[callbackName];
-          if (script.parentNode) script.parentNode.removeChild(script);
-        };
-
-        (window as any)[callbackName] = (data: any) => {
-          cleanup();
-          resolve(data);
-        };
-
-        script.onerror = (event: any) => {
-          if (event && typeof event !== 'string') {
-            if (typeof (event as any).preventDefault === 'function') (event as any).preventDefault();
-            if (typeof (event as any).stopPropagation === 'function') (event as any).stopPropagation();
-          }
-          cleanup();
-          reject(new Error('Failed to load script callback'));
-        };
-
-        document.body.appendChild(script);
-      });
+      return smartFetchGoogleScript(url, callbackName);
     };
 
     try {

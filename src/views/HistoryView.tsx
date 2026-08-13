@@ -4,7 +4,7 @@ import { AppState, INITIAL_STATE } from '../types';
 import { cn } from '../cn';
 import { Clock, Trash2, Calendar, AlertCircle, RefreshCcw, Save, Bell, Check, Search, Database, Phone, Settings, ChevronDown, ChevronUp, Link, X, ArrowRight, Zap } from 'lucide-react';
 import { useAppContext } from '../AppContext';
-import { formatPhoneUniversal, parseDateStringToTimestamp, normalizeNameStr, normalizePhoneDigits, parseMainType, deduplicateHistoryList, reconcileOrdersByUniqueId } from '../utils';
+import { formatPhoneUniversal, parseDateStringToTimestamp, normalizeNameStr, normalizePhoneDigits, parseMainType, deduplicateHistoryList, reconcileOrdersByUniqueId, extractPendapatanValue, smartFetchGoogleScript } from '../utils';
 
 const GOOGLE_SCRIPT_URL =
   'https://script.google.com/macros/s/AKfycbw5KpBvJyFpIXmsHueg4XPSRkZ0mg6kxHqjMGp3WEs8Hx_JodvKSoKEg6RMsdH54iCa/exec';
@@ -380,39 +380,7 @@ export function HistoryView() {
   };
 
   const jsonpRequest = (url: URL, callbackName: string) => {
-    return new Promise<any>((resolve, reject) => {
-      const script = document.createElement('script');
-      script.src = url.toString();
-      script.async = true;
-
-      const timeoutId = setTimeout(() => {
-        cleanup();
-        reject(new Error('Request timed out'));
-      }, 45000);
-
-      const cleanup = () => {
-        clearTimeout(timeoutId);
-        delete (window as any)[callbackName];
-        if (script.parentNode) script.parentNode.removeChild(script);
-      };
-
-      (window as any)[callbackName] = (data: any) => {
-        cleanup();
-        resolve(data);
-      };
-
-      script.onerror = (event: any) => {
-        if (event && typeof event !== 'string') {
-          if (typeof (event as any).preventDefault === 'function') (event as any).preventDefault();
-          if (typeof (event as any).stopPropagation === 'function') (event as any).stopPropagation();
-        }
-        console.warn('JSONP failed URL:', url.toString());
-        cleanup();
-        reject(new Error('Connection failure or script load error'));
-      };
-
-      document.body.appendChild(script);
-    });
+    return smartFetchGoogleScript(url, callbackName);
   };
 
   const handleSyncLink = async (e: React.MouseEvent, item: any) => {
@@ -732,6 +700,7 @@ export function HistoryView() {
             let parsedTemplate = orderData.template ? String(orderData.template).trim().toUpperCase() : '';
 
             const parsedType = parseMainType(orderData.order);
+            const parsedPrice = extractPendapatanValue(orderData);
 
             const newState = {
               isDelivered: !!orderData.isDelivered,
@@ -752,7 +721,11 @@ export function HistoryView() {
               syncStatus: 'synced' as const,
               syncLastSuccess: currentNow,
               mainType: parsedType,
-              subType: ''
+              subType: '',
+              itemPrice: parsedPrice,
+              price: parsedPrice,
+              harga: parsedPrice,
+              bayaran: parsedPrice
             };
 
             if (existingIdx !== -1) {
@@ -1741,6 +1714,14 @@ export function HistoryView() {
                       <div className="flex flex-wrap gap-x-2.5 gap-y-0.5 text-xs mt-1 leading-normal">
                         <div className="w-full flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
                           {[
+                            (() => {
+                              const pVal = extractPendapatanValue(item);
+                              return pVal > 0 ? (
+                                <span key="price" className="font-bold text-emerald-700 bg-emerald-50 border border-emerald-200/60 px-1.5 py-0.5 rounded text-[10.5px]">
+                                  RM {pVal.toFixed(2)}
+                                </span>
+                              ) : null;
+                            })(),
                             (item.state?.mainType === 'Resume' && !item.state?.isEditMode && item.state?.template) ? (
                               <span key="template" className="font-medium text-text">{item.state.template}</span>
                             ) : null,

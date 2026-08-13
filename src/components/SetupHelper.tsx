@@ -135,10 +135,11 @@ function ensureSheetSetup(sheet) {
       "Jenis",
       "Due",
       "Link",
-      "Order ID"
+      "Order ID",
+      "Bayaran"
     ]);
 
-    sheet.appendRow(["", "", "", "", "", "", "", "", "", "", ""]);
+    sheet.appendRow(["", "", "", "", "", "", "", "", "", "", "", ""]);
     applyRowTemplate(sheet, 2);
   }
 }
@@ -260,11 +261,14 @@ function doGet(e) {
         var sheet = sheets[s];
         if (!matchedAnyTarget || action === "search_database" || action === "get_dashboard_orders" || targetSheets.indexOf(sheet.getName()) !== -1) {
           var lastRow = sheet.getLastRow();
-          if (lastRow >= 3) {
-            var values = sheet.getRange(3, 1, lastRow - 2, 11).getValues();
+          if (lastRow >= 2) {
+            var values = sheet.getRange(2, 1, lastRow - 1, 12).getValues();
             for (var r = 0; r < values.length; r++) {
               var rowData = values[r];
               if (!rowData[1] && !rowData[2] && !rowData[3]) continue;
+              var nameCheck = String(rowData[1]).trim().toLowerCase();
+              if (nameCheck === "nama" || nameCheck === "name" || nameCheck === "customer name") continue;
+
               var doneVal = String(rowData[0]).trim().toLowerCase();
               var isDeliveredVal = (doneVal === "true" || doneVal === "1" || doneVal === "yes" || doneVal === "done" || doneVal === "siap" || doneVal === "selesai" || doneVal === "ya" || doneVal === "y" || doneVal === "v" || doneVal === "✓" || rowData[0] === true);
               
@@ -278,6 +282,7 @@ function doGet(e) {
               var dueVal = String(rowData[8] || "");
               var linkVal = String(rowData[9] || "");
               var orderIdVal = String(rowData[10] || "");
+              var bayaranVal = rowData[11] !== undefined && rowData[11] !== null ? rowData[11] : "";
 
               if (query !== "") {
                 var fullSearchStr = (nameVal + " " + phoneVal + " " + orderVal + " " + templateVal + " " + orderIdVal).toLowerCase();
@@ -292,6 +297,10 @@ function doGet(e) {
                 template: templateVal,
                 bahasa: bahasaVal,
                 addon: addonVal,
+                harga: bayaranVal,
+                itemPrice: bayaranVal,
+                bayaran: bayaranVal,
+                price: bayaranVal,
                 jenis: jenisVal,
                 due: dueVal,
                 link: linkVal,

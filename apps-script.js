@@ -304,7 +304,7 @@ function getDashboardOrders(e) {
       var lastRow = sheet.getLastRow();
       if (lastRow < 2) return;
 
-      var lastCol = Math.max(sheet.getLastColumn(), 11);
+      var lastCol = Math.max(sheet.getLastColumn(), 12);
       var values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
 
       values.forEach(function(rowData) {
@@ -322,6 +322,8 @@ function getDashboardOrders(e) {
           ? dueDate.getTime()
           : 0;
 
+        var bayaranVal = rowData[11] !== undefined && rowData[11] !== null ? rowData[11] : "";
+
         orders.push({
           isDelivered: rowData[0] === true || String(rowData[0]).toLowerCase() === "true",
           name: String(rowData[1] || ""),
@@ -335,6 +337,8 @@ function getDashboardOrders(e) {
           dueTimestamp: dueTimestamp,
           link: String(rowData[9] || ""),
           orderId: orderId,
+          bayaran: bayaranVal,
+          price: bayaranVal,
           sheetName: sheet.getName()
         });
       });
@@ -378,7 +382,8 @@ function syncRecentOrders(e) {
 
       if (lastRow < 2) return;
 
-      var values = sheet.getRange(2, 1, lastRow - 1, 11).getValues();
+      var lastCol = Math.max(sheet.getLastColumn(), 12);
+      var values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
 
       values.forEach(function(rowData, rowIndex) {
         var dueDate = parseDueDate(rowData[8]);
@@ -414,6 +419,8 @@ if (!currentOrderId || currentOrderId.indexOf("SYNC-") === 0) {
 
         if (dueDate < startDate || dueDate > endDate) return;
 
+        var bayaranVal = rowData[11] !== undefined && rowData[11] !== null ? rowData[11] : "";
+
         recentOrders.push({
           isDelivered: rowData[0] === true || String(rowData[0]).toLowerCase() === "true",
           name: rowData[1] || "",
@@ -425,7 +432,9 @@ if (!currentOrderId || currentOrderId.indexOf("SYNC-") === 0) {
           jenis: rowData[7] || "",
           due: formatDateValue(rowData[8]),
           link: String(rowData[9] || ""),
-          orderId: String(rowData[10] || "")
+          orderId: String(rowData[10] || ""),
+          bayaran: bayaranVal,
+          price: bayaranVal
         });
       });
     });
@@ -502,7 +511,8 @@ function ensureSheetSetup(sheet) {
     "Jenis",
     "Due",
     "Link",
-    "Order ID"
+    "Order ID",
+    "Bayaran"
   ];
 
   if (sheet.getLastRow() < 1) {
@@ -517,7 +527,7 @@ function ensureSheetSetup(sheet) {
   }
 
   if (sheet.getLastRow() < 2) {
-    sheet.appendRow(["", "", "", "", "", "", "", "", "", "", ""]);
+    sheet.appendRow(["", "", "", "", "", "", "", "", "", "", "", ""]);
   }
 
   sheet.getRange(2, 1).insertCheckboxes();
@@ -843,10 +853,7 @@ function searchDatabase(e) {
       var lastRow = sheet.getLastRow();
       if (lastRow < 2) return;
 
-      var lastCol = sheet.getLastColumn();
-      if (lastCol < 11) {
-        lastCol = 11;
-      }
+      var lastCol = Math.max(sheet.getLastColumn(), 12);
 
       var values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
 
@@ -859,6 +866,8 @@ function searchDatabase(e) {
             phoneVal.indexOf(cleanQuery) !== -1 ||
             orderIdVal.indexOf(cleanQuery) !== -1) {
           
+          var bayaranVal = rowData[11] !== undefined && rowData[11] !== null ? rowData[11] : "";
+
           matchingOrders.push({
             isDelivered: rowData[0] === true || String(rowData[0]).toLowerCase() === "true",
             name: rowData[1] || "",
@@ -871,6 +880,8 @@ function searchDatabase(e) {
             due: formatDateValue(rowData[8]),
             link: String(rowData[9] || ""),
             orderId: String(rowData[10] || ""),
+            bayaran: bayaranVal,
+            price: bayaranVal,
             sheetName: sheet.getName()
           });
         }
@@ -917,6 +928,7 @@ function updateOrder(e) {
     var jenis = e.parameter.jenis || e.parameter.customerJenis || "";
     var due = e.parameter.due || e.parameter.customerDue || "";
     var link = e.parameter.link || e.parameter.googleSheetLink || e.parameter.orderLink || "";
+    var bayaran = e.parameter.bayaran || e.parameter.price || e.parameter.harga || e.parameter.itemPrice || "";
 
     var foundRow = null;
     var foundSheet = null;
@@ -1010,7 +1022,8 @@ function updateOrder(e) {
       jenis,
       due,
       link,
-      finalOrderId
+      finalOrderId,
+      bayaran
     ];
 
     var targetDate = new Date();

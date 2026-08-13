@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, ReactNode, useEffect } from
 import { AppState, INITIAL_STATE, ViewType, OrderHistoryItem } from './types';
 import { getSubscription, syncPushNotifications, clearPushNotifications } from './lib/push';
 import { useBackgroundSync } from './utils/backgroundSync';
-import { deduplicateHistoryList } from './utils';
+import { deduplicateHistoryList, smartFetchGoogleScript } from './utils';
 
 
 interface AppContextType {
@@ -226,40 +226,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     };
 
     const jsonpRequest = (url: URL, callbackName: string): Promise<any> => {
-      return new Promise((resolve, reject) => {
-        const script = document.createElement('script');
-        script.src = url.toString();
-        script.async = true;
-
-        const timeout = setTimeout(() => {
-          cleanup();
-          reject(new Error('Request timeout'));
-        }, 45000);
-
-        const cleanup = () => {
-          clearTimeout(timeout);
-          try {
-            document.body.removeChild(script);
-          } catch (e) {}
-          delete (window as any)[callbackName];
-        };
-
-        (window as any)[callbackName] = (data: any) => {
-          cleanup();
-          resolve(data);
-        };
-
-        script.onerror = (event: any) => {
-          if (event && typeof event !== 'string') {
-            if (typeof (event as any).preventDefault === 'function') (event as any).preventDefault();
-            if (typeof (event as any).stopPropagation === 'function') (event as any).stopPropagation();
-          }
-          cleanup();
-          reject(new Error('Script load error'));
-        };
-
-        document.body.appendChild(script);
-      });
+      return smartFetchGoogleScript(url, callbackName);
     };
 
     const checkAlerts = () => {
@@ -616,30 +583,44 @@ export function AppProvider({ children }: { children: ReactNode }) {
   };
   
   const updateOrderHistoryState = (updates: Partial<AppState>) => {
+    const previousHistoryId = state.historyId;
     const finalState = { ...state, ...updates, lastModifiedLocally: Date.now() };
     setState(finalState);
-    if (finalState.historyId) {
+
+    const targetId = finalState.historyId;
+    if (targetId) {
        setHistory(prev => {
-         const exists = prev.some(item => item.id === finalState.historyId);
-         if (exists) {
-           return prev.map(item => {
-             if (item.id === finalState.historyId) {
-               const updatedItem = { ...item, state: finalState };
-               syncPushNotifications(updatedItem, appLanguage).catch(console.warn);
-               return updatedItem;
+         const matchIndex = prev.findIndex(item => 
+           item.id === targetId || 
+           (previousHistoryId && item.id === previousHistoryId) ||
+           (updates.orderId && item.state?.orderId === updates.orderId)
+         );
+
+         if (matchIndex !== -1) {
+           const updatedHistory = [...prev];
+           const existingItem = updatedHistory[matchIndex];
+           const updatedItem: OrderHistoryItem = {
+             ...existingItem,
+             id: targetId,
+             state: {
+               ...existingItem.state,
+               ...finalState,
+               historyId: targetId
              }
-             return item;
-           });
+           };
+           syncPushNotifications(updatedItem, appLanguage).catch(console.warn);
+           updatedHistory[matchIndex] = updatedItem;
+           return deduplicateHistoryList(updatedHistory);
          }
-         
+
          const newItem: OrderHistoryItem = {
-           id: finalState.historyId as string,
+           id: targetId,
            timestamp: finalState.timestamp || Date.now(),
            state: finalState,
            messages: []
          };
          syncPushNotifications(newItem, appLanguage).catch(console.warn);
-         return [newItem, ...prev];
+         return deduplicateHistoryList([newItem, ...prev]);
        });
     }
   };
@@ -716,6 +697,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         } = itemToRestore.state;
 
         if (scriptUrl && spreadsheetId && orderId) {
+          const priceVal = itemToRestore.state.bayaran || itemToRestore.state.harga || itemToRestore.state.price || itemToRestore.state.itemPrice || '';
           const orderRow = [
             isDelivered || false,
             customerName || '',
@@ -727,7 +709,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
             customerJenis || '',
             customerDue || '',
             orderLink || googleSheetLink || '',
-            orderId
+            orderId,
+            priceVal ? String(priceVal) : ''
           ];
           addToOfflineQueue({
             action: 'update_order',
@@ -828,7 +811,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   };
 
   const startNewOrder = (view: ViewType, updates: Partial<AppState>) => {
-    setState({ ...INITIAL_STATE, ...updates });
+    setState({ ...INITIAL_STATE, historyId: '', timestamp: Date.now(), ...updates });
     setViewStack(['home', view]);
   };
 
@@ -865,6 +848,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem('appState');
     localStorage.removeItem('viewStack');
     localStorage.removeItem('generatedMessages');
+    localStorage.removeItem('customer_form_progress');
   };
 
   // Background synchronization utility checking for new order updates every 5 minutes when active

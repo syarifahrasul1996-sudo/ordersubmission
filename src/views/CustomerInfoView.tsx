@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { RefreshCcw, Save, Check, FileText, ExternalLink, LogOut, Loader2, AlertCircle, ChevronDown } from 'lucide-react';
 import { useAppContext } from '../AppContext';
-import { calculateDeadline, formatPhoneUniversal, parseDateStringToTimestamp } from '../utils';
+import { calculateDeadline, formatPhoneUniversal, parseDateStringToTimestamp, smartFetchGoogleScript } from '../utils';
 import { Toast } from '../components/Toast';
 import { SetupHelper } from '../components/SetupHelper';
 import { googleSignIn, initAuth, getAccessToken, logout } from '../utils/googleAuth';
@@ -26,43 +26,13 @@ function generateOrderId() {
 }
 
 function jsonpRequest<T>(url: string, params: Record<string, string | number | boolean>): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const callbackName = 'jsonp_edit_callback_' + Math.round(100000 * Math.random());
-    (window as any)[callbackName] = (data: T) => {
-      cleanup();
-      resolve(data);
-    };
-
-    const script = document.createElement('script');
-    const separator = url.indexOf('?') === -1 ? '?' : '&';
-    const queryParts = [`callback=${callbackName}`];
-    Object.entries(params).forEach(([key, value]) => {
-      queryParts.push(`${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`);
-    });
-    
-    script.src = url + separator + queryParts.join('&');
-    script.async = true;
-
-    const timeoutId = setTimeout(() => {
-      cleanup();
-      reject(new Error('JSONP request timed out'));
-    }, 15000);
-
-    const cleanup = () => {
-      clearTimeout(timeoutId);
-      if (script.parentNode) {
-        script.parentNode.removeChild(script);
-      }
-      delete (window as any)[callbackName];
-    };
-
-    script.onerror = () => {
-      cleanup();
-      reject(new Error('JSONP request failed'));
-    };
-
-    document.body.appendChild(script);
+  const queryParts: string[] = [];
+  Object.entries(params).forEach(([key, value]) => {
+    queryParts.push(`${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`);
   });
+  const separator = url.includes('?') ? '&' : '?';
+  const fullUrl = url + (queryParts.length > 0 ? separator + queryParts.join('&') : '');
+  return smartFetchGoogleScript<T>(fullUrl);
 }
 
 export function CustomerInfoView() {
@@ -249,6 +219,46 @@ export function CustomerInfoView() {
   // Form session recovery state
   const [showResumeBanner, setShowResumeBanner] = useState(false);
   const isInitializingRef = useRef(true);
+  const isSubmittedRef = useRef(false);
+
+  const clearAllFields = () => {
+    setName('');
+    setPhone('');
+    setInfo('');
+    setLink('');
+    setOrder('');
+    setTemplate('');
+    setBahasa('');
+    setAddOn('');
+    setJenis('');
+    setDue('');
+    setDueTimestamp(0);
+    setOrderId('');
+    setPrice('');
+    
+    localStorage.removeItem('customer_form_progress');
+
+    setState(prev => ({
+      ...prev,
+      customerName: '',
+      customerPhone: '',
+      customerInfo: '',
+      orderLink: '',
+      googleSheetLink: '',
+      customerOrder: '',
+      customerTemplate: '',
+      customerBahasa: '',
+      customerAddOn: '',
+      customerJenis: '',
+      customerDue: '',
+      dueTimestamp: 0,
+      name: '',
+      phone: '',
+      orderId: '',
+      historyId: '',
+      price: undefined,
+    }));
+  };
 
   useEffect(() => {
     const unsubscribe = initAuth(
@@ -481,6 +491,7 @@ Dokumen Dijana Secara Automatik`;
   useEffect(() => {
     if (isActive) {
       isInitializingRef.current = true;
+      isSubmittedRef.current = false;
       setSaved(false);
       setIsSaving(false);
       setErrorMsg('');
@@ -608,7 +619,7 @@ Dokumen Dijana Secara Automatik`;
 
   // Debounced Auto-Save
   useEffect(() => {
-    if (isActive) {
+    if (isActive && !isSubmittedRef.current) {
       const timer = setTimeout(() => {
         syncStateAndSave(true);
       }, 5000); 
@@ -618,7 +629,7 @@ Dokumen Dijana Secara Automatik`;
 
   // Save form progress to localStorage with a debounce
   useEffect(() => {
-    if (isActive && !showResumeBanner && !isInitializingRef.current) {
+    if (isActive && !showResumeBanner && !isInitializingRef.current && !isSubmittedRef.current) {
       const timer = setTimeout(() => {
         const data = {
           name,
@@ -806,9 +817,10 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
       if (!navigator.onLine) {
         try {
           addToOfflineQueue(payload, resolvedWebhookUrl, finalOrderId);
-          localStorage.removeItem('customer_form_progress');
+          isSubmittedRef.current = true;
+          clearAllFields();
           setSaved(true);
-          showToastMessage(appLanguage === 'ms' ? 'Luar Talian: Disimpan dalam Que' : 'Offline: Saved to Queue');
+          showToastMessage(appLanguage === 'ms' ? 'Luar Talian: Disimpan dalam Que & Ruangan Dipadam' : 'Offline: Saved to Queue & Fields Cleared');
           setTimeout(() => goHome(), 1800);
           return;
         } catch (e) {
@@ -817,9 +829,10 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
       }
 
       // Optimistic instant response
-      localStorage.removeItem('customer_form_progress');
+      isSubmittedRef.current = true;
+      clearAllFields();
       setSaved(true);
-      showToastMessage(appLanguage === 'ms' ? 'Berjaya dihantar!' : 'Successfully submitted!');
+      showToastMessage(appLanguage === 'ms' ? 'Berjaya dihantar & ruangan maklumat dipadam!' : 'Successfully submitted & fields cleared!');
       setIsSaving(false);
       setTimeout(() => goHome(), 500);
 
@@ -1367,12 +1380,22 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
             <label className="text-xs font-black text-gray-400 uppercase tracking-widest">
               {appLanguage === 'ms' ? 'Maklumat Pelanggan' : 'Customer Information'}
             </label>
-            <button
-              onClick={handleAutoFill}
-              className="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-lg hover:bg-blue-100 transition-colors active:scale-95"
-            >
-              {appLanguage === 'ms' ? 'Auto-isi' : 'Auto-fill'}
-            </button>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={clearAllFields}
+                className="text-[10px] font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded-lg hover:bg-red-100 transition-colors active:scale-95"
+              >
+                {appLanguage === 'ms' ? 'Kosongkan Fields' : 'Clear Fields'}
+              </button>
+              <button
+                type="button"
+                onClick={handleAutoFill}
+                className="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-lg hover:bg-blue-100 transition-colors active:scale-95"
+              >
+                {appLanguage === 'ms' ? 'Auto-isi' : 'Auto-fill'}
+              </button>
+            </div>
           </div>
           <textarea 
             value={info}
