@@ -4,14 +4,15 @@ import { AppState, INITIAL_STATE } from '../types';
 import { cn } from '../cn';
 import { Clock, Trash2, Calendar, AlertCircle, RefreshCcw, Save, Bell, Check, Search, Database, Phone, Settings, ChevronDown, ChevronUp, Link, X, ArrowRight, Zap } from 'lucide-react';
 import { useAppContext } from '../AppContext';
-import { formatPhoneUniversal, parseDateStringToTimestamp, normalizeNameStr, normalizePhoneDigits, parseMainType, deduplicateHistoryList, reconcileOrdersByUniqueId, extractPendapatanValue, smartFetchGoogleScript } from '../utils';
+import { formatPhoneUniversal, getWhatsAppLink, isWhatsAppUsername, parseDateStringToTimestamp, normalizeNameStr, normalizePhoneDigits, parseMainType, deduplicateHistoryList, reconcileOrdersByUniqueId, extractPendapatanValue, smartFetchGoogleScript } from '../utils';
 
 const GOOGLE_SCRIPT_URL =
   'https://script.google.com/macros/s/AKfycbw5KpBvJyFpIXmsHueg4XPSRkZ0mg6kxHqjMGp3WEs8Hx_JodvKSoKEg6RMsdH54iCa/exec';
 
-const formatCustomerName = (name?: string) => {
-  if (!name) return '';
-  const words = name.trim().split(/\s+/).slice(0, 2);
+const formatCustomerName = (name?: any) => {
+  const str = String(name || '').trim();
+  if (!str) return '';
+  const words = str.split(/\s+/).slice(0, 2);
   return words
     .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
     .join(' ');
@@ -1758,10 +1759,10 @@ export function HistoryView() {
                         {item.state?.customerPhone && (
                           <div className="w-full flex items-center space-x-1.5 mt-0.5">
                             <span className="text-subtext">
-                              {appLanguage === 'ms' ? 'Tel' : 'Phone'}:
+                              {isWhatsAppUsername(item.state.customerPhone) ? 'WA' : (appLanguage === 'ms' ? 'Tel' : 'Phone')}:
                             </span>{' '}
                             <a
-                              href={`https://wa.me/${String(item.state.customerPhone).replace(/\D/g, '').startsWith('0') ? '6' + String(item.state.customerPhone).replace(/\D/g, '') : String(item.state.customerPhone).replace(/\D/g, '')}`}
+                              href={getWhatsAppLink(item.state.customerPhone)}
                               target="_blank"
                               rel="noopener noreferrer"
                               onClick={(e) => e.stopPropagation()}
@@ -2284,9 +2285,11 @@ export function HistoryView() {
                       
                       {item.phone && (
                         <div className="flex items-center space-x-1.5 mt-0.5">
-                          <span className="font-semibold text-gray-500">{appLanguage === 'ms' ? 'Tel:' : 'Phone:'}</span>
+                          <span className="font-semibold text-gray-500">
+                            {isWhatsAppUsername(item.phone) ? 'WA:' : (appLanguage === 'ms' ? 'Tel:' : 'Phone:')}
+                          </span>
                           <a
-                            href={`https://wa.me/${String(item.phone).replace(/\D/g, '').startsWith('0') ? '6' + String(item.phone).replace(/\D/g, '') : String(item.phone).replace(/\D/g, '')}`}
+                            href={getWhatsAppLink(item.phone)}
                             target="_blank"
                             rel="noopener noreferrer"
                             onClick={(e) => e.stopPropagation()}

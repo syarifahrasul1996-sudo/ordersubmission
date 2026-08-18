@@ -8,7 +8,8 @@ export function DesktopSidebar() {
     viewStack, 
     changeTab,
     appLanguage,
-    pushView
+    pushView,
+    startNewOrder
   } = useAppContext();
   
   const currentView = viewStack[viewStack.length - 1];
@@ -53,7 +54,7 @@ export function DesktopSidebar() {
 
       <div className="px-4 pt-6 border-t border-gray-100 dark:border-zinc-800 mt-auto">
         <button
-          onClick={() => pushView('resume-type')}
+          onClick={() => startNewOrder('resume-type', { mainType: 'Resume' })}
           className="w-full bg-primary text-white py-3.5 rounded-xl font-bold flex items-center justify-center space-x-2 shadow-lg shadow-primary/20 hover:bg-primary/90 transition-all active:scale-95 cursor-pointer"
         >
           <Plus className="w-5 h-5 stroke-[2.5]" />

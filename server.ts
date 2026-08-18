@@ -1,8 +1,18 @@
 import express from "express";
 import path from "path";
+import crypto from "crypto";
 import { createServer as createViteServer } from "vite";
-import fs from "fs";
-import webPush from "web-push";
+import { initializeApp, getApps, App } from "firebase-admin/app";
+import { getFirestore, FieldValue, Firestore } from "firebase-admin/firestore";
+import { getMessaging, Messaging } from "firebase-admin/messaging";
+
+function timingSafeCompare(stored: string, provided: string): boolean {
+  if (!stored || !provided) return false;
+  const bufStored = Buffer.from(stored, "utf8");
+  const bufProvided = Buffer.from(provided, "utf8");
+  if (bufStored.length !== bufProvided.length) return false;
+  return crypto.timingSafeEqual(bufStored, bufProvided);
+}
 
 async function startServer() {
   const app = express();
@@ -10,71 +20,282 @@ async function startServer() {
 
   app.use(express.json());
 
-  // VAPID keys setup
-  const KEY_FILE = path.join(process.cwd(), "vapid-keys.json");
-  let vapidKeys = { publicKey: "", privateKey: "" };
-
-  if (fs.existsSync(KEY_FILE)) {
+  // Initialize Firebase Admin SDK (singleton)
+  let adminApp: App;
+  if (!getApps().length) {
     try {
-      vapidKeys = JSON.parse(fs.readFileSync(KEY_FILE, "utf-8"));
+      adminApp = initializeApp({
+        projectId: "order-submission-501208",
+      });
+      console.log("[Firebase Admin] Initialized for project: order-submission-501208");
     } catch (err) {
-      console.warn("Failed to read VAPID key file, generating new one", err);
+      console.error("[Firebase Admin] Initialization error:", err);
+      adminApp = getApps()[0] || initializeApp();
     }
+  } else {
+    adminApp = getApps()[0];
   }
 
-  if (!vapidKeys.publicKey || !vapidKeys.privateKey) {
-    vapidKeys = webPush.generateVAPIDKeys();
-    fs.writeFileSync(KEY_FILE, JSON.stringify(vapidKeys, null, 2), "utf-8");
+  let db: Firestore | null = null;
+  let messaging: Messaging | null = null;
+
+  const FIRESTORE_DATABASE_ID =
+    process.env.FIRESTORE_DATABASE_ID ||
+    "ai-studio-ordersubmission-812e5ca5-4c13-4685-aeb6-9c38e1052adb";
+
+  try {
+    db = getFirestore(adminApp, FIRESTORE_DATABASE_ID);
+    console.log(
+      `[Firebase Admin] Firestore database: ${FIRESTORE_DATABASE_ID}`
+    );
+    messaging = getMessaging(adminApp);
+  } catch (err) {
+    console.error("[Firebase Admin] Error accessing services:", err);
   }
 
-  webPush.setVapidDetails(
-    "mailto:syarifahrasul1996@gmail.com",
-    vapidKeys.publicKey,
-    vapidKeys.privateKey
-  );
+  // =========================================================================
+  // FCM Push Notification Endpoints (Path B - Anonymous Installation Model)
+  // Secure per-installation self-test mechanism using cryptographic secret token
+  // Single Source of Truth: Cloud Firestore (No In-Memory Fallback)
+  // =========================================================================
 
-  interface ScheduledAlert {
-    id: string;
-    triggerAt: number;
-    title: string;
-    body: string;
-    url?: string;
-  }
+  // 1. Register Firebase Installation ID (FID) atomically using a Firestore Transaction
+  app.post("/api/push/register", async (req, res) => {
+    try {
+      const { fid, secret } = req.body;
 
-  interface ScheduledOrder {
-    orderId: string;
-    subscription: any;
-    alerts: ScheduledAlert[];
-  }
-
-  let scheduledOrders: ScheduledOrder[] = [];
-  const SCHEDULES_FILE = path.join(process.cwd(), "scheduled-pushes.json");
-
-  function loadScheduledOrders() {
-    if (fs.existsSync(SCHEDULES_FILE)) {
-      try {
-        scheduledOrders = JSON.parse(fs.readFileSync(SCHEDULES_FILE, "utf-8"));
-        console.log(`Loaded ${scheduledOrders.length} scheduled orders from storage`);
-      } catch (err) {
-        console.error("Failed to read scheduled orders file:", err);
+      if (!fid || typeof fid !== "string" || fid.trim() === "") {
+        return res.status(400).json({ success: false, error: "Invalid or missing 'fid' in request body" });
       }
+
+      if (!db) {
+        console.error("[FCM Server] Firestore is not initialized");
+        return res.status(503).json({ success: false, error: "Firestore database service is unavailable" });
+      }
+
+      const cleanFid = fid.trim();
+      const safeDocId = crypto.createHash("sha256").update(cleanFid).digest("hex");
+      const docRef = db.collection("pushInstallations").doc(safeDocId);
+
+      // Perform atomic read-modify-write inside a Firestore transaction
+      const txResult = await db.runTransaction(async (transaction) => {
+        const docSnap = await transaction.get(docRef);
+
+        if (!docSnap.exists) {
+          // Brand-new FID: Generate a cryptographically random secret associated strictly with this installation
+          const newSecret = crypto.randomBytes(24).toString("hex");
+          const secretHash = crypto.createHash("sha256").update(newSecret).digest("hex");
+
+          transaction.set(docRef, {
+            fid: cleanFid,
+            secretHash,
+            enabled: true,
+            createdAt: FieldValue.serverTimestamp(),
+            updatedAt: FieldValue.serverTimestamp(),
+          });
+
+          return { status: 200, isNew: true, secret: newSecret };
+        } else {
+          // Existing FID: Require the existing installation secret
+          if (!secret || typeof secret !== "string" || secret.trim() === "") {
+            return { status: 401, error: "Missing installation secret for existing registration." };
+          }
+
+          const docData = docSnap.data();
+          const providedHash = crypto.createHash("sha256").update(secret.trim()).digest("hex");
+          const storedHash = docData?.secretHash;
+
+          if (!storedHash || !timingSafeCompare(storedHash, providedHash)) {
+            return { status: 403, error: "Unauthorized: Invalid installation secret for this FID." };
+          }
+
+          transaction.update(docRef, {
+            enabled: true,
+            updatedAt: FieldValue.serverTimestamp(),
+          });
+
+          return { status: 200, isNew: false };
+        }
+      });
+
+      if (txResult.status === 401) {
+        return res.status(401).json({ success: false, error: txResult.error });
+      }
+      if (txResult.status === 403) {
+        return res.status(403).json({ success: false, error: txResult.error });
+      }
+
+      if (txResult.isNew) {
+        console.log(`[FCM Server] Registered new anonymous FID in Firestore: ...${cleanFid.slice(-8)}`);
+        return res.json({ success: true, fid: cleanFid, secret: txResult.secret, registered: true });
+      } else {
+        console.log(`[FCM Server] Re-registered existing FID in Firestore: ...${cleanFid.slice(-8)}`);
+        return res.json({ success: true, fid: cleanFid, registered: true });
+      }
+    } catch (err: any) {
+      console.error("[FCM Server] Error in /api/push/register transaction:", err);
+      return res.status(500).json({ success: false, error: err?.message || "Failed to persist FID to Firestore" });
     }
-  }
-
-  function saveScheduledOrders() {
-    try {
-      fs.writeFileSync(SCHEDULES_FILE, JSON.stringify(scheduledOrders, null, 2), "utf-8");
-    } catch (err) {
-      console.error("Failed to save scheduled orders file:", err);
-    }
-  }
-
-  loadScheduledOrders();
-
-  // API to get public VAPID key for subscription
-  app.get("/api/vapid-public-key", (req, res) => {
-    res.json({ publicKey: vapidKeys.publicKey });
   });
+
+  // 2. Unregister Firebase Installation ID (FID) with Firestore verification
+  app.post("/api/push/unregister", async (req, res) => {
+    try {
+      const { fid, secret } = req.body;
+      if (!fid || typeof fid !== "string" || fid.trim() === "") {
+        return res.status(400).json({ success: false, error: "Invalid or missing 'fid'" });
+      }
+
+      if (!secret || typeof secret !== "string" || secret.trim() === "") {
+        return res.status(401).json({
+          success: false,
+          error: "Missing installation credentials. Unregistration is restricted to the registered device owner.",
+        });
+      }
+
+      if (!db) {
+        console.error("[FCM Server] Firestore is not initialized");
+        return res.status(503).json({ success: false, error: "Firestore database service is unavailable" });
+      }
+
+      const cleanFid = fid.trim();
+      const safeDocId = crypto.createHash("sha256").update(cleanFid).digest("hex");
+      const docRef = db.collection("pushInstallations").doc(safeDocId);
+
+      const docSnap = await docRef.get();
+      if (!docSnap.exists) {
+        return res.status(404).json({
+          success: false,
+          error: "Installation ID not found in registered devices.",
+        });
+      }
+
+      const docData = docSnap.data();
+      const providedHash = crypto.createHash("sha256").update(secret.trim()).digest("hex");
+      const storedHash = docData?.secretHash;
+
+      if (!storedHash || !timingSafeCompare(storedHash, providedHash)) {
+        return res.status(403).json({
+          success: false,
+          error: "Unauthorized: Invalid installation secret. You cannot unregister another installation's FID.",
+        });
+      }
+
+      await docRef.update({
+        enabled: false,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+
+      console.log(`[FCM Server] Unregistered FID in Firestore: ...${cleanFid.slice(-8)}`);
+      return res.json({ success: true, unregistered: true });
+    } catch (err: any) {
+      console.error("[FCM Server] Error in /api/push/unregister:", err);
+      return res.status(500).json({ success: false, error: err?.message || "Failed to unregister FID in Firestore" });
+    }
+  });
+
+  // 3. Send Test FCM Notification with strict Firestore installation ownership verification
+  app.post("/api/push/send-test", async (req, res) => {
+    try {
+      const { fid, secret, title, body } = req.body;
+
+      if (!fid || typeof fid !== "string" || fid.trim() === "") {
+        return res.status(400).json({ success: false, error: "Missing or invalid 'fid' parameter" });
+      }
+
+      if (!secret || typeof secret !== "string" || secret.trim() === "") {
+        return res.status(401).json({
+          success: false,
+          error: "Missing installation credentials. Test notifications are restricted to the registered device owner.",
+        });
+      }
+
+      if (!db) {
+        return res.status(503).json({ success: false, error: "Firestore database service is unavailable on server" });
+      }
+
+      if (!messaging) {
+        return res.status(503).json({ success: false, error: "Firebase Messaging service is not initialized on server" });
+      }
+
+      const targetFid = fid.trim();
+      const safeDocId = crypto.createHash("sha256").update(targetFid).digest("hex");
+      const docRef = db.collection("pushInstallations").doc(safeDocId);
+
+      const docSnap = await docRef.get();
+      if (!docSnap.exists) {
+        return res.status(404).json({
+          success: false,
+          error: "Installation ID not found in registered devices.",
+        });
+      }
+
+      const docData = docSnap.data();
+      if (!docData || !docData.enabled) {
+        return res.status(400).json({
+          success: false,
+          error: "Installation is disabled or unregistered.",
+        });
+      }
+
+      const providedHash = crypto.createHash("sha256").update(secret.trim()).digest("hex");
+      const storedHash = docData.secretHash;
+
+      if (!storedHash || !timingSafeCompare(storedHash, providedHash)) {
+        return res.status(403).json({
+          success: false,
+          error: "Unauthorized: Invalid installation secret. You cannot send notifications to another installation's FID.",
+        });
+      }
+
+      if (!messaging) {
+        return res.status(503).json({ success: false, error: "Firebase Messaging service is not initialized on server" });
+      }
+
+      const notificationTitle = (title && typeof title === "string") ? title.slice(0, 100) : "🔥 Test FCM Notification";
+      const notificationBody = (body && typeof body === "string") ? body.slice(0, 300) : "Firebase Cloud Messaging is active and working properly!";
+
+      console.log(`[FCM Server] Sending authenticated test message to FID: ...${targetFid.slice(-8)}`);
+
+      const messagePayload = {
+        fid: targetFid,
+        notification: {
+          title: notificationTitle,
+          body: notificationBody,
+        },
+        webpush: {
+          notification: {
+            icon: "https://i.imgur.com/49kNDoe.png",
+            badge: "https://i.imgur.com/49kNDoe.png",
+          },
+          data: {
+            url: "/",
+            source: "fcm_test",
+            timestamp: String(Date.now()),
+          },
+        },
+      };
+
+      const messageId = await messaging.send(messagePayload);
+      console.log("[FCM Server] Test message sent successfully! MessageId:", messageId);
+
+      return res.json({
+        success: true,
+        messageId,
+        sentToFid: targetFid,
+      });
+    } catch (err: any) {
+      console.error("[FCM Server] Error sending FCM message via Admin SDK:", err);
+      return res.status(500).json({
+        success: false,
+        error: err?.message || "Failed to send FCM notification via Firebase Admin SDK",
+      });
+    }
+  });
+
+  // ==========================================
+  // Application Data & Proxy Endpoints
+  // ==========================================
 
   // Server-side proxy for Google Apps Script requests to bypass browser CORS & script injection limits
   app.get("/api/sync-proxy", async (req, res) => {
@@ -103,8 +324,8 @@ async function startServer() {
         signal: controller.signal,
         redirect: "follow",
         headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        }
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        },
       });
       clearTimeout(timeoutId);
 
@@ -117,7 +338,7 @@ async function startServer() {
       clearTimeout(timeoutId);
       if (res.headersSent) return;
 
-      if (err.name === 'AbortError' || isTimeout) {
+      if (err.name === "AbortError" || isTimeout) {
         console.warn("Sync proxy request timed out or client disconnected.");
         return res.status(504).json({ error: "Google Script request timed out" });
       }
@@ -127,87 +348,9 @@ async function startServer() {
     }
   });
 
-  // API to schedule/update/delete push notifications for any order
-  app.post("/api/schedule-push", (req, res) => {
-    try {
-      const { orderId, subscription, alerts } = req.body;
-      if (!orderId || !subscription) {
-        return res.status(400).json({ error: "Missing required fields: orderId, subscription" });
-      }
-
-      // Remove existing schedule for this orderId
-      scheduledOrders = scheduledOrders.filter(o => o.orderId !== orderId);
-
-      // Add new alerts if any
-      if (alerts && alerts.length > 0) {
-        scheduledOrders.push({
-          orderId,
-          subscription,
-          alerts
-        });
-      }
-
-      saveScheduledOrders();
-      res.json({ success: true, count: alerts ? alerts.length : 0 });
-    } catch (err: any) {
-      console.error("Error scheduling push alerts:", err);
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-
-
-  // Background tick to process pending push notifications
-  setInterval(async () => {
-    const now = Date.now();
-    let updated = false;
-
-    for (const order of scheduledOrders) {
-      const activeAlerts: ScheduledAlert[] = [];
-      const triggeredAlerts: ScheduledAlert[] = [];
-
-      for (const alert of order.alerts) {
-        if (alert.triggerAt <= now) {
-          triggeredAlerts.push(alert);
-        } else {
-          activeAlerts.push(alert);
-        }
-      }
-
-      if (triggeredAlerts.length > 0) {
-        updated = true;
-        for (const alert of triggeredAlerts) {
-          console.log(`Triggering scheduled push notification for order ${order.orderId}, alert: ${alert.id}`);
-          try {
-            const payload = JSON.stringify({
-              title: alert.title,
-              body: alert.body,
-              url: alert.url || '/'
-            });
-            await webPush.sendNotification(order.subscription, payload);
-          } catch (err: any) {
-            console.error(`Error sending push notification:`, err);
-            if (err.statusCode === 410 || err.statusCode === 404) {
-              console.log(`Subscription expired/unsubscribed (status ${err.statusCode}). Clearing alert queues.`);
-              order.alerts = []; // Clear current queue for this subscriber
-              break;
-            }
-          }
-        }
-        order.alerts = activeAlerts;
-      }
-    }
-
-    // Filter out orders with empty alerts queues
-    const initialCount = scheduledOrders.length;
-    scheduledOrders = scheduledOrders.filter(order => order.alerts.length > 0);
-    if (scheduledOrders.length !== initialCount || updated) {
-      saveScheduledOrders();
-    }
-  }, 15000); // Check every 15 seconds
-
-
-  // Vite middleware for development
+  // ==========================================
+  // Vite Middleware & Static Serving
+  // ==========================================
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -215,10 +358,10 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), 'dist');
+    const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
+    app.get("*", (req, res) => {
+      res.sendFile(path.join(distPath, "index.html"));
     });
   }
 

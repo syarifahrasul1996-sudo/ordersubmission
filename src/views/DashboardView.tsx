@@ -2,7 +2,7 @@ import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { useAppContext } from '../AppContext';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LabelList, CartesianGrid } from 'recharts';
 import { RefreshCcw, AlertCircle, Clock, X, ChevronDown } from 'lucide-react';
-import { calculateDeadline, generateMessages, parseDateStringToTimestamp, extractPendapatanValue, smartFetchGoogleScript } from '../utils';
+import { calculateDeadline, generateMessages, parseDateStringToTimestamp, extractPendapatanValue, smartFetchGoogleScript, isWhatsAppUsername, formatPhoneUniversal } from '../utils';
 import { AppState } from '../types';
 
 const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbw5KpBvJyFpIXmsHueg4XPSRkZ0mg6kxHqjMGp3WEs8Hx_JodvKSoKEg6RMsdH54iCa/exec';
@@ -304,11 +304,16 @@ export function DashboardView() {
         totalIncome += (remotePrice > 0 ? remotePrice : localPrice);
       }
 
-      // Customer Phone normalization
+      // Customer Phone / Username normalization
       let phone = order.phone || '';
-      phone = String(phone).replace(/\D/g, '');
-      if (phone.startsWith('60')) phone = '0' + phone.substring(2);
-      if (phone) customers.set(phone, (customers.get(phone) || 0) + 1);
+      if (isWhatsAppUsername(phone)) {
+        const cleanUser = String(phone).replace(/^@+/, '').toLowerCase().trim();
+        if (cleanUser) customers.set('@' + cleanUser, (customers.get('@' + cleanUser) || 0) + 1);
+      } else {
+        phone = String(phone).replace(/\D/g, '');
+        if (phone.startsWith('60')) phone = '0' + phone.substring(2);
+        if (phone) customers.set(phone, (customers.get(phone) || 0) + 1);
+      }
 
       // Main Type
       const type = order.order || order.jenisTempahan || 'Unknown';
@@ -505,7 +510,7 @@ export function DashboardView() {
                       </span>
                     </div>
                     <div className="flex justify-between items-center text-xs text-subtext">
-                      <span className="font-medium">{order.phone || '-'}</span>
+                      <span className="font-medium">{formatPhoneUniversal(order.phone) || '-'}</span>
                       <div className="flex items-center text-amber-600 font-bold uppercase tracking-tighter text-[10px]">
                         <AlertCircle className="w-3 h-3 mr-1" />
                         {appLanguage === 'ms' ? 'Format Tarikh Salah' : 'Wrong Date Format'}

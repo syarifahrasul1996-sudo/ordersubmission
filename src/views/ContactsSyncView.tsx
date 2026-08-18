@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { parseDateStringToTimestamp, smartFetchGoogleScript } from '../utils';
+import { parseDateStringToTimestamp, smartFetchGoogleScript, isWhatsAppUsername, formatPhoneUniversal } from '../utils';
 import { 
   Users, 
   RefreshCw, 
@@ -29,15 +29,28 @@ interface ContactItem {
   error?: string;
 }
 
-const normalizePhone = (num: string): string => {
-  return num.replace(/[^\d]/g, '');
+const normalizePhone = (num?: any): string => {
+  const str = String(num || '').trim();
+  if (isWhatsAppUsername(str)) {
+    return str.replace(/^@+/, '').toLowerCase();
+  }
+  return str.replace(/[^\d]/g, '');
 };
 
-const isPhoneMatch = (phoneA: string, phoneB: string): boolean => {
-  const cleanA = normalizePhone(phoneA);
-  const cleanB = normalizePhone(phoneB);
+const isPhoneMatch = (phoneA?: any, phoneB?: any): boolean => {
+  const strA = String(phoneA || '');
+  const strB = String(phoneB || '');
+  const cleanA = normalizePhone(strA);
+  const cleanB = normalizePhone(strB);
   if (!cleanA || !cleanB) return false;
   if (cleanA === cleanB) return true;
+
+  const isUserA = isWhatsAppUsername(strA);
+  const isUserB = isWhatsAppUsername(strB);
+  if (isUserA || isUserB) {
+    return cleanA === cleanB;
+  }
+
   // Match end suffixes to account for international formatting, e.g., +60123456789 vs 0123456789
   if (cleanA.length >= 9 && cleanB.length >= 9) {
     return cleanA.slice(-9) === cleanB.slice(-9);
@@ -45,8 +58,8 @@ const isPhoneMatch = (phoneA: string, phoneB: string): boolean => {
   return cleanA.slice(-7) === cleanB.slice(-7);
 };
 
-const toProperCase = (str: string): string => {
-  return str.toLowerCase().replace(/\b\w/g, (l) => l.toUpperCase());
+const toProperCase = (str?: any): string => {
+  return String(str || '').toLowerCase().replace(/\b\w/g, (l) => l.toUpperCase());
 };
 
 export function ContactsSyncView() {
@@ -205,11 +218,12 @@ export function ContactsSyncView() {
 
     // Local History Items
     for (const item of history) {
-      const name = item.state?.customerName;
-      const phone = item.state?.customerPhone;
+      const name = item.state?.customerName || (item.state as any)?.name;
+      const phone = item.state?.customerPhone || (item.state as any)?.phone;
+      const phoneStr = String(phone || '').trim();
       const ts = item.state?.dueTimestamp || item.timestamp || Date.now();
-      if (phone && phone.trim()) {
-        allOrders.push({ name: name || '', phone: phone.trim(), timestamp: ts });
+      if (phoneStr) {
+        allOrders.push({ name: String(name || '').trim(), phone: phoneStr, timestamp: ts });
       }
     }
 
@@ -217,6 +231,7 @@ export function ContactsSyncView() {
     for (const item of cloudOrders) {
       const name = item.name;
       const phone = item.phone;
+      const phoneStr = String(phone || '').trim();
       let ts = Date.now();
       if (item.dueTimestamp && item.dueTimestamp > 0) {
         ts = item.dueTimestamp;
@@ -224,8 +239,8 @@ export function ContactsSyncView() {
         const parsed = parseDateStringToTimestamp(item.due, 0);
         ts = parsed.timestamp || Date.now();
       }
-      if (phone && phone.trim()) {
-        allOrders.push({ name: name || '', phone: phone.trim(), timestamp: ts });
+      if (phoneStr) {
+        allOrders.push({ name: String(name || '').trim(), phone: phoneStr, timestamp: ts });
       }
     }
 
@@ -236,10 +251,12 @@ export function ContactsSyncView() {
     const contactsMap = new Map<string, ContactItem>();
 
     for (const order of allOrders) {
-      const rawPhone = order.phone;
-      if (!rawPhone || !rawPhone.trim()) continue;
+      const rawPhone = String(order.phone || '').trim();
+      if (!rawPhone) continue;
 
-      const cleanPhone = rawPhone.replace(/[^\d+]/g, '');
+      const cleanPhone = isWhatsAppUsername(rawPhone) 
+        ? formatPhoneUniversal(rawPhone) 
+        : rawPhone.replace(/[^\d+]/g, '');
       if (!cleanPhone) continue;
 
       // Match check
@@ -255,7 +272,7 @@ export function ContactsSyncView() {
         const existing = contactsMap.get(matchedKey)!;
         existing.timesOrdered += 1;
       } else {
-        const rawName = (order.name || '').trim();
+        const rawName = String(order.name || '').trim();
         // Split by all types of whitespace including unicode non-breaking spaces
         const words = rawName.split(/[\s\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF]+/).filter(Boolean);
         const twoWords = words.slice(0, 2).join(' ');
@@ -307,9 +324,13 @@ export function ContactsSyncView() {
       const headers = ['Name', 'Phone 1 - Value'];
       const csvRows = [headers.join(',')];
       
-      const sanitize = (val: string) => val.replace(/[\u200B-\u200D\uFEFF\u200E\u200F\u202A-\u202E\u2066-\u2069\u00A0\u202F\r\n\t]/g, '').trim();
-      const sanitizePhone = (val: string) => {
-        let p = val.replace(/[^\d+]/g, '');
+      const sanitize = (val: any) => String(val || '').replace(/[\u200B-\u200D\uFEFF\u200E\u200F\u202A-\u202E\u2066-\u2069\u00A0\u202F\r\n\t]/g, '').trim();
+      const sanitizePhone = (val: any) => {
+        const str = String(val || '');
+        if (isWhatsAppUsername(str)) {
+          return formatPhoneUniversal(str);
+        }
+        let p = str.replace(/[^\d+]/g, '');
         // If it starts with 60 (Malaysia) and no +, prepend +
         if (p.startsWith('60')) p = '+' + p;
         // If it starts with 0 (Local Malaysia), convert to +60
@@ -385,9 +406,13 @@ export function ContactsSyncView() {
 
   // Action: Export individual contact as CSV simple helper
   const handleExportIndividual = (contact: ContactItem) => {
-    const sanitize = (val: string) => val.replace(/[\u200B-\u200D\uFEFF\u200E\u200F\u202A-\u202E\u2066-\u2069\u00A0\u202F\r\n\t]/g, '').trim();
-    const sanitizePhone = (val: string) => {
-      let p = val.replace(/[^\d+]/g, '');
+    const sanitize = (val: any) => String(val || '').replace(/[\u200B-\u200D\uFEFF\u200E\u200F\u202A-\u202E\u2066-\u2069\u00A0\u202F\r\n\t]/g, '').trim();
+    const sanitizePhone = (val: any) => {
+      const str = String(val || '');
+      if (isWhatsAppUsername(str)) {
+        return formatPhoneUniversal(str);
+      }
+      let p = str.replace(/[^\d+]/g, '');
       if (p.startsWith('60')) p = '+' + p;
       else if (p.startsWith('0')) p = '+60' + p.substring(1);
       return p;
@@ -520,7 +545,7 @@ export function ContactsSyncView() {
             </span>
             <input
               type="text"
-              placeholder={appLanguage === 'ms' ? 'Cari nama atau nombor telefon...' : 'Search customer name or phone...'}
+              placeholder={appLanguage === 'ms' ? 'Cari nama, nombor telefon, atau username...' : 'Search customer name, phone, or username...'}
               value={localSearchQuery}
               onChange={(e) => setLocalSearchQuery(e.target.value)}
               className="w-full bg-surface text-text pl-10 pr-4 py-2.5 rounded-2xl text-xs font-medium border border-gray-100 dark:border-gray-800 focus:outline-none focus:ring-2 focus:ring-primary/20 placeholder:text-subtext/60"

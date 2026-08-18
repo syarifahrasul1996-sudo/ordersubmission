@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
 import { AppState, INITIAL_STATE, ViewType, OrderHistoryItem } from './types';
-import { getSubscription, syncPushNotifications, clearPushNotifications } from './lib/push';
+import { initFCMStartupReconciliation } from './lib/fcm';
 import { useBackgroundSync } from './utils/backgroundSync';
 import { deduplicateHistoryList, smartFetchGoogleScript } from './utils';
 
@@ -15,6 +15,7 @@ interface AppContextType {
   popView: () => void;
   goHome: () => void;
   reset: () => void;
+  resetOrderForm: () => void;
   generatedMessages: string[];
   setGeneratedMessages: (msgs: string[]) => void;
   history: OrderHistoryItem[];
@@ -229,6 +230,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return smartFetchGoogleScript(url, callbackName);
     };
 
+    /**
+     * Client-side foreground reminders loop.
+     * Note: This is an in-browser foreground timer check while the tab is open.
+     * It is NOT durable FCM background scheduling (which will be migrated in the next phase).
+     * It strictly checks if Notification.permission === 'granted' and NEVER requests permission automatically.
+     */
     const checkAlerts = () => {
       const now = Date.now();
       const TWENTY_MINS = 20 * 60 * 1000;
@@ -373,18 +380,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
       });
     };
 
-    // Ask for permission and trigger PWA/Web Push subscription registration if supported
-    try {
-      getSubscription().catch(console.warn);
-    } catch (e) {
-      console.warn("Could not register push notifications on mount", e);
-    }
-
+    // Silently reconcile FCM registration lifecycle on startup if already granted and registered
+    let cleanupFCM: (() => void) | undefined;
+    initFCMStartupReconciliation().then((cleanup) => {
+      cleanupFCM = cleanup;
+    }).catch(console.warn);
 
     const interval = setInterval(checkAlerts, 60000); // Check every minute
     checkAlerts(); // Check right away
     
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      if (cleanupFCM) {
+        cleanupFCM();
+      }
+    };
   }, [appLanguage]);
 
   const [isOnline, setIsOnline] = useState<boolean>(() => typeof navigator !== 'undefined' ? navigator.onLine : true);
@@ -507,16 +517,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const now = Date.now();
       setLastSyncTime(now);
       localStorage.setItem('db_last_sync_time', String(now));
-
-      try {
-        if ('Notification' in window && Notification.permission === 'granted') {
-          new Notification(appLanguage === 'ms' ? 'Kemaskini Selesai' : 'Sync Completed', { 
-            body: appLanguage === 'ms' 
-              ? `${processedCount} rekod luar talian telah berjaya dikemaskini.` 
-              : `${processedCount} records from queue synced.` 
-          });
-        }
-      } catch(e) {}
     }
   };
 
@@ -579,57 +579,55 @@ export function AppProvider({ children }: { children: ReactNode }) {
     });
     
     setState(finalState);
-    syncPushNotifications(newItem, appLanguage).catch(console.warn);
   };
   
   const updateOrderHistoryState = (updates: Partial<AppState>) => {
-    const previousHistoryId = state.historyId;
-    const finalState = { ...state, ...updates, lastModifiedLocally: Date.now() };
-    setState(finalState);
+    setState(prev => {
+      const previousHistoryId = prev.historyId;
+      const finalState = { ...prev, ...updates, lastModifiedLocally: Date.now() };
 
-    const targetId = finalState.historyId;
-    if (targetId) {
-       setHistory(prev => {
-         const matchIndex = prev.findIndex(item => 
-           item.id === targetId || 
-           (previousHistoryId && item.id === previousHistoryId) ||
-           (updates.orderId && item.state?.orderId === updates.orderId)
-         );
+      const targetId = finalState.historyId;
+      if (targetId) {
+        setHistory(hPrev => {
+          const matchIndex = hPrev.findIndex(item => 
+            item.id === targetId || 
+            (previousHistoryId && item.id === previousHistoryId) ||
+            (updates.orderId && item.state?.orderId === updates.orderId)
+          );
 
-         if (matchIndex !== -1) {
-           const updatedHistory = [...prev];
-           const existingItem = updatedHistory[matchIndex];
-           const updatedItem: OrderHistoryItem = {
-             ...existingItem,
-             id: targetId,
-             state: {
-               ...existingItem.state,
-               ...finalState,
-               historyId: targetId
-             }
-           };
-           syncPushNotifications(updatedItem, appLanguage).catch(console.warn);
-           updatedHistory[matchIndex] = updatedItem;
-           return deduplicateHistoryList(updatedHistory);
-         }
+          if (matchIndex !== -1) {
+            const updatedHistory = [...hPrev];
+            const existingItem = updatedHistory[matchIndex];
+            const updatedItem: OrderHistoryItem = {
+              ...existingItem,
+              id: targetId,
+              state: {
+                ...existingItem.state,
+                ...finalState,
+                historyId: targetId
+              }
+            };
+            updatedHistory[matchIndex] = updatedItem;
+            return deduplicateHistoryList(updatedHistory);
+          }
 
-         const newItem: OrderHistoryItem = {
-           id: targetId,
-           timestamp: finalState.timestamp || Date.now(),
-           state: finalState,
-           messages: []
-         };
-         syncPushNotifications(newItem, appLanguage).catch(console.warn);
-         return deduplicateHistoryList([newItem, ...prev]);
-       });
-    }
+          const newItem: OrderHistoryItem = {
+            id: targetId,
+            timestamp: finalState.timestamp || Date.now(),
+            state: finalState,
+            messages: []
+          };
+          return deduplicateHistoryList([newItem, ...hPrev]);
+        });
+      }
+      return finalState;
+    });
   };
 
   const updateSpecificHistoryItem = (id: string, updates: Partial<AppState>) => {
     setHistory(prev => prev.map(item => {
       if (item.id === id) {
         const updatedItem = { ...item, state: { ...item.state, ...updates, lastModifiedLocally: Date.now() } };
-        syncPushNotifications(updatedItem, appLanguage).catch(console.warn);
         return updatedItem;
       }
       return item;
@@ -655,8 +653,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
           : item
       ));
     }
-
-    clearPushNotifications(id).catch(console.warn);
   };
 
   const restoreOrderFromHistory = (id: string) => {
@@ -763,8 +759,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setState({
       ...INITIAL_STATE,
       ...s,
-      customerName: s.customerName || s.name || INITIAL_STATE.customerName,
-      customerPhone: s.customerPhone || s.phone || INITIAL_STATE.customerPhone,
+      customerName: String(s.customerName || s.name || INITIAL_STATE.customerName || ''),
+      customerPhone: String(s.customerPhone || s.phone || INITIAL_STATE.customerPhone || ''),
       addons: Array.isArray(s.addons) ? s.addons : INITIAL_STATE.addons,
       clLangs: Array.isArray(s.clLangs) ? s.clLangs : INITIAL_STATE.clLangs,
       resumeLangs: Array.isArray(s.resumeLangs) ? s.resumeLangs : INITIAL_STATE.resumeLangs,
@@ -798,8 +794,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setState({
       ...INITIAL_STATE,
       ...s,
-      customerName: s.customerName || s.name || INITIAL_STATE.customerName,
-      customerPhone: s.customerPhone || s.phone || INITIAL_STATE.customerPhone,
+      customerName: String(s.customerName || s.name || INITIAL_STATE.customerName || ''),
+      customerPhone: String(s.customerPhone || s.phone || INITIAL_STATE.customerPhone || ''),
       addons: Array.isArray(s.addons) ? s.addons : INITIAL_STATE.addons,
       clLangs: Array.isArray(s.clLangs) ? s.clLangs : INITIAL_STATE.clLangs,
       resumeLangs: Array.isArray(s.resumeLangs) ? s.resumeLangs : INITIAL_STATE.resumeLangs,
@@ -811,6 +807,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   };
 
   const startNewOrder = (view: ViewType, updates: Partial<AppState>) => {
+    resetOrderForm();
     setState({ ...INITIAL_STATE, historyId: '', timestamp: Date.now(), ...updates });
     setViewStack(['home', view]);
   };
@@ -841,6 +838,35 @@ export function AppProvider({ children }: { children: ReactNode }) {
     reset();
   };
 
+  const resetOrderForm = () => {
+    try {
+      localStorage.removeItem('customer_form_progress');
+    } catch (e) {
+      // ignore
+    }
+    setState(prev => ({
+      ...prev,
+      customerName: '',
+      customerPhone: '',
+      customerInfo: '',
+      orderLink: '',
+      googleSheetLink: '',
+      customerOrder: '',
+      customerTemplate: '',
+      customerBahasa: '',
+      customerAddOn: '',
+      customerJenis: '',
+      customerDue: '',
+      dueTimestamp: 0,
+      name: '',
+      phone: '',
+      orderId: '',
+      historyId: '',
+      price: undefined,
+      isEditMode: false
+    }));
+  };
+
   const reset = () => {
     setState(INITIAL_STATE);
     setViewStack(['home']);
@@ -855,7 +881,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useBackgroundSync(setHistory, deletedOrderIds);
 
   return (
-    <AppContext.Provider value={{ state, setState, viewStack, pushView, changeTab, startNewOrder, popView, goHome, reset, generatedMessages, setGeneratedMessages, history, setHistory, saveOrderToHistory, updateOrderHistoryState, updateSpecificHistoryItem, deleteOrderFromHistory, restoreOrderFromHistory, permanentlyDeleteOrderFromHistory, clearHistory, loadOrder, drafts, saveAsDraft, deleteDraft, loadDraft, theme, toggleTheme, appLanguage, toggleLanguage, isOnline, isSyncing, queueSize, lastSyncTime, syncOfflineQueue, addToOfflineQueue, deletedOrderIds, historyDeliveryFilter, setHistoryDeliveryFilter, historyPendingTimeFilter, setHistoryPendingTimeFilter }}>
+    <AppContext.Provider value={{ state, setState, viewStack, pushView, changeTab, startNewOrder, popView, goHome, reset, resetOrderForm, generatedMessages, setGeneratedMessages, history, setHistory, saveOrderToHistory, updateOrderHistoryState, updateSpecificHistoryItem, deleteOrderFromHistory, restoreOrderFromHistory, permanentlyDeleteOrderFromHistory, clearHistory, loadOrder, drafts, saveAsDraft, deleteDraft, loadDraft, theme, toggleTheme, appLanguage, toggleLanguage, isOnline, isSyncing, queueSize, lastSyncTime, syncOfflineQueue, addToOfflineQueue, deletedOrderIds, historyDeliveryFilter, setHistoryDeliveryFilter, historyPendingTimeFilter, setHistoryPendingTimeFilter }}>
       {children}
     </AppContext.Provider>
   );
