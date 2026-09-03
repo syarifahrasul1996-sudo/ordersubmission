@@ -155,12 +155,14 @@ console.log(
   tomorrowEnd.setHours(23, 59, 59, 999);
 
   const todayPendingCount = activeOrders.filter(o => {
-    const ts = parseDueTimestamp(o.state?.dueTimestamp || o.timestamp);
+    const ts = getOrderDueTimestamp(o);
+    if (!ts) return false;
     return ts <= todayEnd.getTime();
   }).length;
 
   const tomorrowPendingCount = activeOrders.filter(o => {
-    const ts = parseDueTimestamp(o.state?.dueTimestamp || o.timestamp);
+    const ts = getOrderDueTimestamp(o);
+    if (!ts) return false;
     return ts >= tomorrowStart.getTime() && ts <= tomorrowEnd.getTime();
   }).length;
 

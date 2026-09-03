@@ -1,0 +1,110 @@
+{
+  "entities": {
+    "PushInstallation": {
+      "title": "PushInstallation",
+      "description": "FCM Installation ID and verification hash",
+      "type": "object",
+      "properties": {
+        "fid": {
+          "type": "string",
+          "description": "Firebase Installation ID"
+        },
+        "secretHash": {
+          "type": "string",
+          "description": "SHA-256 hash of the client installation secret"
+        },
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether push notifications are enabled for this installation"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last updated timestamp"
+        }
+      },
+      "required": ["fid", "secretHash", "enabled"]
+    },
+    "OrderReminder": {
+      "title": "OrderReminder",
+      "description": "Server-side order reminder and notification delivery status",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Order history ID or unique identifier"
+        },
+        "orderId": {
+          "type": "string",
+          "description": "Order reference code"
+        },
+        "customerName": {
+          "type": "string",
+          "description": "Customer name"
+        },
+        "mainType": {
+          "type": "string",
+          "description": "Main category of the order"
+        },
+        "subType": {
+          "type": "string",
+          "description": "Subcategory of the order"
+        },
+        "dueTimestamp": {
+          "type": "number",
+          "description": "Timestamp in milliseconds when the order is due"
+        },
+        "isDelivered": {
+          "type": "boolean",
+          "description": "Whether the order has already been completed or delivered"
+        },
+        "isDeleted": {
+          "type": "boolean",
+          "description": "Whether the order is moved to trash"
+        },
+        "hasNotified20Min": {
+          "type": "boolean",
+          "description": "Whether the 20-minute advance notification has been sent"
+        },
+        "hasDueAlerted": {
+          "type": "boolean",
+          "description": "Whether the due-now alert has been sent"
+        },
+        "hasThreeHourAlerted": {
+          "type": "boolean",
+          "description": "Whether the 3-hour check alert has been sent"
+        },
+        "language": {
+          "type": "string",
+          "description": "Language preference"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last updated timestamp"
+        }
+      },
+      "required": ["id", "customerName", "dueTimestamp", "isDelivered", "isDeleted"]
+    }
+  },
+  "firestore": {
+    "/pushInstallations/{docId}": {
+      "schema": "PushInstallation",
+      "description": "Registered devices for FCM push notifications"
+    },
+    "/orderReminders/{docId}": {
+      "schema": "OrderReminder",
+      "description": "Order deadlines and reminder delivery states for background push scheduling"
+    }
+  }
+}

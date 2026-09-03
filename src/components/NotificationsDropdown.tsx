@@ -16,6 +16,7 @@ import {
   Copy
 } from 'lucide-react';
 import { useAppContext } from '../AppContext';
+import { getOrderDueTimestamp } from '../utils/orderWindow';
 import { 
   getFCMStatus, 
   getCurrentFid, 
@@ -221,7 +222,9 @@ export function NotificationsDropdown() {
     );
 
     activeOrders.forEach(order => {
-      const { dueTimestamp, customerName, mainType, subType, googleSheetLink } = order.state;
+      const state = order.state || {};
+      const { customerName, mainType, subType, googleSheetLink } = state;
+      const dueTimestamp = getOrderDueTimestamp(order);
       const orderName = customerName || (mainType ? `${mainType} ${subType || ''}` : 'Tempahan');
 
       if (dueTimestamp) {

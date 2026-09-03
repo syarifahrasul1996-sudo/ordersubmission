@@ -1,4 +1,5 @@
 import { OrderHistoryItem } from '../types';
+import { getOrderDueTimestamp } from './orderWindow';
 
 /**
  * Order Deadline & Reminder calculation utilities.
@@ -16,7 +17,11 @@ export interface ScheduledAlertPayload {
 export function computeOrderAlerts(item: OrderHistoryItem, language: 'ms' | 'en'): ScheduledAlertPayload[] {
   const now = Date.now();
   const alerts: ScheduledAlertPayload[] = [];
-  const { dueTimestamp, customerName, mainType, subType, isDelivered, googleSheetLink, hasNotified, hasDueAlerted } = item.state;
+  if (!item?.state) return alerts;
+
+  const state = item.state;
+  const { customerName, mainType, subType, isDelivered, googleSheetLink, hasNotified, hasDueAlerted } = state;
+  const dueTimestamp = getOrderDueTimestamp(item);
 
   if (dueTimestamp && !isDelivered) {
     // 1. 20-minute alert

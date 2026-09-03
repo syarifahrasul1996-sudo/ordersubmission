@@ -4,11 +4,19 @@ self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const rawUrl = event.notification.data?.url || '/';
   const targetUrl = new URL(rawUrl, self.location.origin).href;
+  const orderId = event.notification.data?.orderId;
 
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
       for (const client of clientList) {
         if (client.url.startsWith(self.location.origin) && 'focus' in client) {
+          if (orderId && 'postMessage' in client) {
+            client.postMessage({
+              type: 'NOTIFICATION_CLICKED',
+              orderId,
+              url: targetUrl,
+            });
+          }
           if (client.url !== targetUrl && 'navigate' in client) {
             client.navigate(targetUrl);
           }
@@ -48,23 +56,23 @@ const messaging = firebase.messaging();
 messaging.onBackgroundMessage((payload) => {
   console.log('[firebase-messaging-sw.js] Background message received:', payload);
   
-  // Requirement: Prevent duplicate background notifications.
+  // Prevent duplicate background notifications:
   // When payload contains a `notification` property, Firebase Messaging automatically displays it.
   // Only manually display a notification for data-only messages (when payload.notification is absent).
   if (!payload.notification && payload.data) {
     const title = payload.data.title || 'Pesanan & Notifikasi';
     const body = payload.data.body || '';
     const url = payload.data.url || '/';
+    const orderId = payload.data.orderId;
 
     const notificationOptions = {
       body,
       icon: payload.data.icon || 'https://i.imgur.com/49kNDoe.png',
       badge: 'https://i.imgur.com/49kNDoe.png',
-      data: { url },
+      data: { url, orderId },
       tag: payload.data.tag || undefined,
     };
 
     return self.registration.showNotification(title, notificationOptions);
   }
 });
-

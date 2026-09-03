@@ -285,7 +285,7 @@ const cleanText = dueText
   .replace(/\s+at\s+/i, ' ')
   .trim();
 
-// Parse DD/MM/YYYY or DD-MM-YYYY first.
+// 1. Parse DD/MM/YYYY or DD-MM-YYYY
 // This prevents JavaScript from reading 06/07/2026 as June 7.
 const localDateMatch = cleanText.match(
   /^(\d{1,2})[/-](\d{1,2})[/-](\d{4})(?:\s+(\d{1,2})(?::(\d{1,2}))?(?::(\d{1,2}))?\s*(AM|PM)?)?$/i
@@ -335,16 +335,60 @@ if (localDateMatch) {
       date: parsedDate
     };
   }
-
-  return {
-    timestamp: defaultTimestamp,
-    date: new Date(defaultTimestamp)
-  };
 }
 
-// Only use JavaScript's general parser after checking
-// the explicit DD/MM/YYYY format.
-const directDate = new Date(cleanText);
+// 2. Parse YYYY-MM-DD
+const isoMatch = cleanText.match(
+  /^(\d{4})[/-](\d{1,2})[/-](\d{1,2})(?:\s+(\d{1,2})(?::(\d{1,2}))?(?::(\d{1,2}))?\s*(AM|PM)?)?$/i
+);
+if (isoMatch) {
+  const year = Number(isoMatch[1]);
+  const month = Number(isoMatch[2]);
+  const day = Number(isoMatch[3]);
+
+  let hours = Number(isoMatch[4] || 0);
+  const minutes = Number(isoMatch[5] || 0);
+  const seconds = Number(isoMatch[6] || 0);
+  const meridiem = String(isoMatch[7] || '').toUpperCase();
+
+  if (meridiem === 'PM' && hours < 12) hours += 12;
+  if (meridiem === 'AM' && hours === 12) hours = 0;
+
+  const parsedDate = new Date(year, month - 1, day, hours, minutes, seconds, 0);
+  if (!isNaN(parsedDate.getTime())) {
+    return {
+      timestamp: parsedDate.getTime(),
+      date: parsedDate
+    };
+  }
+}
+
+// 3. Normalize Malay month names to English for JS Date parser
+const malayMonthsMap: Record<string, string> = {
+  januari: 'Jan', jan: 'Jan',
+  februari: 'Feb', feb: 'Feb',
+  mac: 'Mar',
+  april: 'Apr', apr: 'Apr',
+  mei: 'May',
+  jun: 'Jun',
+  julai: 'Jul', jul: 'Jul',
+  ogos: 'Aug', ogo: 'Aug',
+  september: 'Sep', sep: 'Sep',
+  oktober: 'Oct', okt: 'Oct',
+  november: 'Nov', nov: 'Nov',
+  disember: 'Dec', dis: 'Dec'
+};
+
+let normalizedText = cleanText;
+for (const [mMalay, mEng] of Object.entries(malayMonthsMap)) {
+  const regex = new RegExp(`\\b${mMalay}\\b`, 'gi');
+  if (regex.test(normalizedText)) {
+    normalizedText = normalizedText.replace(regex, mEng);
+    break;
+  }
+}
+
+const directDate = new Date(normalizedText);
 
 if (!isNaN(directDate.getTime())) {
   return {

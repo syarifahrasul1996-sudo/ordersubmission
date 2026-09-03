@@ -96,7 +96,7 @@ export const INITIAL_STATE: AppState = {
   hasThreeHourChecked: false,
   threeHourAlerted: false,
   isDueInvalid: false,
-  dashboardFilterMonth: 'all',
+  dashboardFilterMonth: String(new Date().getMonth() + 1).padStart(2, '0'),
   dashboardFilterYear: new Date().getFullYear().toString(),
   isDeleted: false,
 };

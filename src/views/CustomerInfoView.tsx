@@ -149,7 +149,7 @@ export function CustomerInfoView() {
         const d = new Date();
         const y = state.dashboardFilterYear || d.getFullYear().toString();
         const m = state.dashboardFilterMonth && state.dashboardFilterMonth !== 'all' 
-          ? (parseInt(state.dashboardFilterMonth) + 1).toString().padStart(2, '0') 
+          ? state.dashboardFilterMonth.padStart(2, '0') 
           : (d.getMonth() + 1).toString().padStart(2, '0');
         
         // Time keep empty as requested

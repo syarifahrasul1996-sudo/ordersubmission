@@ -5,6 +5,7 @@ import { cn } from '../cn';
 import { Clock, Trash2, Calendar, AlertCircle, RefreshCcw, Save, Bell, Check, Search, Database, Phone, Settings, ChevronDown, ChevronUp, Link, X, ArrowRight, Zap } from 'lucide-react';
 import { useAppContext } from '../AppContext';
 import { formatPhoneUniversal, getWhatsAppLink, isWhatsAppUsername, parseDateStringToTimestamp, normalizeNameStr, normalizePhoneDigits, parseMainType, deduplicateHistoryList, reconcileOrdersByUniqueId, extractPendapatanValue, smartFetchGoogleScript } from '../utils';
+import { getOrderDueTimestamp } from '../utils/orderWindow';
 
 const GOOGLE_SCRIPT_URL =
   'https://script.google.com/macros/s/AKfycbw5KpBvJyFpIXmsHueg4XPSRkZ0mg6kxHqjMGp3WEs8Hx_JodvKSoKEg6RMsdH54iCa/exec';
@@ -23,6 +24,7 @@ const formatDisplayPhone = (phone?: string) => {
 };
 
 const getRelativeDayDetails = (orderTime: number, appLanguage: string) => {
+  if (!orderTime || orderTime <= 0) return null;
   const now = new Date();
   now.setHours(0, 0, 0, 0);
   
@@ -52,6 +54,11 @@ const getRelativeDayDetails = (orderTime: number, appLanguage: string) => {
       text: appLanguage === 'ms' ? '3 HARI LAGI' : 'IN 3 DAYS',
       className: 'bg-blue-500/10 text-blue-600 dark:bg-blue-500/20 dark:text-blue-400 border border-blue-200 dark:border-blue-900/50'
     };
+  } else if (diffDays > 3) {
+    return {
+      text: appLanguage === 'ms' ? `${diffDays} HARI LAGI` : `IN ${diffDays} DAYS`,
+      className: 'bg-blue-500/10 text-blue-600 dark:bg-blue-500/20 dark:text-blue-400 border border-blue-200 dark:border-blue-900/50'
+    };
   } else if (diffDays === -1) {
     return {
       text: appLanguage === 'ms' ? 'SEMALAM' : 'YESTERDAY',
@@ -60,6 +67,11 @@ const getRelativeDayDetails = (orderTime: number, appLanguage: string) => {
   } else if (diffDays === -2) {
     return {
       text: appLanguage === 'ms' ? '2 HARI LEPAS' : '2 DAYS AGO',
+      className: 'bg-slate-500/10 text-slate-600 dark:bg-slate-500/20 dark:text-slate-400 border border-slate-200 dark:border-slate-800'
+    };
+  } else if (diffDays < -2) {
+    return {
+      text: appLanguage === 'ms' ? `${Math.abs(diffDays)} HARI LEPAS` : `${Math.abs(diffDays)} DAYS AGO`,
       className: 'bg-slate-500/10 text-slate-600 dark:bg-slate-500/20 dark:text-slate-400 border border-slate-200 dark:border-slate-800'
     };
   }
@@ -121,6 +133,7 @@ export function HistoryView() {
     onConfirm: () => void | Promise<void>; 
     isDestructive?: boolean;
     confirmText?: string;
+    cancelText?: string;
   } | null>(null);
   const [isConfirmLoading, setIsConfirmLoading] = useState(false);
   const [alertMsg, setAlertMsg] = useState<{ title?: string; message: string; type: 'success' | 'error' | 'info' } | null>(null);
@@ -199,7 +212,9 @@ export function HistoryView() {
       
       // If pending filter is active, apply sub-time filters
       if (deliveryFilter === 'pending' && pendingTimeFilter !== 'all') {
-        const orderTime = parseDueTimestamp(item.state?.dueTimestamp || item.timestamp);
+        const orderTime = getOrderDueTimestamp(item);
+        if (!orderTime) return false;
+
         const d = new Date(orderTime);
         d.setHours(0, 0, 0, 0);
         const orderDateTs = d.getTime();
@@ -239,52 +254,46 @@ export function HistoryView() {
       const aDelivered = !!a.state?.isDelivered;
       const bDelivered = !!b.state?.isDelivered;
 
-      // Pending orders appear above delivered orders
+      // 1. Pending orders appear above delivered orders
       if (!aDelivered && bDelivered) return -1;
       if (aDelivered && !bDelivered) return 1;
 
-      const now = currentTime;
-
-      // Read the visible due date again first.
-      const aDue =
-        parseDueTimestamp(a.state?.customerDue) ||
-        Number(a.state?.dueTimestamp) ||
-        Number(a.timestamp) ||
-        now;
-
-      const bDue =
-        parseDueTimestamp(b.state?.customerDue) ||
-        Number(b.state?.dueTimestamp) ||
-        Number(b.timestamp) ||
-        now;
+      const aDue = getOrderDueTimestamp(a);
+      const bDue = getOrderDueTimestamp(b);
 
       if (!aDelivered) {
-        // Pending orders nearest to the current time appear first
-        const aDistance = Math.abs(aDue - now);
-        const bDistance = Math.abs(bDue - now);
-
-        if (aDistance !== bDistance) {
-          return aDistance - bDistance;
+        // Pending orders:
+        // Both have due dates -> sort chronologically ascending by due date (earliest deadline / overdue first)
+        if (aDue !== null && bDue !== null) {
+          if (aDue !== bDue) {
+            return aDue - bDue;
+          }
+          // Same deadline -> latest modified/created first
+          return (Number(b.timestamp) || 0) - (Number(a.timestamp) || 0);
         }
 
-        // If both are equally close, show the latest edited order first
-        return (
-          (Number(b.timestamp) || 0) -
-          (Number(a.timestamp) || 0)
-        );
+        // Only one has a due date -> order with due date comes first
+        if (aDue !== null && bDue === null) return -1;
+        if (aDue === null && bDue !== null) return 1;
+
+        // Neither has a due date -> latest created/edited first
+        return (Number(b.timestamp) || 0) - (Number(a.timestamp) || 0);
       }
 
-      // Delivered orders: latest due date first
-      if (aDue !== bDue) {
-        return bDue - aDue;
+      // Delivered orders: latest due date or completion timestamp first (descending)
+      if (aDue !== null && bDue !== null) {
+        if (aDue !== bDue) {
+          return bDue - aDue;
+        }
+        return (Number(b.timestamp) || 0) - (Number(a.timestamp) || 0);
       }
 
-      return (
-        (Number(b.timestamp) || 0) -
-        (Number(a.timestamp) || 0)
-      );
+      if (aDue !== null && bDue === null) return -1;
+      if (aDue === null && bDue !== null) return 1;
+
+      return (Number(b.timestamp) || 0) - (Number(a.timestamp) || 0);
     });
-  }, [history, deliveryFilter, searchQuery, currentTime]);
+  }, [history, deliveryFilter, pendingTimeFilter, searchQuery, currentTime]);
 
   const filteredDrafts = useMemo(() => {
     if (!searchQuery.trim()) return drafts;
@@ -337,7 +346,7 @@ export function HistoryView() {
     reconciled.forEach(item => {
       if (item.state?.isDeleted || item.state?.isDelivered) return;
       
-      const due = parseDueTimestamp(item.state?.dueTimestamp || item.timestamp);
+      const due = getOrderDueTimestamp(item);
       if (!due) return;
       
       const dueDate = new Date(due);
@@ -426,15 +435,11 @@ export function HistoryView() {
     }
   };
 
-  const handleDeliveredToggle = async (
-    e: React.MouseEvent,
+  const performDeliveredToggle = async (
     item: any,
     currentStatus: boolean,
     isRetry = false
   ) => {
-    e.preventDefault();
-    e.stopPropagation();
-
     const spreadsheetId = item.state?.spreadsheetId || state.spreadsheetId;
     const orderId = item.state?.orderId;
     const newStatus = isRetry ? currentStatus : !currentStatus;
@@ -522,6 +527,37 @@ export function HistoryView() {
         triggerPostFallback();
       }
     }
+  };
+
+  const handleDeliveredToggle = async (
+    e: React.MouseEvent,
+    item: any,
+    currentStatus: boolean,
+    isRetry = false
+  ) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    // If marking as delivered (pending -> delivered) and not a retry, ask confirmation first
+    if (!currentStatus && !isRetry) {
+      const custName = item.state?.customerName ? ` (${item.state.customerName})` : '';
+      setConfirmAction({
+        title: appLanguage === 'ms' ? 'Dah siap hantar ke?' : 'Order delivered already?',
+        message: appLanguage === 'ms'
+          ? `Order${custName} dah selamat sampai kat customer? Nak mark sebagai dah settle?`
+          : `Did order${custName} safely reach the customer? Mark as all done?`,
+        confirmText: appLanguage === 'ms' ? 'Dah Siap!' : 'Yep, All Done!',
+        cancelText: appLanguage === 'ms' ? 'Belum Lagi' : 'Not Yet',
+        isDestructive: false,
+        onConfirm: async () => {
+          setConfirmAction(null);
+          await performDeliveredToggle(item, currentStatus, isRetry);
+        }
+      });
+      return;
+    }
+
+    await performDeliveredToggle(item, currentStatus, isRetry);
   };
 
   const deleteOrderFromCloud = async (spreadsheetId: string, orderId: string) => {
@@ -1075,15 +1111,11 @@ export function HistoryView() {
     loadOrder(mockHistoryItem);
   };
 
-  const handleRemoteDeliveredToggle = async (
-    e: React.MouseEvent,
+  const performRemoteDeliveredToggle = async (
     index: number,
     orderData: any,
     isRetry = false
   ) => {
-    e.preventDefault();
-    e.stopPropagation();
-
     const spreadsheetId = orderData.spreadsheetId || state.spreadsheetId;
     const scriptUrl = orderData.scriptUrl || getActiveScriptUrl(spreadsheetId);
     const orderId = orderData.orderId;
@@ -1273,6 +1305,39 @@ export function HistoryView() {
         }
       });
     }
+  };
+
+  const handleRemoteDeliveredToggle = async (
+    e: React.MouseEvent,
+    index: number,
+    orderData: any,
+    isRetry = false
+  ) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const currentStatus = !!orderData.isDelivered;
+
+    // If marking as delivered (pending -> delivered) and not a retry, ask confirmation first
+    if (!currentStatus && !isRetry) {
+      const custName = orderData.customerName ? ` (${orderData.customerName})` : '';
+      setConfirmAction({
+        title: appLanguage === 'ms' ? 'Dah siap hantar ke?' : 'Order delivered already?',
+        message: appLanguage === 'ms'
+          ? `Order${custName} dah selamat sampai kat customer? Nak mark sebagai dah settle?`
+          : `Did order${custName} safely reach the customer? Mark as all done?`,
+        confirmText: appLanguage === 'ms' ? 'Dah Siap!' : 'Yep, All Done!',
+        cancelText: appLanguage === 'ms' ? 'Belum Lagi' : 'Not Yet',
+        isDestructive: false,
+        onConfirm: async () => {
+          setConfirmAction(null);
+          await performRemoteDeliveredToggle(index, orderData, isRetry);
+        }
+      });
+      return;
+    }
+
+    await performRemoteDeliveredToggle(index, orderData, isRetry);
   };
 
   return (
@@ -1578,27 +1643,30 @@ export function HistoryView() {
                     }
                   );
 
-                  const dueTimestamp = item.state?.dueTimestamp || item.timestamp || Date.now();
-                  const dueDateObj = new Date(dueTimestamp);
-                  const formattedDueDate = dueDateObj.toLocaleString(
-                    appLanguage === 'ms' ? 'ms-MY' : 'en-US',
-                    {
-                      weekday: 'long',
-                      day: 'numeric',
-                      month: 'short',
-                      year: 'numeric',
-                      hour: '2-digit',
-                      minute: '2-digit'
-                    }
-                  );
+                  const rawDueTimestamp = getOrderDueTimestamp(item);
+                  const hasDue = rawDueTimestamp !== null && rawDueTimestamp > 0;
+                  const dueTimestamp = hasDue ? rawDueTimestamp : 0;
+                  const formattedDueDate = hasDue
+                    ? new Date(rawDueTimestamp).toLocaleString(
+                        appLanguage === 'ms' ? 'ms-MY' : 'en-US',
+                        {
+                          weekday: 'long',
+                          day: 'numeric',
+                          month: 'short',
+                          year: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        }
+                      )
+                    : '';
 
                   const now = currentTime;
                   const isDelivered = !!item.state?.isDelivered;
-                  const timeUntilDue = item.state?.dueTimestamp ? item.state.dueTimestamp - now : 0;
-                  const isDueSoon = !isDelivered && timeUntilDue > 0 && timeUntilDue <= 20 * 60 * 1000;
-                  const isOverdue = !isDelivered && item.state?.dueTimestamp ? timeUntilDue <= 0 : false;
+                  const timeUntilDue = hasDue ? rawDueTimestamp - now : 0;
+                  const isDueSoon = !isDelivered && hasDue && timeUntilDue > 0 && timeUntilDue <= 20 * 60 * 1000;
+                  const isOverdue = !isDelivered && hasDue && timeUntilDue <= 0;
 
-                  const relDetails = getRelativeDayDetails(dueTimestamp, appLanguage);
+                  const relDetails = hasDue ? getRelativeDayDetails(rawDueTimestamp, appLanguage) : null;
 
                   let barColor = "bg-gray-300";
                   if (isDelivered) barColor = "bg-blue-500";
@@ -2564,8 +2632,17 @@ export function HistoryView() {
 
       <div className="relative bg-white rounded-3xl p-6 w-full max-w-[320px] shadow-2xl animate-fade-in-up">
         <div className="flex flex-col items-center text-center space-y-4">
-          <div className="w-12 h-12 bg-red-50 rounded-full flex items-center justify-center text-red-500 mb-2">
-            <AlertCircle className="w-6 h-6" />
+          <div className={cn(
+            "w-12 h-12 rounded-full flex items-center justify-center mb-2",
+            confirmAction.isDestructive !== false 
+              ? "bg-red-50 text-red-500 dark:bg-red-950/40 dark:text-red-400" 
+              : "bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-blue-400"
+          )}>
+            {confirmAction.isDestructive !== false ? (
+              <AlertCircle className="w-6 h-6" />
+            ) : (
+              <Check className="w-6 h-6" />
+            )}
           </div>
 
           <h3 className="text-lg font-bold text-text">
@@ -2586,7 +2663,7 @@ export function HistoryView() {
               }}
               className="flex-1 py-3 px-4 rounded-full font-bold text-sm text-text bg-gray-100 hover:bg-gray-200 active:scale-95 transition-all disabled:opacity-50"
             >
-              {appLanguage === 'ms' ? 'Batal' : 'Cancel'}
+              {confirmAction.cancelText || (appLanguage === 'ms' ? 'Batal' : 'Cancel')}
             </button>
 
             <button
@@ -2605,8 +2682,8 @@ export function HistoryView() {
                 }
               }}
               className={cn(
-                "flex-1 py-3 px-4 rounded-full font-bold text-sm text-white transition-all active:scale-95 disabled:opacity-70 flex items-center justify-center",
-                confirmAction.isDestructive !== false ? "bg-red-500 hover:bg-red-600" : "bg-primary hover:bg-primary-dark"
+                "flex-1 py-3 px-4 rounded-full font-bold text-sm text-white transition-all active:scale-95 disabled:opacity-70 flex items-center justify-center shadow-sm",
+                confirmAction.isDestructive !== false ? "bg-red-500 hover:bg-red-600" : "bg-blue-600 hover:bg-blue-700"
               )}
             >
               {isConfirmLoading ? (

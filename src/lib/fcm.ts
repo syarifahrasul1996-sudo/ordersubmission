@@ -5,9 +5,9 @@ import {
   register, 
   onRegistered, 
   onUnregistered, 
-  onMessage,
-  Messaging,
-  MessagePayload
+  onMessage, 
+  Messaging, 
+  MessagePayload 
 } from 'firebase/messaging';
 import firebaseConfig from '../../firebase-applet-config.json';
 
@@ -15,7 +15,14 @@ const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 
 export const FCM_VAPID_KEY = 'BCtrN3QSvJvQjYj0AQN8nqMcRxeIiBkDoIcyDU7x4bcOgXY_CZ7bXsjY_pQ4NbZb9k2f8OACZCojOK-11yL6gR0';
 
-export type FCMStatus = 'unsupported' | 'permission-default' | 'permission-denied' | 'registering' | 'enabled' | 'failed';
+export type FCMStatus = 
+  | 'unsupported' 
+  | 'permission-default' 
+  | 'permission-denied' 
+  | 'permission-granted' 
+  | 'registering' 
+  | 'enabled' 
+  | 'failed';
 
 let messagingInstance: Messaging | null = null;
 let currentRegisteredFid: string | null = null;
@@ -23,6 +30,61 @@ let currentRegistrationSecret: string | null = null;
 let registeredUnsubscribe: (() => void) | null = null;
 let unregisteredUnsubscribe: (() => void) | null = null;
 let foregroundUnsubscribe: (() => void) | null = null;
+
+/**
+ * Display a visible notification through ServiceWorkerRegistration.showNotification()
+ * Fallback to Notification constructor only if ServiceWorker is unavailable.
+ */
+export async function showServiceWorkerNotification(
+  title: string, 
+  options?: NotificationOptions & { data?: any }
+): Promise<boolean> {
+  if (typeof window === 'undefined') return false;
+
+  if (!('Notification' in window) || Notification.permission !== 'granted') {
+    return false;
+  }
+
+  const defaultOptions: NotificationOptions = {
+    icon: 'https://i.imgur.com/49kNDoe.png',
+    badge: 'https://i.imgur.com/49kNDoe.png',
+    ...options,
+  };
+
+  try {
+    if ('serviceWorker' in navigator) {
+      let registration = await navigator.serviceWorker.getRegistration('/firebase-messaging-sw.js');
+      if (!registration) {
+        registration = await navigator.serviceWorker.ready.catch(() => null as any);
+      }
+      if (!registration) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        registration = regs[0];
+      }
+
+      if (registration && typeof registration.showNotification === 'function') {
+        await registration.showNotification(title, defaultOptions);
+        console.log('[FCM] Notification successfully displayed via ServiceWorkerRegistration:', title);
+        return true;
+      }
+    }
+  } catch (swErr) {
+    console.warn('[FCM] ServiceWorkerRegistration.showNotification failed, trying fallback:', swErr);
+  }
+
+  // Fallback if ServiceWorkerRegistration is unavailable in current context
+  try {
+    if (typeof Notification === 'function') {
+      new Notification(title, defaultOptions);
+      console.log('[FCM] Notification displayed via Notification constructor fallback:', title);
+      return true;
+    }
+  } catch (fallbackErr) {
+    console.error('[FCM] Failed to display notification via both ServiceWorker and Notification constructor:', fallbackErr);
+  }
+
+  return false;
+}
 
 // Clean up any stale legacy service workers (e.g., old /sw.js)
 async function cleanLegacyServiceWorkers() {
@@ -69,7 +131,6 @@ export function getRegistrationSecret(): string | null {
  * - Notification.permission === "granted"
  * - fcm_registered_fid exists
  * - fcm_registration_secret exists
- * If only one value exists, treats registration as stale/incomplete and cleans it up.
  */
 export async function getFCMStatus(): Promise<FCMStatus> {
   if (typeof window === 'undefined') return 'unsupported';
@@ -102,46 +163,57 @@ export async function getFCMStatus(): Promise<FCMStatus> {
     }
   }
 
-  return 'permission-default';
+  return 'permission-granted';
 }
 
 /**
  * Send registered FID to application backend for persistent storage.
- * Passes existing installation secret if available to authorize re-registration.
+ * Includes automatic retry mechanism with exponential backoff for network resilience.
  */
-async function syncFidToBackend(fid: string): Promise<{ success: boolean; secret?: string; error?: string }> {
-  try {
-    const existingSecret = getRegistrationSecret();
-    const res = await fetch('/api/push/register', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        fid,
-        ...(existingSecret ? { secret: existingSecret } : {})
-      }),
-    });
+async function syncFidToBackend(fid: string, maxRetries = 3): Promise<{ success: boolean; secret?: string; error?: string }> {
+  let attempt = 0;
+  let lastError = '';
 
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.success) {
-      const errMsg = data.error || `Server responded with status ${res.status}`;
-      console.warn('[FCM] Backend FID registration failed:', res.status, errMsg);
-      return { success: false, error: errMsg };
+  while (attempt <= maxRetries) {
+    try {
+      const existingSecret = getRegistrationSecret();
+      const res = await fetch('/api/push/register', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          fid,
+          ...(existingSecret ? { secret: existingSecret } : {})
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        const errMsg = data.error || `Server responded with status ${res.status}`;
+        console.warn(`[FCM] Backend FID registration failed (attempt ${attempt + 1}/${maxRetries + 1}):`, res.status, errMsg);
+        lastError = errMsg;
+      } else {
+        console.log('[FCM] FID successfully synchronized with backend');
+        return { success: true, secret: data.secret };
+      }
+    } catch (err: any) {
+      lastError = err?.message || 'Network error sending FID to backend';
+      console.warn(`[FCM] Network connection notice syncing FID to backend (attempt ${attempt + 1}/${maxRetries + 1}):`, lastError);
     }
 
-    console.log('[FCM] FID successfully synchronized with Firestore backend');
-    return { success: true, secret: data.secret };
-  } catch (err: any) {
-    const errMsg = err?.message || 'Network error sending FID to backend';
-    console.error('[FCM] Network error sending FID to backend:', err);
-    return { success: false, error: errMsg };
+    attempt++;
+    if (attempt <= maxRetries) {
+      const delayMs = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
   }
+
+  return { success: false, error: lastError || 'Failed to sync FID after multiple attempts' };
 }
 
 /**
  * Send unregister signal to application backend.
- * Checks HTTP response status and only logs success when actually confirmed by server.
  */
 async function removeFidFromBackend(fid: string): Promise<{ success: boolean; error?: string }> {
   try {
@@ -182,26 +254,22 @@ function attachSharedFCMListeners(
     onSyncComplete?: (result: { success: boolean; fid: string | null; error?: string }) => void;
   }
 ) {
-  // 1. Foreground listener
+  // 1. Foreground listener (uses ServiceWorker showNotification)
   if (foregroundUnsubscribe) {
     foregroundUnsubscribe();
   }
-  foregroundUnsubscribe = onMessage(messaging, (payload) => {
-    console.log('================================================================');
+  foregroundUnsubscribe = onMessage(messaging, async (payload) => {
     console.log('[FCM] Foreground message received:', payload);
-    console.log('================================================================');
 
-    if (payload.notification && typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+    if (payload.notification) {
       const title = payload.notification.title || 'Pesanan & Notifikasi';
       const body = payload.notification.body || '';
-      try {
-        new Notification(title, {
-          body,
-          icon: payload.notification.icon || 'https://i.imgur.com/49kNDoe.png'
-        });
-      } catch (e) {
-        console.warn('[FCM] Could not show in-app browser notification banner:', e);
-      }
+      await showServiceWorkerNotification(title, {
+        body,
+        icon: payload.notification.icon || 'https://i.imgur.com/49kNDoe.png',
+        data: payload.data || {},
+        tag: (payload.data as any)?.tag || 'fcm_foreground',
+      });
     }
 
     if (options?.onPayloadReceived) {
@@ -236,9 +304,7 @@ function attachSharedFCMListeners(
     registeredUnsubscribe();
   }
   registeredUnsubscribe = onRegistered(messaging, async (fid) => {
-    console.log('================================================================');
-    console.log('[FCM] Received onRegistered FID from Firebase SDK:', fid);
-    console.log('================================================================');
+    console.log('[FCM] Received onRegistered FID from Firebase SDK');
 
     const syncResult = await syncFidToBackend(fid);
 
@@ -248,7 +314,6 @@ function attachSharedFCMListeners(
         localStorage.setItem('fcm_registered_fid', fid);
       } catch (e) {}
 
-      // If server generated a new secret (new FID), store it; if existing FID, preserve current secret
       if (syncResult.secret) {
         currentRegistrationSecret = syncResult.secret;
         try {
@@ -278,18 +343,6 @@ function attachSharedFCMListeners(
 
 /**
  * Explicit user-triggered registration for Firebase Cloud Messaging using FID
- * 
- * Order of operations:
- * 1. Notification.requestPermission()
- * 2. register service worker
- * 3. register() succeeds
- * 4. onRegistered(fid) receives the FID
- * 5. POST /api/push/register persists the FID to Firestore and returns/verifies secret
- * 6. ONLY upon confirmed persistence:
- *    - set currentRegisteredFid & currentRegistrationSecret
- *    - save fcm_registered_fid & fcm_registration_secret in localStorage
- *    - invoke onFidReceived(fid)
- *    - resolve { success: true, fid }
  */
 export async function enableFCMNotifications(onFidReceived?: (fid: string) => void): Promise<{ success: boolean; fid: string | null; error?: string }> {
   if (typeof window === 'undefined') {
@@ -300,20 +353,20 @@ export async function enableFCMNotifications(onFidReceived?: (fid: string) => vo
     const supported = await isSupported().catch(() => false);
     if (!supported || !('Notification' in window) || !('serviceWorker' in navigator)) {
       console.warn('[FCM] Browser does not support Firebase Cloud Messaging');
-      return { success: false, fid: null, error: 'Browser not supported' };
+      return { success: false, fid: null, error: 'Pelayar ini tidak menyokong Web Push / Notifications.' };
     }
 
     // 1. Permission check & prompt (explicit user-triggered flow)
     let permission = Notification.permission;
     if (permission === 'denied') {
       console.warn('[FCM] Notification permission is denied');
-      return { success: false, fid: null, error: 'Notification permission is blocked/denied' };
+      return { success: false, fid: null, error: 'Kebenaran notifikasi disekat. Sila benarkan dalam tetapan pelayar.' };
     }
 
     if (permission === 'default') {
       permission = await Notification.requestPermission();
       if (permission !== 'granted') {
-        return { success: false, fid: null, error: 'Permission not granted (' + permission + ')' };
+        return { success: false, fid: null, error: 'Kebenaran notifikasi tidak diberikan (' + permission + ')' };
       }
     }
 
@@ -340,7 +393,7 @@ export async function enableFCMNotifications(onFidReceived?: (fid: string) => vo
           resolve({
             success: false,
             fid: null,
-            error: 'Registration timed out waiting for Firebase Installation ID'
+            error: 'Masa tamat menunggu pendaftaran Firebase Installation ID.'
           });
         }
       }, 15000);
@@ -356,7 +409,6 @@ export async function enableFCMNotifications(onFidReceived?: (fid: string) => vo
         }
       });
 
-      // Request registration with VAPID key
       console.log('[FCM] Calling register() on Firebase Messaging SDK');
       try {
         await register(messaging, {
@@ -371,24 +423,19 @@ export async function enableFCMNotifications(onFidReceived?: (fid: string) => vo
           resolve({
             success: false,
             fid: null,
-            error: regErr?.message || 'Firebase register() call failed'
+            error: regErr?.message || 'Pendaftaran Firebase gagal.'
           });
         }
       }
     });
   } catch (err: any) {
     console.error('[FCM] Registration error:', err);
-    return { success: false, fid: null, error: err?.message || 'Registration failed' };
+    return { success: false, fid: null, error: err?.message || 'Pendaftaran gagal.' };
   }
 }
 
 /**
  * Startup FCM lifecycle reconciliation.
- * If permission was previously granted AND both stored FID and installation secret exist:
- * 1. Registers /firebase-messaging-sw.js silently (NO permission prompt).
- * 2. Initializes Firebase Messaging SDK.
- * 3. Attaches onRegistered, onUnregistered, and onMessage.
- * 4. Calls register() to reconcile registration state with Firebase.
  */
 export async function initFCMStartupReconciliation(onPayloadReceived?: (payload: MessagePayload) => void): Promise<() => void> {
   if (typeof window === 'undefined') return () => {};
@@ -399,7 +446,6 @@ export async function initFCMStartupReconciliation(onPayloadReceived?: (payload:
       return () => {};
     }
 
-    // Never request permission on startup
     if (Notification.permission !== 'granted') {
       return () => {};
     }
@@ -407,10 +453,8 @@ export async function initFCMStartupReconciliation(onPayloadReceived?: (payload:
     const storedFid = getCurrentFid();
     const storedSecret = getRegistrationSecret();
 
-    // Only reconcile if both FID and secret exist locally
     if (!storedFid || !storedSecret) {
       if (storedFid || storedSecret) {
-        // Clean incomplete state
         currentRegisteredFid = null;
         currentRegistrationSecret = null;
         try {
@@ -461,19 +505,51 @@ export async function initFCMStartupReconciliation(onPayloadReceived?: (payload:
   }
 }
 
-// Retain alias for backwards compatibility
 export const initFCMForegroundListener = initFCMStartupReconciliation;
 
 /**
- * Trigger test notification via backend endpoint.
- * Passes the installation secret to verify sender ownership.
+ * Send real test notification via backend FCM endpoint.
+ * Validates permission, service worker, and local installation credentials first.
  */
-export async function sendTestFCMNotification(fid: string, title?: string, body?: string): Promise<{ success: boolean; messageId?: string; error?: string }> {
+export async function sendTestFCMNotification(
+  fid: string, 
+  title?: string, 
+  body?: string
+): Promise<{ success: boolean; messageId?: string; error?: string; code?: string }> {
   try {
+    if (typeof window === 'undefined') {
+      return { success: false, error: 'Environment does not support push notifications.', code: 'WINDOW_UNDEFINED' };
+    }
+
+    if (!('Notification' in window) || Notification.permission !== 'granted') {
+      return {
+        success: false,
+        error: 'Kebenaran notifikasi belum diberikan atau disekat oleh pelayar.',
+        code: 'PERMISSION_DENIED',
+      };
+    }
+
+    if (!('serviceWorker' in navigator)) {
+      return {
+        success: false,
+        error: 'Service Worker tidak disokong pada pelayar ini.',
+        code: 'SERVICE_WORKER_UNAVAILABLE',
+      };
+    }
+
     const secret = getRegistrationSecret();
     if (!secret) {
-      return { success: false, error: 'Missing installation registration credentials on client.' };
+      return {
+        success: false,
+        error: 'Kelayakan pendaftaran (Secret) tidak dijumpai pada peranti ini. Sila aktifkan semula notifikasi.',
+        code: 'MISSING_CREDENTIALS',
+      };
     }
+
+    const testTitle = title || '🔥 Ujian Notifikasi FCM';
+    const testBody = body || 'Firebase Cloud Messaging aktif dan berfungsi dengan sempurna!';
+
+    console.log('[FCM] Requesting backend FCM test send to registered device...');
 
     const res = await fetch('/api/push/send-test', {
       method: 'POST',
@@ -483,18 +559,74 @@ export async function sendTestFCMNotification(fid: string, title?: string, body?
       body: JSON.stringify({
         fid,
         secret,
-        title: title || '🔥 Test FCM Notification',
-        body: body || 'Firebase Cloud Messaging is active and working properly!',
+        title: testTitle,
+        body: testBody,
       }),
     });
 
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.success) {
-      return { success: false, error: data.error || 'Server returned error ' + res.status };
+      const errMsg = data.error || `Server ralat (${res.status})`;
+      console.error('[FCM] Backend test notification failed:', res.status, errMsg, data.code);
+      return {
+        success: false,
+        error: errMsg,
+        code: data.code || 'SERVER_ERROR',
+      };
     }
 
+    console.log('[FCM] Test push notification confirmed by Firebase Admin! Message ID:', data.messageId);
     return { success: true, messageId: data.messageId };
   } catch (err: any) {
-    return { success: false, error: err?.message || 'Network error sending test notification' };
+    console.error('[FCM] Network or client error sending test notification:', err);
+    return {
+      success: false,
+      error: err?.message || 'Ralat rangkaian semasa menghantar ujian notifikasi.',
+      code: 'NETWORK_ERROR',
+    };
+  }
+}
+
+/**
+ * Synchronize active order reminders to backend for server-side push scheduling
+ */
+export async function syncOrderRemindersToBackend(
+  orders: Array<{
+    id: string;
+    orderId?: string;
+    customerName: string;
+    mainType: string;
+    subType?: string;
+    dueTimestamp: number;
+    isDelivered: boolean;
+    isDeleted: boolean;
+    hasNotified20Min?: boolean;
+    hasDueAlerted?: boolean;
+    hasThreeHourAlerted?: boolean;
+    googleSheetLink?: string;
+    language?: 'ms' | 'en';
+  }>
+): Promise<{ success: boolean; reminderStates?: Record<string, { hasNotified20Min: boolean; hasDueAlerted: boolean; hasThreeHourAlerted: boolean }> }> {
+  try {
+    const res = await fetch('/api/reminders/sync', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ orders }),
+    });
+
+    if (!res.ok) {
+      return { success: false };
+    }
+
+    const data = await res.json().catch(() => ({}));
+    return {
+      success: Boolean(data.success),
+      reminderStates: data.reminderStates,
+    };
+  } catch (e) {
+    console.warn('[FCM] Background reminder sync failed (offline or server restarting):', e);
+    return { success: false };
   }
 }
