@@ -4,7 +4,7 @@ import { AppState, INITIAL_STATE } from '../types';
 import { cn } from '../cn';
 import { Clock, Trash2, Calendar, AlertCircle, RefreshCcw, Save, Bell, Check, Search, Database, Phone, Settings, ChevronDown, ChevronUp, Link, X, ArrowRight, Zap } from 'lucide-react';
 import { useAppContext } from '../AppContext';
-import { formatPhoneUniversal, getWhatsAppLink, isWhatsAppUsername, parseDateStringToTimestamp, normalizeNameStr, normalizePhoneDigits, parseMainType, deduplicateHistoryList, reconcileOrdersByUniqueId, extractPendapatanValue, smartFetchGoogleScript } from '../utils';
+import { formatPhoneUniversal, getWhatsAppLink, isWhatsAppUsername, parsePhoneAndUsername, parseDateStringToTimestamp, normalizeNameStr, normalizePhoneDigits, parseMainType, deduplicateHistoryList, reconcileOrdersByUniqueId, extractPendapatanValue, smartFetchGoogleScript } from '../utils';
 import { getOrderDueTimestamp } from '../utils/orderWindow';
 
 const GOOGLE_SCRIPT_URL =
@@ -1827,7 +1827,12 @@ export function HistoryView() {
                         {item.state?.customerPhone && (
                           <div className="w-full flex items-center space-x-1.5 mt-0.5">
                             <span className="text-subtext">
-                              {isWhatsAppUsername(item.state.customerPhone) ? 'WA' : (appLanguage === 'ms' ? 'Tel' : 'Phone')}:
+                              {(() => {
+                                const p = parsePhoneAndUsername(item.state.customerPhone);
+                                if (p.phone && p.username) return appLanguage === 'ms' ? 'Tel / WA' : 'Phone / WA';
+                                if (p.username) return 'WA';
+                                return appLanguage === 'ms' ? 'Tel' : 'Phone';
+                              })()}:
                             </span>{' '}
                             <a
                               href={getWhatsAppLink(item.state.customerPhone)}
@@ -2354,7 +2359,12 @@ export function HistoryView() {
                       {item.phone && (
                         <div className="flex items-center space-x-1.5 mt-0.5">
                           <span className="font-semibold text-gray-500">
-                            {isWhatsAppUsername(item.phone) ? 'WA:' : (appLanguage === 'ms' ? 'Tel:' : 'Phone:')}
+                            {(() => {
+                              const p = parsePhoneAndUsername(item.phone);
+                              if (p.phone && p.username) return appLanguage === 'ms' ? 'Tel / WA:' : 'Phone / WA:';
+                              if (p.username) return 'WA:';
+                              return appLanguage === 'ms' ? 'Tel:' : 'Phone:';
+                            })()}
                           </span>
                           <a
                             href={getWhatsAppLink(item.phone)}

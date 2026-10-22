@@ -469,10 +469,18 @@ export function CustomerInfoView() {
 const formattedPhone = formatPhoneUniversal(phone);
 setPhone(formattedPhone);
 
-const updatedInfo = info.replace(
-  /(No\.?\s*Telefon(?:\s*\/\s*Username)?|Phone(?:\s*Number)?(?:\s*\/\s*Username)?|WhatsApp)\s*:\s*.*/i,
-  `$1: ${formattedPhone}`
-);
+let updatedInfo = info;
+if (/(No\.?\s*Telefon(?:\s*\/\s*Username)?|Phone(?:\s*Number)?(?:\s*\/\s*Username)?|WhatsApp)\s*:\s*.*/i.test(info)) {
+  updatedInfo = info.replace(
+    /(No\.?\s*Telefon(?:\s*\/\s*Username)?|Phone(?:\s*Number)?(?:\s*\/\s*Username)?|WhatsApp)\s*:\s*.*/i,
+    `$1: ${formattedPhone}`
+  );
+} else if (/(Username|User\s*ID)\s*:\s*.*/i.test(info)) {
+  updatedInfo = info.replace(
+    /(Username|User\s*ID)\s*:\s*.*/i,
+    `$1: ${formattedPhone}`
+  );
+}
 
 setInfo(updatedInfo);
 
@@ -722,9 +730,32 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
     }
 
     // 1.3 Extract Phone / WhatsApp Username
-    const phoneMatch = info.match(/(?:No\.?\s*Telefon(?:\s*\/\s*Username)?|Phone(?:\s*Number)?(?:\s*\/\s*Username)?|WhatsApp|Username):\s*(.*)/i);
-    if (phoneMatch && phoneMatch[1].trim()) {
-      const extractedPhone = formatPhoneUniversal(phoneMatch[1].trim());
+    const phoneRegex = /(?:No\.?\s*Telefon|Phone(?:\s*Number)?|WhatsApp|Tel|Hp|No\.?\s*Hp)\s*:\s*(.*)/i;
+    const userRegex = /(?:Username|User\s*ID|Handle|IG|Telegram|TikTok|Shopee|Carousell)\s*:\s*(.*)/i;
+    const combinedRegex = /(?:No\.?\s*Telefon\s*\/\s*Username|Phone(?:\s*Number)?\s*\/\s*Username)\s*:\s*(.*)/i;
+
+    const combinedMatch = info.match(combinedRegex);
+    const pMatch = info.match(phoneRegex);
+    const uMatch = info.match(userRegex);
+
+    let extractedPhoneVal = '';
+    if (combinedMatch && combinedMatch[1]?.trim()) {
+      extractedPhoneVal = combinedMatch[1].trim();
+    } else if (pMatch && pMatch[1]?.trim() && uMatch && uMatch[1]?.trim()) {
+      extractedPhoneVal = `${pMatch[1].trim()} (${uMatch[1].trim()})`;
+    } else if (pMatch && pMatch[1]?.trim()) {
+      extractedPhoneVal = pMatch[1].trim();
+    } else if (uMatch && uMatch[1]?.trim()) {
+      extractedPhoneVal = uMatch[1].trim();
+    } else {
+      const genericMatch = info.match(/(?:No\.?\s*Telefon(?:\s*\/\s*Username)?|Phone(?:\s*Number)?(?:\s*\/\s*Username)?|WhatsApp|Username):\s*(.*)/i);
+      if (genericMatch && genericMatch[1]?.trim()) {
+        extractedPhoneVal = genericMatch[1].trim();
+      }
+    }
+
+    if (extractedPhoneVal) {
+      const extractedPhone = formatPhoneUniversal(extractedPhoneVal);
       if (extractedPhone) {
         setPhone(extractedPhone);
       }

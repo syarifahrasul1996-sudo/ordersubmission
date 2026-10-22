@@ -2,7 +2,7 @@ import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { useAppContext } from '../AppContext';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LabelList, CartesianGrid } from 'recharts';
 import { RefreshCcw, AlertCircle, Clock, X, ChevronDown } from 'lucide-react';
-import { calculateDeadline, generateMessages, parseDateStringToTimestamp, extractPendapatanValue, smartFetchGoogleScript, isWhatsAppUsername, formatPhoneUniversal } from '../utils';
+import { calculateDeadline, generateMessages, parseDateStringToTimestamp, extractPendapatanValue, smartFetchGoogleScript, isWhatsAppUsername, formatPhoneUniversal, parsePhoneAndUsername } from '../utils';
 import { AppState } from '../types';
 
 const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbw5KpBvJyFpIXmsHueg4XPSRkZ0mg6kxHqjMGp3WEs8Hx_JodvKSoKEg6RMsdH54iCa/exec';
@@ -305,14 +305,14 @@ export function DashboardView() {
       }
 
       // Customer Phone / Username normalization
-      let phone = order.phone || '';
-      if (isWhatsAppUsername(phone)) {
-        const cleanUser = String(phone).replace(/^@+/, '').toLowerCase().trim();
+      const parsedCust = parsePhoneAndUsername(order.phone);
+      if (parsedCust.phone) {
+        let phoneDigits = parsedCust.phone.replace(/\D/g, '');
+        if (phoneDigits.startsWith('60')) phoneDigits = '0' + phoneDigits.substring(2);
+        if (phoneDigits) customers.set(phoneDigits, (customers.get(phoneDigits) || 0) + 1);
+      } else if (parsedCust.username) {
+        const cleanUser = parsedCust.username.replace(/^@+/, '').toLowerCase().trim();
         if (cleanUser) customers.set('@' + cleanUser, (customers.get('@' + cleanUser) || 0) + 1);
-      } else {
-        phone = String(phone).replace(/\D/g, '');
-        if (phone.startsWith('60')) phone = '0' + phone.substring(2);
-        if (phone) customers.set(phone, (customers.get(phone) || 0) + 1);
       }
 
       // Main Type

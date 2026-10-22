@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { parseDateStringToTimestamp, smartFetchGoogleScript, isWhatsAppUsername, formatPhoneUniversal } from '../utils';
+import { parseDateStringToTimestamp, smartFetchGoogleScript, isWhatsAppUsername, formatPhoneUniversal, parsePhoneAndUsername } from '../utils';
 import { 
   Users, 
   RefreshCw, 
@@ -31,10 +31,17 @@ interface ContactItem {
 
 const normalizePhone = (num?: any): string => {
   const str = String(num || '').trim();
-  if (isWhatsAppUsername(str)) {
-    return str.replace(/^@+/, '').toLowerCase();
+  const parsed = parsePhoneAndUsername(str);
+  if (parsed.phone) {
+    let digits = parsed.phone.replace(/[^\d]/g, '');
+    if (digits.startsWith('60')) digits = digits.slice(2);
+    else if (digits.startsWith('0')) digits = digits.slice(1);
+    return digits;
   }
-  return str.replace(/[^\d]/g, '');
+  if (parsed.username) {
+    return parsed.username.replace(/^@+/, '').toLowerCase();
+  }
+  return '';
 };
 
 const isPhoneMatch = (phoneA?: any, phoneB?: any): boolean => {
@@ -254,9 +261,10 @@ export function ContactsSyncView() {
       const rawPhone = String(order.phone || '').trim();
       if (!rawPhone) continue;
 
-      const cleanPhone = isWhatsAppUsername(rawPhone) 
-        ? formatPhoneUniversal(rawPhone) 
-        : rawPhone.replace(/[^\d+]/g, '');
+      const parsed = parsePhoneAndUsername(rawPhone);
+      const cleanPhone = parsed.phone 
+        ? parsed.phone.replace(/[^\d+]/g, '') 
+        : (parsed.username ? formatPhoneUniversal(parsed.username) : rawPhone.replace(/[^\d+]/g, ''));
       if (!cleanPhone) continue;
 
       // Match check
@@ -276,7 +284,10 @@ export function ContactsSyncView() {
         // Split by all types of whitespace including unicode non-breaking spaces
         const words = rawName.split(/[\s\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF]+/).filter(Boolean);
         const twoWords = words.slice(0, 2).join(' ');
-        const finalName = twoWords ? toProperCase(twoWords) : (appLanguage === 'ms' ? 'Pelanggan' : 'Customer');
+        let finalName = twoWords ? toProperCase(twoWords) : (appLanguage === 'ms' ? 'Pelanggan' : 'Customer');
+        if (parsed.username && !finalName.toLowerCase().includes(parsed.username.replace('@', '').toLowerCase())) {
+          finalName = `${finalName} (${parsed.username})`;
+        }
         const formattedName = `Cust ${finalName}`;
 
         contactsMap.set(cleanPhone, {
@@ -327,15 +338,17 @@ export function ContactsSyncView() {
       const sanitize = (val: any) => String(val || '').replace(/[\u200B-\u200D\uFEFF\u200E\u200F\u202A-\u202E\u2066-\u2069\u00A0\u202F\r\n\t]/g, '').trim();
       const sanitizePhone = (val: any) => {
         const str = String(val || '');
-        if (isWhatsAppUsername(str)) {
-          return formatPhoneUniversal(str);
+        const parsed = parsePhoneAndUsername(str);
+        if (parsed.phone) {
+          let p = parsed.phone.replace(/[^\d+]/g, '');
+          if (p.startsWith('60')) p = '+' + p;
+          else if (p.startsWith('0')) p = '+60' + p.substring(1);
+          return p;
         }
-        let p = str.replace(/[^\d+]/g, '');
-        // If it starts with 60 (Malaysia) and no +, prepend +
-        if (p.startsWith('60')) p = '+' + p;
-        // If it starts with 0 (Local Malaysia), convert to +60
-        else if (p.startsWith('0')) p = '+60' + p.substring(1);
-        return p;
+        if (parsed.username) {
+          return formatPhoneUniversal(parsed.username);
+        }
+        return str;
       };
 
       targets.forEach(c => {
@@ -409,13 +422,17 @@ export function ContactsSyncView() {
     const sanitize = (val: any) => String(val || '').replace(/[\u200B-\u200D\uFEFF\u200E\u200F\u202A-\u202E\u2066-\u2069\u00A0\u202F\r\n\t]/g, '').trim();
     const sanitizePhone = (val: any) => {
       const str = String(val || '');
-      if (isWhatsAppUsername(str)) {
-        return formatPhoneUniversal(str);
+      const parsed = parsePhoneAndUsername(str);
+      if (parsed.phone) {
+        let p = parsed.phone.replace(/[^\d+]/g, '');
+        if (p.startsWith('60')) p = '+' + p;
+        else if (p.startsWith('0')) p = '+60' + p.substring(1);
+        return p;
       }
-      let p = str.replace(/[^\d+]/g, '');
-      if (p.startsWith('60')) p = '+' + p;
-      else if (p.startsWith('0')) p = '+60' + p.substring(1);
-      return p;
+      if (parsed.username) {
+        return formatPhoneUniversal(parsed.username);
+      }
+      return str;
     };
     
     setContacts(prev => prev.map(c => c.phone === contact.phone ? { ...c, status: 'success' } : c));

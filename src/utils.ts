@@ -100,84 +100,155 @@ export function cleanWhatsAppInput(val?: any): { raw: string; isUrl: boolean; ex
   return { raw, isUrl: false, extracted: raw, isPlaceholder: false };
 }
 
+export interface ParsedPhoneAndUsername {
+  phone: string;
+  username: string;
+  isPlaceholder: boolean;
+  raw: string;
+}
+
+export function parsePhoneAndUsername(input?: any): ParsedPhoneAndUsername {
+  if (!input) return { phone: '', username: '', isPlaceholder: false, raw: '' };
+  const raw = String(input).trim();
+  if (!raw) return { phone: '', username: '', isPlaceholder: false, raw: '' };
+
+  const lower = raw.toLowerCase();
+  if (['-', '--', 'n/a', 'na', 'none', 'tiada', 'nil', 'null', 'undefined'].includes(lower)) {
+    return { phone: '', username: '', isPlaceholder: true, raw };
+  }
+
+  let clean = raw;
+  if (clean.includes('wa.me/') || clean.includes('whatsapp.com/')) {
+    const match = clean.match(/(?:wa\.me\/|phone=|send\?phone=|\/)([a-zA-Z0-9_.-]+)(?:\?|$)/i);
+    if (match && match[1]) {
+      clean = match[1].trim();
+    }
+  }
+
+  // 1. Explicit @username present anywhere in string
+  // E.g. '018-9864891 (@user123)', '0189864891 / @user', '@user 0189864891', '@user123'
+  if (clean.includes('@')) {
+    const atMatch = clean.match(/@([a-zA-Z0-9_.-]+)/);
+    if (atMatch) {
+      const username = atMatch[1].trim();
+      const remainder = clean.replace(atMatch[0], '').replace(/[()/,\\-]/g, ' ').trim();
+      const remainderDigits = remainder.replace(/\D/g, '');
+      if (remainderDigits.length >= 7) {
+        return { phone: remainder, username: '@' + username, isPlaceholder: false, raw };
+      } else if (!remainderDigits && !remainder.replace(/[^a-zA-Z0-9]/g, '')) {
+        return { phone: '', username: '@' + username, isPlaceholder: false, raw };
+      }
+    }
+  }
+
+  // 2. Delimited with parentheses, e.g. '018-9864891 (user123)' or 'user123 (0189864891)'
+  const parenMatch = clean.match(/^([^(]+)\(([^)]+)\)$/);
+  if (parenMatch) {
+    const part1 = parenMatch[1].trim();
+    const part2 = parenMatch[2].trim();
+    const d1 = part1.replace(/\D/g, '');
+    const d2 = part2.replace(/\D/g, '');
+    if (d1.length >= 7 && /[a-zA-Z]/.test(part2)) {
+      return { phone: part1, username: '@' + part2.replace(/^@+/, ''), isPlaceholder: false, raw };
+    }
+    if (d2.length >= 7 && /[a-zA-Z]/.test(part1)) {
+      return { phone: part2, username: '@' + part1.replace(/^@+/, ''), isPlaceholder: false, raw };
+    }
+  }
+
+  // 3. Delimited with slash, comma, pipe, or dash with spaces between phone and username
+  // E.g. '0189864891 / user123', 'user123 / 0189864891', '018-9864891 - user123'
+  const delimiterMatch = clean.match(/^(.+?)\s*[/,|]\s*(.+)$/) || clean.match(/^(.+?)\s+-\s+(.+)$/);
+  if (delimiterMatch) {
+    const part1 = delimiterMatch[1].trim();
+    const part2 = delimiterMatch[2].trim();
+    const d1 = part1.replace(/\D/g, '');
+    const d2 = part2.replace(/\D/g, '');
+    if (d1.length >= 7 && (part2.startsWith('@') || (/[a-zA-Z]/.test(part2) && d2.length < 7))) {
+      return { phone: part1, username: '@' + part2.replace(/^@+/, ''), isPlaceholder: false, raw };
+    }
+    if (d2.length >= 7 && (part1.startsWith('@') || (/[a-zA-Z]/.test(part1) && d1.length < 7))) {
+      return { phone: part2, username: '@' + part1.replace(/^@+/, ''), isPlaceholder: false, raw };
+    }
+  }
+
+  // 4. Space-separated phone and username
+  // E.g. '0189864891 user123' or 'user123 0189864891'
+  const spaceMatch1 = clean.match(/^(\+?\d[\d\s-]{6,}\d)\s+([a-zA-Z][a-zA-Z0-9_.-]*)$/);
+  if (spaceMatch1) {
+    return { phone: spaceMatch1[1].trim(), username: '@' + spaceMatch1[2].trim(), isPlaceholder: false, raw };
+  }
+  const spaceMatch2 = clean.match(/^([a-zA-Z][a-zA-Z0-9_.-]*)\s+(\+?\d[\d\s-]{6,}\d)$/);
+  if (spaceMatch2) {
+    return { phone: spaceMatch2[2].trim(), username: '@' + spaceMatch2[1].trim(), isPlaceholder: false, raw };
+  }
+
+  // 5. Pure username: starts with @
+  if (clean.startsWith('@')) {
+    const after = clean.replace(/^@+/, '').trim();
+    return { phone: '', username: '@' + after, isPlaceholder: false, raw };
+  }
+
+  // 6. Alphanumeric username with letters and numbers (e.g. 'user123', 'syarifah1996', 'sarah_99')
+  // If it has alphabetic characters and not a long sequence of digits (less than 7 digits)
+  const allDigits = clean.replace(/\D/g, '');
+  if (/[a-zA-Z]/.test(clean)) {
+    if (allDigits.length < 7) {
+      return { phone: '', username: '@' + clean.trim(), isPlaceholder: false, raw };
+    }
+  }
+
+  // 7. Pure phone number
+  return { phone: clean, username: '', isPlaceholder: false, raw };
+}
+
 export function isWhatsAppUsername(val?: any): boolean {
   if (!val) return false;
-  const { extracted, isPlaceholder } = cleanWhatsAppInput(val);
-  if (!extracted || isPlaceholder) return false;
-
-  const trimmed = extracted.trim();
-  if (trimmed.startsWith('@')) {
-    const afterAt = trimmed.slice(1).trim();
-    return afterAt.length > 0;
-  }
-
-  // If it contains letters (e.g. username, username_123, user.name)
-  // but verify it's not a common placeholder or non-alphanumeric symbol
-  if (/[a-zA-Z]/.test(trimmed)) {
-    const cleanDigits = trimmed.replace(/\D/g, '');
-    // If it has at least 8 digits and no special letters other than country prefix or extension, it could be a number
-    // Otherwise if it has alphabetic characters, it is a username
-    return true;
-  }
-  return false;
+  const parsed = parsePhoneAndUsername(val);
+  if (parsed.isPlaceholder) return false;
+  return !parsed.phone && !!parsed.username;
 }
 
 export function getWhatsAppLink(phoneOrUsername?: any): string {
   if (!phoneOrUsername) return '';
-  const { extracted, isPlaceholder } = cleanWhatsAppInput(phoneOrUsername);
-  if (!extracted || isPlaceholder) return '';
+  const parsed = parsePhoneAndUsername(phoneOrUsername);
+  if (parsed.isPlaceholder) return '';
 
-  if (isWhatsAppUsername(extracted)) {
-    const cleanUser = extracted.replace(/^@+/, '').trim();
-    return cleanUser ? `https://wa.me/${encodeURIComponent(cleanUser)}` : '';
+  if (parsed.phone) {
+    let digits = parsed.phone.replace(/\D/g, '');
+    if (digits) {
+      if (digits.startsWith('0')) digits = '6' + digits;
+      else if (digits.startsWith('1') && (digits.length === 9 || digits.length === 10)) digits = '60' + digits;
+      return `https://wa.me/${digits}`;
+    }
   }
 
-  let digits = extracted.replace(/\D/g, '');
-  if (!digits) return '';
-
-  // Malaysia standard normalization
-  if (digits.startsWith('0')) {
-    digits = '6' + digits;
-  } else if (digits.startsWith('1') && (digits.length === 9 || digits.length === 10)) {
-    digits = '60' + digits;
+  if (parsed.username) {
+    const cleanUser = parsed.username.replace(/^@+/, '').trim();
+    if (cleanUser) {
+      return `https://wa.me/${encodeURIComponent(cleanUser)}`;
+    }
   }
 
-  return `https://wa.me/${digits}`;
+  return '';
 }
 
-export function formatPhoneUniversal(phone?: any): string {
-  if (!phone) return '';
-
-  const { extracted, isPlaceholder } = cleanWhatsAppInput(phone);
-  if (!extracted) return '';
-  if (isPlaceholder) return extracted;
-
-  // Handle WhatsApp usernames
-  if (isWhatsAppUsername(extracted)) {
-    const cleanUser = extracted.replace(/^@+/, '').trim();
-    return cleanUser ? `@${cleanUser}` : '';
-  }
-
-  // Clean all non-digit characters
-  const digits = extracted.replace(/\D/g, '');
-  if (!digits) return extracted.trim(); // fallback to trimmed input if no digits
+export function formatDigitsUniversal(phone: string): string {
+  const digits = phone.replace(/\D/g, '');
+  if (!digits) return phone.trim();
 
   // 1. Malaysia (Country Code: 60)
-  // If starts with domestic '0', replace with '60'. E.g. '0189864891' -> '60189864891'
   let normalized = digits;
   if (digits.startsWith('0')) {
     normalized = '6' + digits;
   } else if (digits.startsWith('1') && (digits.length === 9 || digits.length === 10)) {
-    // If entered without country code (e.g. 189864891), prefix with '60'
     normalized = '60' + digits;
   }
 
   if (normalized.startsWith('60')) {
     const rawSuffix = normalized.substring(2);
-    // Malaysian mobile operator codes have 2 or 3 digits (11 or 10,12,13,14,15,16,17,18,19)
     if (rawSuffix.startsWith('11')) {
       if (rawSuffix.length >= 10) {
-        // Format: 60 11-3957 6582
         return `60 11-${rawSuffix.substring(2, 6)} ${rawSuffix.substring(6, 10)}`;
       } else {
         return `60 11-${rawSuffix.substring(2)}`;
@@ -196,13 +267,11 @@ export function formatPhoneUniversal(phone?: any): string {
       const op = rawSuffix.substring(0, 2);
       const rest = rawSuffix.substring(2);
       if (rest.length >= 7) {
-        // Format: 60 18-986 4891
         return `60 ${op}-${rest.substring(0, 3)} ${rest.substring(3, 7)}`;
       } else {
         return `60 ${op}-${rest}`;
       }
     } else if (rawSuffix.startsWith('3')) {
-      // KL Landline: e.g. 60 3-1234 5678 (8 digits suffix)
       const rest = rawSuffix.substring(1);
       if (rest.length >= 8) {
         return `60 3-${rest.substring(0, 4)} ${rest.substring(4, 8)}`;
@@ -217,7 +286,6 @@ export function formatPhoneUniversal(phone?: any): string {
       rawSuffix.startsWith('8') ||
       rawSuffix.startsWith('9')
     ) {
-      // Other states landline: e.g. 60 9-123 4567
       const op = rawSuffix.substring(0, 1);
       const rest = rawSuffix.substring(1);
       if (rest.length >= 7) {
@@ -226,11 +294,10 @@ export function formatPhoneUniversal(phone?: any): string {
         return `60 ${op}-${rest}`;
       }
     }
-    // General fallback for other formats of Malaysian numbers
     return `60 ${rawSuffix}`;
   }
 
-  // 2. Singapore (Country Code: 65) - 8 digits suffix typically
+  // 2. Singapore (Country Code: 65)
   if (digits.startsWith('65')) {
     const suffix = digits.substring(2);
     if (suffix.length >= 8) {
@@ -239,7 +306,7 @@ export function formatPhoneUniversal(phone?: any): string {
     return `65 ${suffix}`;
   }
 
-  // 3. Indonesia (Country Code: 62) - e.g. 62 812-3456-7890
+  // 3. Indonesia (Country Code: 62)
   if (digits.startsWith('62')) {
     const suffix = digits.substring(2);
     if (suffix.length >= 9) {
@@ -248,7 +315,7 @@ export function formatPhoneUniversal(phone?: any): string {
     return `62 ${suffix}`;
   }
 
-  // 4. US/Canada (Country Code: 1) - 10 digits
+  // 4. US/Canada (Country Code: 1)
   if (digits.startsWith('1') && digits.length === 11) {
     return `1 (${digits.substring(1, 4)}) ${digits.substring(4, 7)}-${digits.substring(7)}`;
   }
@@ -256,7 +323,7 @@ export function formatPhoneUniversal(phone?: any): string {
     return `1 (${digits.substring(0, 3)}) ${digits.substring(3, 6)}-${digits.substring(6)}`;
   }
 
-  // 5. United Kingdom (Country Code: 44) - e.g. 44 7123 456789
+  // 5. United Kingdom (Country Code: 44)
   if (digits.startsWith('44')) {
     const suffix = digits.substring(2);
     if (suffix.length >= 10) {
@@ -264,12 +331,34 @@ export function formatPhoneUniversal(phone?: any): string {
     }
   }
 
-  // Generic Default Fallback (spaced representation) or original input
+  // Generic Default Fallback
   if (digits.length >= 10) {
     return `+${digits.substring(0, 3)} ${digits.substring(3, 6)} ${digits.substring(6)}`;
   }
 
-  return extracted.trim();
+  return phone.trim();
+}
+
+export function formatPhoneUniversal(phone?: any): string {
+  if (!phone) return '';
+
+  const parsed = parsePhoneAndUsername(phone);
+  if (parsed.isPlaceholder) return parsed.raw;
+
+  if (parsed.phone && parsed.username) {
+    const formattedPhone = formatDigitsUniversal(parsed.phone);
+    return `${formattedPhone} (${parsed.username})`;
+  }
+
+  if (parsed.phone) {
+    return formatDigitsUniversal(parsed.phone);
+  }
+
+  if (parsed.username) {
+    return parsed.username;
+  }
+
+  return String(phone).trim();
 }
 
 /**
@@ -405,16 +494,21 @@ return {
 
 export function normalizePhoneDigits(phone?: any): string {
   if (!phone) return '';
-  const { extracted, isPlaceholder } = cleanWhatsAppInput(phone);
-  if (!extracted || isPlaceholder) return '';
+  const parsed = parsePhoneAndUsername(phone);
+  if (parsed.isPlaceholder) return '';
 
-  if (isWhatsAppUsername(extracted)) {
-    return extracted.replace(/^@+/, '').toLowerCase().trim();
+  if (parsed.phone) {
+    let digits = parsed.phone.replace(/\D/g, '');
+    if (digits.startsWith('60')) digits = digits.slice(2);
+    else if (digits.startsWith('0')) digits = digits.slice(1);
+    if (digits) return digits;
   }
-  let digits = extracted.replace(/\D/g, '');
-  if (digits.startsWith('60')) digits = digits.slice(2);
-  else if (digits.startsWith('0')) digits = digits.slice(1);
-  return digits;
+
+  if (parsed.username) {
+    return parsed.username.replace(/^@+/, '').toLowerCase().trim();
+  }
+
+  return '';
 }
 
 export function normalizeNameStr(name?: string): string {
