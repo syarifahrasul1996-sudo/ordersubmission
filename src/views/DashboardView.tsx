@@ -325,7 +325,7 @@ export function DashboardView() {
         .trim()
         .toLowerCase();
 
-      let urgency = appLanguage === 'ms' ? 'Tak Urgent' : 'Not Urgent';
+      let urgency = appLanguage === 'ms' ? 'Tidak Urgent' : 'Not Urgent';
 
       if (urgencyRaw === 'urgent') {
         urgency = 'Urgent';

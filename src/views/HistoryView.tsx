@@ -1803,7 +1803,7 @@ export function HistoryView() {
                               let displayVal = item.state.customerJenis;
                               if (val.includes('super')) { bColor = "text-super font-bold"; displayVal = "Super Urgent"; }
                               else if (val.includes('semi')) { bColor = "text-semi font-bold"; displayVal = "Semi Urgent"; }
-                              else if (val.includes('normal') || val.includes('tak') || val.includes('not') || val.includes('tidak')) { bColor = "text-noturgent font-bold"; displayVal = appLanguage === 'ms' ? "Tak Urgent" : "Not Urgent"; }
+                              else if (val.includes('normal') || val.includes('tak') || val.includes('not') || val.includes('tidak')) { bColor = "text-noturgent font-bold"; displayVal = appLanguage === 'ms' ? "Tidak Urgent" : "Not Urgent"; }
                               else if (val.includes('urgent')) { bColor = "text-urgent font-bold"; displayVal = "Urgent"; }
                               return <span key="jenis" className={bColor}>{displayVal}</span>;
                             })() : null
@@ -2335,7 +2335,7 @@ export function HistoryView() {
                             let displayVal = item.jenis;
                             if (val.includes('super')) { bColor = "text-super font-bold"; displayVal = "Super Urgent"; }
                             else if (val.includes('semi')) { bColor = "text-semi font-bold"; displayVal = "Semi Urgent"; }
-                            else if (val.includes('normal') || val.includes('tak') || val.includes('not') || val.includes('tidak')) { bColor = "text-noturgent font-bold"; displayVal = appLanguage === 'ms' ? "Tak Urgent" : "Not Urgent"; }
+                            else if (val.includes('normal') || val.includes('tak') || val.includes('not') || val.includes('tidak')) { bColor = "text-noturgent font-bold"; displayVal = appLanguage === 'ms' ? "Tidak Urgent" : "Not Urgent"; }
                             else if (val.includes('urgent')) { bColor = "text-urgent font-bold"; displayVal = "Urgent"; }
                             return <span key="jenis" className={bColor}>{displayVal}</span>;
                           })() : null

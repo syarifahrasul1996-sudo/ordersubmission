@@ -29,6 +29,31 @@ export function calculateDeadline(state: any, appLanguage: string) {
   return { formatted: dateStr, total };
 }
 
+export function stripEmojis(str: string): string {
+  if (!str) return '';
+  return str
+    .replace(/[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F1E6}-\u{1F1FF}\u{1F900}-\u{1F9FF}\u{1F600}-\u{1F64F}\u{1F680}-\u{1F6FF}\u{200D}\u{FE0F}]/gu, '')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/ \n/g, '\n')
+    .trim();
+}
+
+/**
+ * Ensures urgency strictly matches Google Sheets Column H data validation dropdown:
+ * 'Tidak Urgent' | 'Semi Urgent' | 'Urgent' | 'Super Urgent'
+ */
+export function normalizeUrgencyForSheet(val?: string | null): string {
+  if (!val) return 'Tidak Urgent';
+  const lower = String(val).toLowerCase().trim();
+  if (lower.includes('super')) return 'Super Urgent';
+  if (lower.includes('semi')) return 'Semi Urgent';
+  if (lower.includes('tidak') || lower.includes('tak') || lower.includes('not') || lower.includes('normal') || lower.includes('standard')) {
+    return 'Tidak Urgent';
+  }
+  if (lower.includes('urgent')) return 'Urgent';
+  return 'Tidak Urgent';
+}
+
 export function generateMessages(state: any, dl: { formatted: string, total: number }, appLanguage: string) {
   const isE = state.isEditMode;
   let raw = state.mainType === 'Lain-lain' ? ((state.customDoc || '').trim() || 'Dokumen') : state.mainType;
@@ -46,8 +71,32 @@ export function generateMessages(state: any, dl: { formatted: string, total: num
   const title = docLabel + (addsForDisplay.length > 0 && !isE ? " + " + addsForDisplay.join(" + ") : "");
   
   const ms = {
-      ms: { thanks: "Terima kasih ☺️✨", will: (t: string, d: string) => `${t} ni saya akan hantar selewatnya ${d}`, super: "Kalau siap awal kita send awal", late: "Kalau saya terlewat, jangan segan untuk terus chat ya.", more: "Kalau nak siap lebih awal dari due yg diberi, boleh tukar ke pakej lebih cepat dan buat bayaran tambahan.", recalc: "> ⏱ Tempoh siap akan dikira semula dari tarikh bayaran tambahan dibuat, bukan dari tarikh bayaran asal.", h: "jam", template: "Template", language: "Bahasa", addon: "Add-on", disc: "Kita anggap maklumat resume yang diberi tu lengkap dan dah disemak.\n\n> Kalau nak betulkan sikit-sikit lepas siap, takde caj. Tapi kalau ada penambahan atau perubahan besar, akan dikenakan caj asing. Harap maklum ☺️" },
-      en: { thanks: "Thank you ☺️✨", will: (t: string, d: string) => `I will send this ${t} by ${d}`, super: "If it's ready earlier I'll send it earlier", late: "If I'm late, please don’t hesitate to message me directly.", more: "If you want it ready earlier than the given due date, you can switch to a faster package and make an additional payment.", recalc: "> ⏱ Completion time will be recalculated from the date of additional payment, not from the original payment date.", h: "hours", template: "Template", language: "Language", addon: "Add-ons", disc: "We assume the resume information provided is complete and checked.\n\n> Minor corrections after completion are free. However, any major additions or changes will incur separate charges. Thank you for your understanding ☺️" }
+      ms: { 
+        thanks: "Terima kasih", 
+        will: (t: string, d: string) => `${t} ni saya akan hantar selewatnya ${d}`, 
+        super: "Kalau siap awal kita send awal", 
+        late: "Kalau saya terlewat, jangan segan untuk terus chat ya.", 
+        more: "Kalau nak siap lebih awal dari due yg diberi, boleh tukar ke pakej lebih cepat dan buat bayaran tambahan.", 
+        recalc: "> Tempoh siap akan dikira semula dari tarikh bayaran tambahan dibuat, bukan dari tarikh bayaran asal.", 
+        h: "jam", 
+        template: "Template", 
+        language: "Bahasa", 
+        addon: "Add-on", 
+        disc: "Kita anggap maklumat resume yang diberi tu lengkap dan dah disemak.\n\n> Kalau nak betulkan sikit-sikit lepas siap, takde caj. Tapi kalau ada penambahan atau perubahan besar, akan dikenakan caj asing. Harap maklum" 
+      },
+      en: { 
+        thanks: "Thank you", 
+        will: (t: string, d: string) => `I will send this ${t} by ${d}`, 
+        super: "If it's ready earlier I'll send it earlier", 
+        late: "If I'm late, please don’t hesitate to message me directly.", 
+        more: "If you want it ready earlier than the given due date, you can switch to a faster package and make an additional payment.", 
+        recalc: "> Completion time will be recalculated from the date of additional payment, not from the original payment date.", 
+        h: "hours", 
+        template: "Template", 
+        language: "Language", 
+        addon: "Add-ons", 
+        disc: "We assume the resume information provided is complete and checked.\n\n> Minor corrections after completion are free. However, any major additions or changes will incur separate charges. Thank you for your understanding" 
+      }
   };
   const t = appLanguage === 'en' ? ms.en : ms.ms;
   let m1 = `${t.thanks}\n\n`;
@@ -76,7 +125,8 @@ export function generateMessages(state: any, dl: { formatted: string, total: num
       out.push(m2);
   }
 
-  return out;
+  // Sanitize all output messages to strictly guarantee no emoji is present
+  return out.map(msg => stripEmojis(msg));
 }
 
 export function cleanWhatsAppInput(val?: any): { raw: string; isUrl: boolean; extracted: string; isPlaceholder: boolean } {
@@ -125,23 +175,54 @@ export function parsePhoneAndUsername(input?: any): ParsedPhoneAndUsername {
     }
   }
 
-  // 1. Explicit @username present anywhere in string
-  // E.g. '018-9864891 (@user123)', '0189864891 / @user', '@user 0189864891', '@user123'
+  // 1. STARTS WITH @: Always recognize as username. Keep whole username intact even if it contains numbers!
+  if (clean.startsWith('@')) {
+    // Check if combined with phone in parentheses, e.g. '@user123 (018-9864891)'
+    const parenMatch = clean.match(/^(@[^\s()/,\\-]+)\s*\(([^)]+)\)$/);
+    if (parenMatch) {
+      const u = parenMatch[1].trim();
+      const p = parenMatch[2].trim();
+      if (p.replace(/\D/g, '').length >= 7) {
+        return { phone: p, username: u, isPlaceholder: false, raw };
+      }
+    }
+
+    // Check if combined with phone via delimiter, e.g. '@user123 / 018-9864891' or '@user123 - 0189864891'
+    const delimMatch = clean.match(/^(@[^\s()/,\\-]+)\s*[/,|\\-]\s*(.+)$/);
+    if (delimMatch) {
+      const u = delimMatch[1].trim();
+      const p = delimMatch[2].trim();
+      if (p.replace(/\D/g, '').length >= 7) {
+        return { phone: p, username: u, isPlaceholder: false, raw };
+      }
+    }
+
+    // Check if combined with space-separated phone, e.g. '@user123 0189864891'
+    const spaceMatch = clean.match(/^(@[^\s]+)\s+(\+?\d[\d\s-]{6,}\d)$/);
+    if (spaceMatch) {
+      return { phone: spaceMatch[2].trim(), username: spaceMatch[1].trim(), isPlaceholder: false, raw };
+    }
+
+    // Pure username starting with @: keep the whole string intact!
+    return { phone: '', username: clean, isPlaceholder: false, raw };
+  }
+
+  // 2. Contains @ somewhere in the middle or end
+  // E.g. '018-9864891 (@user123)', '0189864891 / @user123', '018-9864891 - @user123'
   if (clean.includes('@')) {
-    const atMatch = clean.match(/@([a-zA-Z0-9_.-]+)/);
+    const atMatch = clean.match(/(@[a-zA-Z0-9_.-]+)/);
     if (atMatch) {
-      const username = atMatch[1].trim();
+      const u = atMatch[1].trim();
       const remainder = clean.replace(atMatch[0], '').replace(/[()/,\\-]/g, ' ').trim();
       const remainderDigits = remainder.replace(/\D/g, '');
       if (remainderDigits.length >= 7) {
-        return { phone: remainder, username: '@' + username, isPlaceholder: false, raw };
-      } else if (!remainderDigits && !remainder.replace(/[^a-zA-Z0-9]/g, '')) {
-        return { phone: '', username: '@' + username, isPlaceholder: false, raw };
+        return { phone: remainder, username: u, isPlaceholder: false, raw };
       }
+      return { phone: '', username: u, isPlaceholder: false, raw };
     }
   }
 
-  // 2. Delimited with parentheses, e.g. '018-9864891 (user123)' or 'user123 (0189864891)'
+  // 3. Delimited with parentheses, e.g. '018-9864891 (user123)' or 'user123 (0189864891)'
   const parenMatch = clean.match(/^([^(]+)\(([^)]+)\)$/);
   if (parenMatch) {
     const part1 = parenMatch[1].trim();
@@ -156,7 +237,7 @@ export function parsePhoneAndUsername(input?: any): ParsedPhoneAndUsername {
     }
   }
 
-  // 3. Delimited with slash, comma, pipe, or dash with spaces between phone and username
+  // 4. Delimited with slash, comma, pipe, or dash with spaces between phone and username
   // E.g. '0189864891 / user123', 'user123 / 0189864891', '018-9864891 - user123'
   const delimiterMatch = clean.match(/^(.+?)\s*[/,|]\s*(.+)$/) || clean.match(/^(.+?)\s+-\s+(.+)$/);
   if (delimiterMatch) {
@@ -172,7 +253,7 @@ export function parsePhoneAndUsername(input?: any): ParsedPhoneAndUsername {
     }
   }
 
-  // 4. Space-separated phone and username
+  // 5. Space-separated phone and username
   // E.g. '0189864891 user123' or 'user123 0189864891'
   const spaceMatch1 = clean.match(/^(\+?\d[\d\s-]{6,}\d)\s+([a-zA-Z][a-zA-Z0-9_.-]*)$/);
   if (spaceMatch1) {
@@ -183,18 +264,12 @@ export function parsePhoneAndUsername(input?: any): ParsedPhoneAndUsername {
     return { phone: spaceMatch2[2].trim(), username: '@' + spaceMatch2[1].trim(), isPlaceholder: false, raw };
   }
 
-  // 5. Pure username: starts with @
-  if (clean.startsWith('@')) {
-    const after = clean.replace(/^@+/, '').trim();
-    return { phone: '', username: '@' + after, isPlaceholder: false, raw };
-  }
-
   // 6. Alphanumeric username with letters and numbers (e.g. 'user123', 'syarifah1996', 'sarah_99')
   // If it has alphabetic characters and not a long sequence of digits (less than 7 digits)
   const allDigits = clean.replace(/\D/g, '');
   if (/[a-zA-Z]/.test(clean)) {
     if (allDigits.length < 7) {
-      return { phone: '', username: '@' + clean.trim(), isPlaceholder: false, raw };
+      return { phone: '', username: '@' + clean.replace(/^@+/, '').trim(), isPlaceholder: false, raw };
     }
   }
 

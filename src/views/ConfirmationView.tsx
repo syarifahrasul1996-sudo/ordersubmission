@@ -38,7 +38,7 @@ export function ConfirmationView({ onGenerated }: { onGenerated: () => void }) {
     'super': 'Super Urgent',
     'urgent': 'Urgent',
     'semi': 'Semi Urgent',
-    'noturgent': appLanguage === 'ms' ? 'Tak Urgent' : 'Not Urgent'
+    'noturgent': appLanguage === 'ms' ? 'Tidak Urgent' : 'Not Urgent'
   };
   const urgencyLabel = urgencyLabels[state.urgency || ''] || '';
   

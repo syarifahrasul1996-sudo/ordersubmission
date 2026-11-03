@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, ReactNode, useEffect, useCa
 import { AppState, INITIAL_STATE, ViewType, OrderHistoryItem } from './types';
 import { initFCMStartupReconciliation, showServiceWorkerNotification, syncOrderRemindersToBackend } from './lib/fcm';
 import { useBackgroundSync } from './utils/backgroundSync';
-import { deduplicateHistoryList, smartFetchGoogleScript } from './utils';
+import { deduplicateHistoryList, smartFetchGoogleScript, normalizeUrgencyForSheet } from './utils';
 import { getOrderDueTimestamp } from './utils/orderWindow';
 
 
@@ -780,7 +780,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             customerTemplate || template || '',
             customerBahasa || '',
             customerAddOn || '',
-            customerJenis || '',
+            normalizeUrgencyForSheet(customerJenis),
             customerDue || '',
             orderLink || googleSheetLink || '',
             orderId,

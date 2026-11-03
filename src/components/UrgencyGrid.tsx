@@ -50,9 +50,9 @@ export function UrgencyGrid({ mode }: UrgencyGridProps) {
   }
 
   const configs = {
-    new: [ {id:'super', h:2, l:'Super', s: appLanguage === 'ms' ? '2 Jam' : '2 Hours'}, {id:'urgent', h:24, l:'Urgent', s: appLanguage === 'ms' ? '24 Jam' : '24 Hours'}, {id:'semi', h:48, l:'Semi', s: appLanguage === 'ms' ? '2 Hari' : '2 Days'}, {id:'noturgent', h:72, l: appLanguage === 'ms' ? 'Tak Urgent' : 'Not Urgent', s: appLanguage === 'ms' ? '3 Hari' : '3 Days'} ],
-    surat: [ {id:'super', h:1, l:'Super', s: appLanguage === 'ms' ? '1 Jam' : '1 Hour'}, {id:'urgent', h:24, l:'Urgent', s: appLanguage === 'ms' ? '24 Jam' : '24 Hours'}, {id:'semi', h:48, l:'Semi', s: appLanguage === 'ms' ? '2 Hari' : '2 Days'}, {id:'noturgent', h:72, l: appLanguage === 'ms' ? 'Tak Urgent' : 'Not Urgent', s: appLanguage === 'ms' ? '3 Hari' : '3 Days'} ],
-    'lain-lain': [ {id:'super', h:1, l:'Super', s: appLanguage === 'ms' ? '1 Jam' : '1 Hour'}, {id:'urgent', h:24, l:'Urgent', s: appLanguage === 'ms' ? '24 Jam' : '24 Hours'}, {id:'semi', h:48, l:'Semi', s: appLanguage === 'ms' ? '2 Hari' : '2 Days'}, {id:'noturgent', h:72, l: appLanguage === 'ms' ? 'Tak Urgent' : 'Not Urgent', s: appLanguage === 'ms' ? '3 Hari' : '3 Days'} ]
+    new: [ {id:'super', h:2, l:'Super', s: appLanguage === 'ms' ? '2 Jam' : '2 Hours'}, {id:'urgent', h:24, l:'Urgent', s: appLanguage === 'ms' ? '24 Jam' : '24 Hours'}, {id:'semi', h:48, l:'Semi', s: appLanguage === 'ms' ? '2 Hari' : '2 Days'}, {id:'noturgent', h:72, l: appLanguage === 'ms' ? 'Tidak Urgent' : 'Not Urgent', s: appLanguage === 'ms' ? '3 Hari' : '3 Days'} ],
+    surat: [ {id:'super', h:1, l:'Super', s: appLanguage === 'ms' ? '1 Jam' : '1 Hour'}, {id:'urgent', h:24, l:'Urgent', s: appLanguage === 'ms' ? '24 Jam' : '24 Hours'}, {id:'semi', h:48, l:'Semi', s: appLanguage === 'ms' ? '2 Hari' : '2 Days'}, {id:'noturgent', h:72, l: appLanguage === 'ms' ? 'Tidak Urgent' : 'Not Urgent', s: appLanguage === 'ms' ? '3 Hari' : '3 Days'} ],
+    'lain-lain': [ {id:'super', h:1, l:'Super', s: appLanguage === 'ms' ? '1 Jam' : '1 Hour'}, {id:'urgent', h:24, l:'Urgent', s: appLanguage === 'ms' ? '24 Jam' : '24 Hours'}, {id:'semi', h:48, l:'Semi', s: appLanguage === 'ms' ? '2 Hari' : '2 Days'}, {id:'noturgent', h:72, l: appLanguage === 'ms' ? 'Tidak Urgent' : 'Not Urgent', s: appLanguage === 'ms' ? '3 Hari' : '3 Days'} ]
   };
 
   const options = configs[mode];

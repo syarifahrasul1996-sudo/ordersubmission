@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { RefreshCcw, Save, Check, ExternalLink, LogOut, AlertCircle, ChevronDown } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useAppContext } from '../AppContext';
-import { calculateDeadline, formatPhoneUniversal, parseDateStringToTimestamp, smartFetchGoogleScript } from '../utils';
+import { calculateDeadline, formatPhoneUniversal, parseDateStringToTimestamp, smartFetchGoogleScript, normalizeUrgencyForSheet } from '../utils';
 import { Toast } from '../components/Toast';
 import { SetupHelper } from '../components/SetupHelper';
 import { cn } from '../cn';
@@ -59,11 +59,12 @@ export function CustomerInfoView() {
       }
     }
 
-    let initJenis = '';
-    if (state.urgency === 'noturgent' || state.urgency === 'standard') initJenis = appLanguage === 'ms' ? 'Tak Urgent' : 'Not Urgent';
-    else if (state.urgency === 'urgent') initJenis = 'Urgent';
-    else if (state.urgency === 'super') initJenis = 'Super Urgent';
-    else if (state.urgency === 'semi') initJenis = 'Semi Urgent';
+    let initJenis = 'Tidak Urgent';
+    if (state.customerJenis) {
+      initJenis = normalizeUrgencyForSheet(state.customerJenis);
+    } else if (state.urgency) {
+      initJenis = normalizeUrgencyForSheet(state.urgency);
+    }
 
     const isSuperUrgent = state.urgency === 'super';
     const addonHours = (state.mainType === 'Resume' && !state.isEditMode && isSuperUrgent && state.addons && Array.isArray(state.addons)) ? state.addons.length : 0;
@@ -515,6 +516,7 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
     // Format name and template correctly
     const finalFormattedName = name.trim().replace(/\w\S*/g, (txt) => txt.charAt(0).toUpperCase() + txt.substring(1).toLowerCase());
     const finalFormattedTemplate = template.trim().toUpperCase();
+    const finalJenis = normalizeUrgencyForSheet(jenis);
 
     // Save the new values to global state + history with syncing status
     updateOrderHistoryState({
@@ -527,7 +529,7 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
       customerTemplate: finalFormattedTemplate,
       customerBahasa: bahasa,
       customerAddOn: addOn,
-      customerJenis: jenis,
+      customerJenis: finalJenis,
       customerDue: due,
       dueTimestamp: parsedTimestamp,
       hasNotified: false,
@@ -554,7 +556,7 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
         finalFormattedTemplate || "",
         bahasa || "",
         addOn || "",
-        jenis,
+        finalJenis,
         due,
         link || "",
         finalOrderId || "",
@@ -614,7 +616,7 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
         template: finalFormattedTemplate || "",
         bahasa: bahasa || "",
         addon: addOn || "",
-        jenis: jenis,
+        jenis: finalJenis,
         due: due,
         link: link || "",
         price: price ? price.toString() : ""
@@ -738,14 +740,17 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
     const pMatch = info.match(phoneRegex);
     const uMatch = info.match(userRegex);
 
+    const isPValid = pMatch && pMatch[1]?.trim() && !['-', '--', 'n/a', 'na', 'none', 'tiada', 'nil', 'null'].includes(pMatch[1].trim().toLowerCase());
+    const isUValid = uMatch && uMatch[1]?.trim() && !['-', '--', 'n/a', 'na', 'none', 'tiada', 'nil', 'null'].includes(uMatch[1].trim().toLowerCase());
+
     let extractedPhoneVal = '';
     if (combinedMatch && combinedMatch[1]?.trim()) {
       extractedPhoneVal = combinedMatch[1].trim();
-    } else if (pMatch && pMatch[1]?.trim() && uMatch && uMatch[1]?.trim()) {
+    } else if (isPValid && isUValid) {
       extractedPhoneVal = `${pMatch[1].trim()} (${uMatch[1].trim()})`;
-    } else if (pMatch && pMatch[1]?.trim()) {
+    } else if (isPValid) {
       extractedPhoneVal = pMatch[1].trim();
-    } else if (uMatch && uMatch[1]?.trim()) {
+    } else if (isUValid) {
       extractedPhoneVal = uMatch[1].trim();
     } else {
       const genericMatch = info.match(/(?:No\.?\s*Telefon(?:\s*\/\s*Username)?|Phone(?:\s*Number)?(?:\s*\/\s*Username)?|WhatsApp|Username):\s*(.*)/i);
@@ -755,9 +760,14 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
     }
 
     if (extractedPhoneVal) {
-      const extractedPhone = formatPhoneUniversal(extractedPhoneVal);
-      if (extractedPhone) {
-        setPhone(extractedPhone);
+      const trimmedVal = extractedPhoneVal.trim();
+      if (trimmedVal.startsWith('@')) {
+        setPhone(trimmedVal);
+      } else {
+        const extractedPhone = formatPhoneUniversal(extractedPhoneVal);
+        if (extractedPhone) {
+          setPhone(extractedPhone);
+        }
       }
     }
 
@@ -947,7 +957,7 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
             type="text" 
             value={phone}
             onChange={(e) => setPhone(e.target.value)}
-            onBlur={() => setPhone(formatPhoneUniversal(phone))}
+            onBlur={() => setPhone(phone.trim().startsWith('@') ? phone.trim() : formatPhoneUniversal(phone))}
             placeholder={appLanguage === 'ms' ? '01X-XXX XXXX atau @username' : '01X-XXX XXXX or @username'}
             autoCapitalize="none"
             autoCorrect="off"
@@ -1094,18 +1104,17 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
               }
               return (
                 <select 
-                  value={jenis}
-                  onChange={(e) => setJenis(e.target.value)}
+                  value={normalizeUrgencyForSheet(jenis)}
+                  onChange={(e) => setJenis(normalizeUrgencyForSheet(e.target.value))}
                   className={cn(
                     "w-full h-[46px] bg-surface text-text rounded-xl px-4 font-bold border outline-none focus:ring-2 transition-all appearance-none text-sm",
                     selectColorClass
                   )} 
                 >
-                  <option className="text-text font-normal bg-surface" value="Tak Urgent">{appLanguage === 'ms' ? 'Tak Urgent' : 'Not Urgent'}</option>
+                  <option className="text-text font-normal bg-surface" value="Tidak Urgent">{appLanguage === 'ms' ? 'Tidak Urgent' : 'Tidak Urgent (Not Urgent)'}</option>
                   <option className="text-text font-normal bg-surface" value="Semi Urgent">Semi Urgent</option>
                   <option className="text-text font-normal bg-surface" value="Urgent">Urgent</option>
                   <option className="text-text font-normal bg-surface" value="Super Urgent">Super Urgent</option>
-                  <option className="text-text font-normal bg-surface" value=""></option>
                 </select>
               );
             })()}
