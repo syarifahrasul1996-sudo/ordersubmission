@@ -11,7 +11,10 @@ import {
   ChevronRight,
   Info,
   Layers,
-  HelpCircle
+  HelpCircle,
+  Bell,
+  Smartphone,
+  CheckCircle2
 } from 'lucide-react';
 import { useAppContext } from '../AppContext';
 import { cn } from '../cn';
@@ -179,6 +182,60 @@ export function OthersView() {
               ) : (
                 <span className="text-subtext italic">N/A</span>
               )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Background Push Notifications & PWA Support */}
+      <div className="space-y-2">
+        <h4 className="text-[10px] font-black uppercase tracking-widest text-subtext ml-1.5">
+          {appLanguage === 'ms' ? 'Notifikasi Tanpa Buka Webapp (Latar Belakang)' : 'Background Notifications (When Closed)'}
+        </h4>
+        <div className="bg-surface rounded-2xl border border-gray-100/50 p-4 space-y-3.5 shadow-sm">
+          <div className="flex items-start gap-3">
+            <div className="p-2 bg-primary/10 rounded-xl text-primary shrink-0">
+              <Bell className="w-4 h-4" />
+            </div>
+            <div className="space-y-1">
+              <h5 className="font-bold text-xs text-text">
+                {appLanguage === 'ms' ? 'Bagaimana Notifikasi Berfungsi Semasa Tab Ditutup?' : 'How Notifications Work When App is Closed'}
+              </h5>
+              <p className="text-[11px] text-subtext leading-relaxed">
+                {appLanguage === 'ms'
+                  ? 'Aplikasi ini menggunakan Web Push & Service Worker berdaftar. Pelayan awan menyemak tarikh akhir pesanan setiap 30 saat dan menghantar pemberitahuan terus ke sistem peranti anda.'
+                  : 'This application uses Web Push & background Service Workers. The server continuously checks deadlines every 30 seconds and delivers alerts directly to your OS tray.'}
+              </p>
+            </div>
+          </div>
+
+          <div className="bg-gray-50/60 dark:bg-zinc-900/40 p-3 rounded-xl border border-gray-100/40 space-y-2 text-[11px]">
+            <div className="flex items-start gap-2 text-text">
+              <span className="font-bold text-primary shrink-0">1.</span>
+              <span>
+                <strong>{appLanguage === 'ms' ? 'Aktifkan Notifikasi:' : 'Enable Notifications:'}</strong>{' '}
+                {appLanguage === 'ms' 
+                  ? 'Tekan ikon loceng di bar atas dan pilih "Aktifkan Notifikasi", kemudian pilih "Allow" di pelayar.'
+                  : 'Click the bell icon in the top header and click "Enable Notifications", then allow permissions.'}
+              </span>
+            </div>
+            <div className="flex items-start gap-2 text-text">
+              <span className="font-bold text-primary shrink-0">2.</span>
+              <span>
+                <strong>{appLanguage === 'ms' ? 'Pasang sebagai PWA:' : 'Install as PWA:'}</strong>{' '}
+                {appLanguage === 'ms'
+                  ? 'Pada Chrome/Edge tekan ikon "Install App" di bar alamat. Pada telefon (iOS/Android), tekan menu kongsi dan pilih "Add to Home Screen".'
+                  : 'In Chrome/Edge click "Install App" in the address bar. On mobile (iOS/Android), tap Share and choose "Add to Home Screen".'}
+              </span>
+            </div>
+            <div className="flex items-start gap-2 text-text">
+              <span className="font-bold text-primary shrink-0">3.</span>
+              <span>
+                <strong>{appLanguage === 'ms' ? 'Kebenaran Sistem OS:' : 'OS System Settings:'}</strong>{' '}
+                {appLanguage === 'ms'
+                  ? 'Pastikan notifikasi bagi pelayar (Chrome/Safari) tidak disekat dalam Tetapan Notifikasi Windows/macOS/Android/iOS.'
+                  : 'Ensure notifications for your browser are not muted in your Windows/macOS/Android/iOS Notification Settings.'}
+              </span>
             </div>
           </div>
         </div>

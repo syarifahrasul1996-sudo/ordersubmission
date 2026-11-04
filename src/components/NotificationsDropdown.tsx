@@ -22,6 +22,7 @@ import {
   getCurrentFid, 
   enableFCMNotifications, 
   sendTestFCMNotification,
+  showServiceWorkerNotification,
   FCMStatus 
 } from '../lib/fcm';
 import { cn } from '../cn';
@@ -167,14 +168,31 @@ export function NotificationsDropdown() {
       setTestResult({
         success: true,
         message: appLanguage === 'ms'
-          ? 'Notifikasi ujian berjaya dihantar! Sila semak dulang notifikasi sistem anda.'
-          : 'Test notification sent! Check your system notification banner/tray.'
+          ? 'Notifikasi ujian berjaya dihantar oleh pelayan FCM! Sila semak dulang notifikasi sistem anda.'
+          : 'Test notification sent by FCM server! Check your system notification banner/tray.'
       });
     } else {
-      setTestResult({
-        success: false,
-        message: res.error || 'Failed to send test notification.'
+      // If server FCM API returned an error (e.g. missing GCP IAM permission on server side),
+      // also fire a local ServiceWorker notification so user verifies their device/browser notification works!
+      const swTriggered = await showServiceWorkerNotification(title, {
+        body: (appLanguage === 'ms' ? '[Ujian Peranti] ' : '[Device Test] ') + body,
+        icon: 'https://i.imgur.com/49kNDoe.png',
+        tag: 'fcm_test_sw_direct',
       });
+
+      if (swTriggered) {
+        setTestResult({
+          success: true,
+          message: appLanguage === 'ms'
+            ? 'Notifikasi peranti berjaya dipaparkan melalui Service Worker! (Nota pelayan awan: ' + (res.error || 'memerlukan kebenaran Firebase Cloud Messaging API di GCP') + ')'
+            : 'Device notification successfully displayed via Service Worker! (Cloud notice: ' + (res.error || 'requires Firebase Cloud Messaging API permission in GCP') + ')'
+        });
+      } else {
+        setTestResult({
+          success: false,
+          message: res.error || (appLanguage === 'ms' ? 'Gagal menghantar ujian notifikasi.' : 'Failed to send test notification.')
+        });
+      }
     }
   };
 
@@ -505,6 +523,27 @@ export function NotificationsDropdown() {
                   )}
                 </div>
               )}
+
+              {/* How to receive notifications when app is closed guide */}
+              <details className="text-[10px] text-subtext bg-gray-50 dark:bg-zinc-900/60 p-2 rounded-xl border border-gray-100 dark:border-zinc-800">
+                <summary className="font-bold text-text cursor-pointer hover:text-primary transition-colors flex items-center justify-between">
+                  <span>{appLanguage === 'ms' ? '💡 Cara terima notifikasi tanpa buka webapp' : '💡 How to receive notifications when closed'}</span>
+                </summary>
+                <div className="pt-2 space-y-1.5 leading-relaxed text-subtext border-t border-gray-100 dark:border-zinc-800 mt-1.5">
+                  <p>
+                    <strong className="text-text">1. {appLanguage === 'ms' ? 'Aktifkan Notifikasi:' : 'Enable Notifications:'}</strong> {appLanguage === 'ms' ? 'Klik butang "Aktifkan Notifikasi" di atas dan pilih "Allow".' : 'Click "Enable Notifications" above and allow permissions in your browser.'}
+                  </p>
+                  <p>
+                    <strong className="text-text">2. {appLanguage === 'ms' ? 'Pasang App (PWA):' : 'Install PWA:'}</strong> {appLanguage === 'ms' ? 'Pada telefon/komputer, pilih "Install app" atau "Add to Home screen" supaya Service Worker kekal aktif di latar belakang sistem.' : 'Choose "Install app" or "Add to Home Screen" so the Service Worker stays active in your OS.'}
+                  </p>
+                  <p>
+                    <strong className="text-text">3. {appLanguage === 'ms' ? 'Tetapan Sistem Peranti:' : 'Device System Settings:'}</strong> {appLanguage === 'ms' ? 'Pastikan kebenaran notifikasi pelayar dibenarkan dalam Settings Windows/Mac/Android/iOS anda.' : 'Ensure browser/app notifications are enabled in your OS system settings.'}
+                  </p>
+                  <p className="text-[9px] opacity-80 italic">
+                    {appLanguage === 'ms' ? '⚡ Pelayan automatik menyemak tarikh akhir pesanan setiap 30 saat dan menghantar notifikasi push latar belakang terus ke peranti anda.' : '⚡ The server checks order deadlines every 30 seconds and delivers push notifications in the background to your device.'}
+                  </p>
+                </div>
+              </details>
             </div>
 
             {/* List of notifications */}

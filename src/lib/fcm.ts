@@ -564,14 +564,23 @@ export async function sendTestFCMNotification(
       }),
     });
 
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.success) {
-      const errMsg = data.error || `Server ralat (${res.status})`;
-      console.error('[FCM] Backend test notification failed:', res.status, errMsg, data.code);
+    let data: any = {};
+    try {
+      data = await res.json();
+    } catch {
+      data = {};
+    }
+
+    const isSuccess = Boolean(data && (data.success === true || data.status === 'ok' || data.messageId));
+
+    if (!res.ok || !isSuccess) {
+      const errMsg = data?.error || data?.message || (res.status === 200 ? 'Pelayan tidak mengesahkan penghantaran notifikasi.' : `Server ralat (${res.status})`);
+      const errCode = data?.code || (res.status === 200 ? 'UNCONFIRMED_DELIVERY' : 'SERVER_ERROR');
+      console.warn('[FCM] Backend test notification returned unconfirmed status:', res.status, errMsg, errCode);
       return {
         success: false,
         error: errMsg,
-        code: data.code || 'SERVER_ERROR',
+        code: errCode,
       };
     }
 
