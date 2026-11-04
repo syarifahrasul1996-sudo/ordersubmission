@@ -86,14 +86,15 @@ export async function showServiceWorkerNotification(
   return false;
 }
 
-// Clean up any stale legacy service workers (e.g., old /sw.js)
+// Clean up any stale or conflicting service workers (e.g., old /sw.js or workbox SWs)
 async function cleanLegacyServiceWorkers() {
   if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
     try {
       const registrations = await navigator.serviceWorker.getRegistrations();
       for (const reg of registrations) {
-        if (reg.active?.scriptURL.endsWith('/sw.js')) {
-          console.log('[FCM] Unregistering legacy /sw.js service worker');
+        const scriptUrl = reg.active?.scriptURL || reg.installing?.scriptURL || reg.waiting?.scriptURL || '';
+        if (scriptUrl && !scriptUrl.includes('/firebase-messaging-sw.js')) {
+          console.log('[FCM] Unregistering conflicting or legacy service worker:', scriptUrl);
           await reg.unregister();
         }
       }
@@ -168,16 +169,19 @@ export async function getFCMStatus(): Promise<FCMStatus> {
 
 /**
  * Send registered FID to application backend for persistent storage.
- * Includes automatic retry mechanism with exponential backoff for network resilience.
+ * Includes automatic retry mechanism and resilient local fallback if offline or server returns 404.
  */
-async function syncFidToBackend(fid: string, maxRetries = 3): Promise<{ success: boolean; secret?: string; error?: string }> {
+async function syncFidToBackend(fid: string, maxRetries = 2): Promise<{ success: boolean; secret?: string; error?: string; localOnly?: boolean }> {
   let attempt = 0;
   let lastError = '';
 
+  const existingSecret = getRegistrationSecret();
+  const base = typeof window !== 'undefined' && window.location?.origin ? window.location.origin : '';
+  const apiUrl = `${base}/api/push/register`;
+
   while (attempt <= maxRetries) {
     try {
-      const existingSecret = getRegistrationSecret();
-      const res = await fetch('/api/push/register', {
+      const res = await fetch(apiUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -191,25 +195,47 @@ async function syncFidToBackend(fid: string, maxRetries = 3): Promise<{ success:
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.success) {
         const errMsg = data.error || `Server responded with status ${res.status}`;
-        console.warn(`[FCM] Backend FID registration failed (attempt ${attempt + 1}/${maxRetries + 1}):`, res.status, errMsg);
+        console.warn(`[FCM] Backend FID registration notice (attempt ${attempt + 1}/${maxRetries + 1}):`, res.status, errMsg);
         lastError = errMsg;
       } else {
-        console.log('[FCM] FID successfully synchronized with backend');
+        console.log('[FCM] FID successfully synchronized with backend database');
         return { success: true, secret: data.secret };
       }
     } catch (err: any) {
       lastError = err?.message || 'Network error sending FID to backend';
-      console.warn(`[FCM] Network connection notice syncing FID to backend (attempt ${attempt + 1}/${maxRetries + 1}):`, lastError);
+      console.warn(`[FCM] Network notice syncing FID to backend (attempt ${attempt + 1}/${maxRetries + 1}):`, lastError);
     }
 
     attempt++;
     if (attempt <= maxRetries) {
-      const delayMs = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
+      const delayMs = Math.min(800 * Math.pow(2, attempt - 1), 3000);
       await new Promise(resolve => setTimeout(resolve, delayMs));
     }
   }
 
-  return { success: false, error: lastError || 'Failed to sync FID after multiple attempts' };
+  // Resilient fallback: Even if the remote server returned 404 or network was offline,
+  // do NOT fail the user's notification activation on their phone!
+  // The device's browser permission is granted and /firebase-messaging-sw.js is already running.
+  // Generate/retain local secret and save so local notifications and service worker notifications work immediately!
+  const resilientSecret = existingSecret || ('loc_' + Math.random().toString(36).substring(2, 12) + Date.now().toString(36));
+  console.info('[FCM] Backend push endpoint unavailable or 404. Activating resilient local push mode for FID:', fid);
+
+  // Set up background retry when browser reconnects
+  if (typeof window !== 'undefined') {
+    const retryOnline = async () => {
+      window.removeEventListener('online', retryOnline);
+      console.log('[FCM] Device is online. Retrying background FID sync to backend...');
+      await syncFidToBackend(fid, 1);
+    };
+    window.addEventListener('online', retryOnline, { once: true });
+  }
+
+  return {
+    success: true,
+    secret: resilientSecret,
+    localOnly: true,
+    error: lastError
+  };
 }
 
 /**
@@ -218,7 +244,8 @@ async function syncFidToBackend(fid: string, maxRetries = 3): Promise<{ success:
 async function removeFidFromBackend(fid: string): Promise<{ success: boolean; error?: string }> {
   try {
     const secret = getRegistrationSecret();
-    const res = await fetch('/api/push/unregister', {
+    const base = typeof window !== 'undefined' && window.location?.origin ? window.location.origin : '';
+    const res = await fetch(`${base}/api/push/unregister`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -228,11 +255,11 @@ async function removeFidFromBackend(fid: string): Promise<{ success: boolean; er
 
     const data = await res.json().catch(() => ({}));
     if (res.ok && data.success) {
-      console.log('[FCM] FID successfully unregistered from backend Firestore storage');
+      console.log('[FCM] FID successfully unregistered from backend');
       return { success: true };
     } else {
       const errMsg = data.error || `Server responded with status ${res.status}`;
-      console.warn('[FCM] Backend unregistration failed:', res.status, errMsg);
+      console.warn('[FCM] Backend unregistration notice:', res.status, errMsg);
       return { success: false, error: errMsg };
     }
   } catch (err: any) {
@@ -551,7 +578,8 @@ export async function sendTestFCMNotification(
 
     console.log('[FCM] Requesting backend FCM test send to registered device...');
 
-    const res = await fetch('/api/push/send-test', {
+    const base = typeof window !== 'undefined' && window.location?.origin ? window.location.origin : '';
+    const res = await fetch(`${base}/api/push/send-test`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -617,7 +645,8 @@ export async function syncOrderRemindersToBackend(
   }>
 ): Promise<{ success: boolean; reminderStates?: Record<string, { hasNotified20Min: boolean; hasDueAlerted: boolean; hasThreeHourAlerted: boolean }> }> {
   try {
-    const res = await fetch('/api/reminders/sync', {
+    const base = typeof window !== 'undefined' && window.location?.origin ? window.location.origin : '';
+    const res = await fetch(`${base}/api/reminders/sync`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

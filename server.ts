@@ -49,6 +49,17 @@ async function startServer() {
 
   app.use(express.json({ limit: "5mb" }));
 
+  // Support CORS and preflight requests for mobile clients, PWA, and shared preview URLs
+  app.use((req, res, next) => {
+    res.header("Access-Control-Allow-Origin", "*");
+    res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, HEAD");
+    res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
+    if (req.method === "OPTIONS") {
+      return res.sendStatus(200);
+    }
+    next();
+  });
+
   // Initialize Firebase Admin SDK (singleton)
   let adminApp: App;
   if (!getApps().length) {
@@ -197,8 +208,28 @@ async function startServer() {
   // FCM Push Notification Endpoints
   // =========================================================================
 
+  // 0. Diagnostic status endpoint
+  app.get(["/api/push/status", "/api/push/status/"], async (_req, res) => {
+    const active = await getAllActiveInstallations();
+    return res.json({
+      status: "ok",
+      activeInstallationsCount: active.length,
+      firestoreAvailable,
+      fcmMessagingAvailable,
+      serverTime: new Date().toISOString()
+    });
+  });
+
   // 1. Register Firebase Installation ID (FID) atomically
-  app.post("/api/push/register", async (req, res) => {
+  app.get(["/api/push/register", "/api/push/register/"], (_req, res) => {
+    return res.json({
+      success: true,
+      status: "ready",
+      message: "Push registration endpoint is active. Send POST with { fid, secret? } to register device."
+    });
+  });
+
+  app.post(["/api/push/register", "/api/push/register/"], async (req, res) => {
     try {
       const { fid, secret } = req.body;
 
@@ -258,7 +289,7 @@ async function startServer() {
   });
 
   // 2. Unregister Firebase Installation ID (FID)
-  app.post("/api/push/unregister", async (req, res) => {
+  app.post(["/api/push/unregister", "/api/push/unregister/"], async (req, res) => {
     try {
       const { fid, secret } = req.body;
       if (!fid || typeof fid !== "string" || fid.trim() === "") {
@@ -305,7 +336,7 @@ async function startServer() {
   });
 
   // 3. Send Test FCM Notification with strict installation ownership verification & real error handling
-  app.post("/api/push/send-test", async (req, res) => {
+  app.post(["/api/push/send-test", "/api/push/send-test/"], async (req, res) => {
     try {
       const { fid, secret, title, body } = req.body;
 
@@ -424,7 +455,7 @@ async function startServer() {
   // 4. Order Reminder Synchronization & Scheduled Push Dispatch
   // =========================================================================
 
-  app.post("/api/reminders/sync", async (req, res) => {
+  app.post(["/api/reminders/sync", "/api/reminders/sync/"], async (req, res) => {
     try {
       const { orders } = req.body;
       if (!Array.isArray(orders)) {
