@@ -17,12 +17,77 @@ export const FCM_VAPID_KEY = 'BCtrN3QSvJvQjYj0AQN8nqMcRxeIiBkDoIcyDU7x4bcOgXY_CZ
 
 export type FCMStatus = 
   | 'unsupported' 
+  | 'ios-requires-pwa'
   | 'permission-default' 
   | 'permission-denied' 
   | 'permission-granted' 
   | 'registering' 
   | 'enabled' 
   | 'failed';
+
+/**
+ * Check if current device is iOS (iPhone/iPad/iPod).
+ */
+export function isIOS(): boolean {
+  if (typeof window === 'undefined') return false;
+  const ua = window.navigator.userAgent;
+  return (
+    /iPad|iPhone|iPod/.test(ua) ||
+    (window.navigator.platform === 'MacIntel' && window.navigator.maxTouchPoints > 1)
+  );
+}
+
+/**
+ * Check if the web app is running in Standalone PWA mode (added to Home Screen).
+ */
+export function isStandaloneMode(): boolean {
+  if (typeof window === 'undefined') return false;
+  return (
+    window.matchMedia('(display-mode: standalone)').matches ||
+    (window.navigator as any).standalone === true
+  );
+}
+
+/**
+ * Synthesizes a clean audio alert chime using Web Audio API.
+ * Guaranteed zero network dependencies and works on mobile/desktop browsers upon interaction.
+ */
+export function playAlertChime(): void {
+  try {
+    if (typeof window === 'undefined') return;
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioContextClass) return;
+    const ctx = new AudioContextClass();
+    const now = ctx.currentTime;
+    
+    // Tone 1: D5 -> A5 (warm chime)
+    const osc1 = ctx.createOscillator();
+    const gain1 = ctx.createGain();
+    osc1.type = 'sine';
+    osc1.frequency.setValueAtTime(587.33, now);
+    osc1.frequency.exponentialRampToValueAtTime(880, now + 0.12);
+    gain1.gain.setValueAtTime(0.3, now);
+    gain1.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+    osc1.connect(gain1);
+    gain1.connect(ctx.destination);
+    osc1.start(now);
+    osc1.stop(now + 0.3);
+
+    // Tone 2: D6 (bright confirmation)
+    const osc2 = ctx.createOscillator();
+    const gain2 = ctx.createGain();
+    osc2.type = 'sine';
+    osc2.frequency.setValueAtTime(1174.66, now + 0.12);
+    gain2.gain.setValueAtTime(0.35, now + 0.12);
+    gain2.gain.exponentialRampToValueAtTime(0.01, now + 0.55);
+    osc2.connect(gain2);
+    gain2.connect(ctx.destination);
+    osc2.start(now + 0.12);
+    osc2.stop(now + 0.55);
+  } catch (e) {
+    console.warn('[FCM] Web Audio chime play notice:', e);
+  }
+}
 
 let messagingInstance: Messaging | null = null;
 let currentRegisteredFid: string | null = null;
@@ -136,8 +201,16 @@ export function getRegistrationSecret(): string | null {
 export async function getFCMStatus(): Promise<FCMStatus> {
   if (typeof window === 'undefined') return 'unsupported';
   
+  // On iOS devices, Apple strictly enables Web Push only when installed as a Standalone PWA to the Home Screen (iOS 16.4+)
+  if (isIOS() && !isStandaloneMode()) {
+    return 'ios-requires-pwa';
+  }
+
   const supported = await isSupported().catch(() => false);
   if (!supported || !('Notification' in window) || !('serviceWorker' in navigator)) {
+    if (isIOS()) {
+      return 'ios-requires-pwa';
+    }
     return 'unsupported';
   }
 
@@ -371,15 +444,39 @@ function attachSharedFCMListeners(
 /**
  * Explicit user-triggered registration for Firebase Cloud Messaging using FID
  */
-export async function enableFCMNotifications(onFidReceived?: (fid: string) => void): Promise<{ success: boolean; fid: string | null; error?: string }> {
+export async function enableFCMNotifications(onFidReceived?: (fid: string) => void): Promise<{ 
+  success: boolean; 
+  fid: string | null; 
+  error?: string;
+  isIOSRequiresPWA?: boolean;
+}> {
   if (typeof window === 'undefined') {
     return { success: false, fid: null, error: 'Window not defined' };
+  }
+
+  // Prerequisite check for iOS devices (iPhone / iPad)
+  if (isIOS() && !isStandaloneMode()) {
+    console.info('[FCM] iOS Safari browser detected without standalone PWA mode');
+    return {
+      success: false,
+      fid: null,
+      isIOSRequiresPWA: true,
+      error: 'Pada iPhone/iPad, Apple memerlukan aplikasi ini ditambah ke Skrin Utama (Add to Home Screen) dahulu untuk mengaktifkan notifikasi push.'
+    };
   }
 
   try {
     const supported = await isSupported().catch(() => false);
     if (!supported || !('Notification' in window) || !('serviceWorker' in navigator)) {
       console.warn('[FCM] Browser does not support Firebase Cloud Messaging');
+      if (isIOS()) {
+        return {
+          success: false,
+          fid: null,
+          isIOSRequiresPWA: true,
+          error: 'Pada iPhone/iPad, Apple memerlukan aplikasi ini ditambah ke Skrin Utama (Add to Home Screen) dahulu untuk mengaktifkan notifikasi push.'
+        };
+      }
       return { success: false, fid: null, error: 'Pelayar ini tidak menyokong Web Push / Notifications.' };
     }
 

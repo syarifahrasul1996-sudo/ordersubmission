@@ -13,7 +13,12 @@ import {
   ExternalLink,
   Send,
   Loader2,
-  Copy
+  Copy,
+  Smartphone,
+  Share2,
+  PlusSquare,
+  X,
+  Info
 } from 'lucide-react';
 import { useAppContext } from '../AppContext';
 import { getOrderDueTimestamp } from '../utils/orderWindow';
@@ -23,6 +28,9 @@ import {
   enableFCMNotifications, 
   sendTestFCMNotification,
   showServiceWorkerNotification,
+  isIOS,
+  isStandaloneMode,
+  playAlertChime,
   FCMStatus 
 } from '../lib/fcm';
 import { cn } from '../cn';
@@ -60,6 +68,11 @@ export function NotificationsDropdown() {
   const [testSending, setTestSending] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [regError, setRegError] = useState<string | null>(null);
+  const [showIOSModal, setShowIOSModal] = useState(false);
+  const [audioTestPlayed, setAudioTestPlayed] = useState(false);
+
+  const isAppleDevice = useMemo(() => isIOS(), []);
+  const isPWA = useMemo(() => isStandaloneMode(), []);
 
   // Read notification IDs stored in localStorage
   const [readIds, setReadIds] = useState<string[]>(() => {
@@ -99,6 +112,12 @@ export function NotificationsDropdown() {
   }, [isOpen]);
 
   const handleEnableNotifications = async () => {
+    // If on iOS and not yet running in standalone mode, show iOS guide directly
+    if (isAppleDevice && !isPWA) {
+      setShowIOSModal(true);
+      return;
+    }
+
     setIsRegistering(true);
     setTestResult(null);
     setRegError(null);
@@ -113,7 +132,10 @@ export function NotificationsDropdown() {
       setRegError(null);
     } else {
       setRegisteredFid(null);
-      if (result.error && (result.error.includes('denied') || result.error.includes('blocked'))) {
+      if (result.isIOSRequiresPWA) {
+        setShowIOSModal(true);
+        setRegError(null);
+      } else if (result.error && (result.error.includes('denied') || result.error.includes('blocked'))) {
         setFcmStatus('permission-denied');
         setRegError(appLanguage === 'ms' ? 'Kebenaran notifikasi disekat di pelayar.' : 'Notification permission was denied.');
       } else {
@@ -121,6 +143,12 @@ export function NotificationsDropdown() {
         setRegError(result.error || (appLanguage === 'ms' ? 'Pendaftaran notifikasi gagal.' : 'Registration failed.'));
       }
     }
+  };
+
+  const handleTestAudioChime = () => {
+    playAlertChime();
+    setAudioTestPlayed(true);
+    setTimeout(() => setAudioTestPlayed(false), 2500);
   };
 
   const handleCopyFid = async () => {
@@ -406,29 +434,92 @@ export function NotificationsDropdown() {
                     ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
                     : fcmStatus === 'permission-denied'
                       ? "bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20"
-                      : "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20"
+                      : fcmStatus === 'ios-requires-pwa' || (isAppleDevice && !isPWA)
+                        ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20"
+                        : "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20"
                 )}>
                   {fcmStatus === 'enabled' 
                     ? (appLanguage === 'ms' ? 'Aktif' : 'Active') 
                     : fcmStatus === 'permission-denied' 
                       ? (appLanguage === 'ms' ? 'Disekat' : 'Denied') 
-                      : (appLanguage === 'ms' ? 'Sedia Diaktifkan' : 'Ready')}
+                      : fcmStatus === 'ios-requires-pwa' || (isAppleDevice && !isPWA)
+                        ? (appLanguage === 'ms' ? 'Perlu Skrin Utama' : 'PWA Required')
+                        : (appLanguage === 'ms' ? 'Sedia Diaktifkan' : 'Ready')}
                 </span>
               </div>
 
               {/* State 1: Permission Not Granted / Enable Action */}
               {fcmStatus !== 'enabled' && (
                 <div className="space-y-2 pt-1">
-                  <p className="text-[11px] text-subtext leading-relaxed">
-                    {fcmStatus === 'permission-denied'
-                      ? (appLanguage === 'ms'
-                          ? 'Kebenaran notifikasi telah disekat pada pelayar. Sila buka tetapan URL (ikon kunci/slider) di bar pelayar anda dan pilih "Allow Notifications".'
-                          : 'Notification permission is blocked. Please open your browser address bar settings and allow notifications.')
-                      : (appLanguage === 'ms'
-                          ? 'Aktifkan notifikasi Firebase untuk menerima peringatan pesanan secara langsung di latar belakang.'
-                          : 'Enable Firebase Cloud Messaging to receive push notifications in the background.')}
-                  </p>
+                  {/* iOS Safari Browser Tab Guidance */}
+                  {isAppleDevice && !isPWA ? (
+                    <div className="p-2.5 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/40 rounded-xl space-y-2">
+                      <div className="flex items-start space-x-2">
+                        <div className="p-1.5 bg-amber-500/10 text-amber-600 dark:text-amber-400 rounded-lg shrink-0 mt-0.5">
+                          <Smartphone className="w-4 h-4" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center space-x-1.5">
+                            <span className="text-xs font-bold text-amber-900 dark:text-amber-200">
+                              {appLanguage === 'ms' ? 'Peranti iPhone / iPad' : 'iPhone / iPad Device'}
+                            </span>
+                            <span className="text-[9px] font-semibold bg-amber-200/60 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300 px-1.5 py-0.2 rounded">
+                              iOS 16.4+
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-amber-800/90 dark:text-amber-300/80 leading-relaxed mt-0.5">
+                            {appLanguage === 'ms'
+                              ? 'Apple memerlukan aplikasi ini ditambah ke Skrin Utama (Add to Home Screen) dahulu untuk menerima notifikasi push.'
+                              : 'Apple requires this web app to be added to Home Screen before Web Push notifications can be activated.'}
+                          </p>
+                        </div>
+                      </div>
 
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 pt-0.5">
+                        <button
+                          type="button"
+                          onClick={() => setShowIOSModal(true)}
+                          className="w-full bg-amber-600 hover:bg-amber-700 active:scale-95 text-white font-bold text-xs py-2 px-2.5 rounded-lg shadow-sm transition-all flex items-center justify-center space-x-1.5 cursor-pointer"
+                        >
+                          <Share2 className="w-3.5 h-3.5" />
+                          <span>{appLanguage === 'ms' ? 'Panduan Pasang iPhone' : 'iPhone Install Guide'}</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={handleTestAudioChime}
+                          className="w-full bg-white dark:bg-zinc-800 hover:bg-gray-100 dark:hover:bg-zinc-700 text-text border border-gray-200 dark:border-zinc-700 font-bold text-xs py-2 px-2.5 rounded-lg active:scale-95 transition-all flex items-center justify-center space-x-1.5 cursor-pointer"
+                        >
+                          <Volume2 className="w-3.5 h-3.5 text-primary" />
+                          <span>{audioTestPlayed ? (appLanguage === 'ms' ? 'Bunyi Berjaya!' : 'Chime Played!') : (appLanguage === 'ms' ? 'Uji Bunyi Peringatan' : 'Test Sound Alert')}</span>
+                        </button>
+                      </div>
+                    </div>
+                  ) : isAppleDevice && isPWA ? (
+                    <div className="p-2.5 bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800/40 rounded-xl space-y-1">
+                      <div className="flex items-center space-x-1.5 text-emerald-700 dark:text-emerald-300 text-xs font-bold">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                        <span>{appLanguage === 'ms' ? 'Dibuka dari Skrin Utama iOS' : 'Running from iOS Home Screen'}</span>
+                      </div>
+                      <p className="text-[11px] text-emerald-800/80 dark:text-emerald-300/80 leading-relaxed">
+                        {appLanguage === 'ms'
+                          ? 'Tekan butang di bawah untuk membenarkan notifikasi ke iPhone anda.'
+                          : 'Tap the button below to grant notification permission to your iPhone.'}
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="text-[11px] text-subtext leading-relaxed">
+                      {fcmStatus === 'permission-denied'
+                        ? (appLanguage === 'ms'
+                            ? 'Kebenaran notifikasi telah disekat pada pelayar. Sila buka tetapan URL di bar pelayar anda dan pilih "Allow Notifications".'
+                            : 'Notification permission is blocked. Please open your browser address bar settings and allow notifications.')
+                        : (appLanguage === 'ms'
+                            ? 'Aktifkan notifikasi Firebase untuk menerima peringatan pesanan secara langsung di latar belakang.'
+                            : 'Enable Firebase Cloud Messaging to receive push notifications in the background.')}
+                    </p>
+                  )}
+
+                  {/* Activation Action Row (Shown for PWA, Android, Desktop, or if user wants to retry) */}
                   <div className="flex items-center space-x-2">
                     <button
                       onClick={handleEnableNotifications}
@@ -443,7 +534,11 @@ export function NotificationsDropdown() {
                       ) : (
                         <>
                           <Volume2 className="w-3.5 h-3.5" />
-                          <span>{appLanguage === 'ms' ? 'Aktifkan Notifikasi' : 'Enable Notifications'}</span>
+                          <span>
+                            {isAppleDevice && !isPWA
+                              ? (appLanguage === 'ms' ? 'Aktifkan di iPhone' : 'Enable on iPhone')
+                              : (appLanguage === 'ms' ? 'Aktifkan Notifikasi' : 'Enable Notifications')}
+                          </span>
                         </>
                       )}
                     </button>
@@ -461,8 +556,20 @@ export function NotificationsDropdown() {
                   </div>
 
                   {regError && (
-                    <div className="p-2 rounded-lg text-[10px] leading-tight font-medium bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800/40">
-                      {regError}
+                    <div className="p-2.5 rounded-lg text-[10px] leading-tight font-medium bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800/40 space-y-1.5">
+                      <div className="flex items-start space-x-1.5">
+                        <AlertCircle className="w-3.5 h-3.5 text-red-500 shrink-0 mt-0.5" />
+                        <span>{regError}</span>
+                      </div>
+                      {isAppleDevice && (
+                        <button
+                          type="button"
+                          onClick={() => setShowIOSModal(true)}
+                          className="font-bold underline text-amber-700 dark:text-amber-300 block text-[10px] cursor-pointer"
+                        >
+                          {appLanguage === 'ms' ? '📱 Buka Panduan Tambah ke Skrin Utama iPhone →' : '📱 Open iPhone Home Screen Setup Guide →'}
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
@@ -534,7 +641,7 @@ export function NotificationsDropdown() {
                     <strong className="text-text">1. {appLanguage === 'ms' ? 'Aktifkan Notifikasi:' : 'Enable Notifications:'}</strong> {appLanguage === 'ms' ? 'Klik butang "Aktifkan Notifikasi" di atas dan pilih "Allow".' : 'Click "Enable Notifications" above and allow permissions in your browser.'}
                   </p>
                   <p>
-                    <strong className="text-text">2. {appLanguage === 'ms' ? 'Pasang App (PWA):' : 'Install PWA:'}</strong> {appLanguage === 'ms' ? 'Pada telefon/komputer, pilih "Install app" atau "Add to Home screen" supaya Service Worker kekal aktif di latar belakang sistem.' : 'Choose "Install app" or "Add to Home Screen" so the Service Worker stays active in your OS.'}
+                    <strong className="text-text">2. {appLanguage === 'ms' ? 'iPhone & PWA:' : 'iPhone & PWA:'}</strong> {appLanguage === 'ms' ? 'Pada iPhone/iPad, Apple mewajibkan aplikasi ditambah ke Skrin Utama ("Add to Home Screen") dahulu untuk mengaktifkan Web Push (iOS 16.4+).' : 'On iPhone/iPad, Apple requires "Add to Home Screen" first to enable Web Push (iOS 16.4+).'}
                   </p>
                   <p>
                     <strong className="text-text">3. {appLanguage === 'ms' ? 'Tetapan Sistem Peranti:' : 'Device System Settings:'}</strong> {appLanguage === 'ms' ? 'Pastikan kebenaran notifikasi pelayar dibenarkan dalam Settings Windows/Mac/Android/iOS anda.' : 'Ensure browser/app notifications are enabled in your OS system settings.'}
@@ -604,6 +711,136 @@ export function NotificationsDropdown() {
                 </p>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* iOS PWA Step-by-Step Installation Modal */}
+      {showIOSModal && (
+        <div 
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in"
+          onClick={() => setShowIOSModal(false)}
+        >
+          <div 
+            className="w-full max-w-sm sm:max-w-md bg-white dark:bg-zinc-900 border border-gray-100 dark:border-zinc-800 rounded-3xl shadow-2xl p-5 space-y-4 text-left animate-scale-up"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-gray-100 dark:border-zinc-800 pb-3">
+              <div className="flex items-center space-x-2.5">
+                <div className="w-9 h-9 rounded-2xl bg-amber-500/10 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
+                  <Smartphone className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-text">
+                    {appLanguage === 'ms' ? 'Panduan Notifikasi iPhone / iPad' : 'iPhone / iPad Notification Guide'}
+                  </h3>
+                  <p className="text-[11px] text-subtext font-medium">
+                    {appLanguage === 'ms' ? 'Syarat Web Push Apple (iOS 16.4+)' : 'Apple Web Push Requirement (iOS 16.4+)'}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowIOSModal(false)}
+                className="p-1.5 rounded-full hover:bg-gray-100 dark:hover:bg-zinc-800 text-subtext hover:text-text transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Why Explanation */}
+            <div className="p-3 bg-blue-50 dark:bg-blue-950/30 rounded-2xl border border-blue-100 dark:border-blue-900/40 text-[11px] text-blue-900 dark:text-blue-200 leading-relaxed">
+              <strong>{appLanguage === 'ms' ? 'Mengapa perlu langkah ini?' : 'Why is this step required?'}</strong>
+              <p className="mt-0.5 opacity-90">
+                {appLanguage === 'ms'
+                  ? 'Pada iOS, Apple menyekat notifikasi push dalam tab pelayar Safari biasa. Notifikasi HANYA dibenarkan selepas aplikasi ini ditambah ke Skrin Utama.'
+                  : 'On iOS, Apple disables push notifications inside standard Safari tabs. Push is ONLY permitted once the web app is added to your Home Screen.'}
+              </p>
+            </div>
+
+            {/* Step by step */}
+            <div className="space-y-2.5 pt-1">
+              {/* Step 1 */}
+              <div className="flex items-start space-x-3 p-2.5 rounded-2xl bg-gray-50 dark:bg-zinc-800/50 border border-gray-100 dark:border-zinc-800">
+                <div className="w-7 h-7 rounded-full bg-primary text-white font-black text-xs flex items-center justify-center shrink-0 mt-0.5 shadow-sm">
+                  1
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center space-x-1.5">
+                    <span className="text-xs font-bold text-text">
+                      {appLanguage === 'ms' ? 'Tekan Butang Kongsi (Share)' : 'Tap the Share Button'}
+                    </span>
+                    <Share2 className="w-3.5 h-3.5 text-primary" />
+                  </div>
+                  <p className="text-[11px] text-subtext mt-0.5 leading-snug">
+                    {appLanguage === 'ms'
+                      ? 'Di bar bawah pelayar Safari iPhone anda, tekan butang Kongsi (ikon segi empat dengan anak panah ke atas ⎋).'
+                      : 'In Safari bottom navigation toolbar, tap the Share icon (square with upward arrow ⎋).'}
+                  </p>
+                </div>
+              </div>
+
+              {/* Step 2 */}
+              <div className="flex items-start space-x-3 p-2.5 rounded-2xl bg-gray-50 dark:bg-zinc-800/50 border border-gray-100 dark:border-zinc-800">
+                <div className="w-7 h-7 rounded-full bg-primary text-white font-black text-xs flex items-center justify-center shrink-0 mt-0.5 shadow-sm">
+                  2
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center space-x-1.5">
+                    <span className="text-xs font-bold text-text">
+                      {appLanguage === 'ms' ? 'Pilih "Tambah ke Skrin Utama"' : 'Select "Add to Home Screen"'}
+                    </span>
+                    <PlusSquare className="w-3.5 h-3.5 text-emerald-500" />
+                  </div>
+                  <p className="text-[11px] text-subtext mt-0.5 leading-snug">
+                    {appLanguage === 'ms'
+                      ? 'Skrol menu ke bawah, tekan "Tambah ke Skrin Utama" (Add to Home Screen ➕), kemudian tekan "Tambah" (Add) di sudut kanan atas.'
+                      : 'Scroll down the share sheet, select "Add to Home Screen" ➕, then tap "Add" in the top right corner.'}
+                  </p>
+                </div>
+              </div>
+
+              {/* Step 3 */}
+              <div className="flex items-start space-x-3 p-2.5 rounded-2xl bg-gray-50 dark:bg-zinc-800/50 border border-gray-100 dark:border-zinc-800">
+                <div className="w-7 h-7 rounded-full bg-primary text-white font-black text-xs flex items-center justify-center shrink-0 mt-0.5 shadow-sm">
+                  3
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center space-x-1.5">
+                    <span className="text-xs font-bold text-text">
+                      {appLanguage === 'ms' ? 'Buka dari Skrin Utama & Aktifkan' : 'Open from Home Screen & Enable'}
+                    </span>
+                    <Bell className="w-3.5 h-3.5 text-amber-500" />
+                  </div>
+                  <p className="text-[11px] text-subtext mt-0.5 leading-snug">
+                    {appLanguage === 'ms'
+                      ? 'Keluar dari Safari, buka ikon "Order Sub" baru di Skrin Utama anda. Tekan loceng di atas dan pilih "Aktifkan Notifikasi" -> "Allow".'
+                      : 'Exit Safari, launch the newly created "Order Sub" icon on your Home Screen. Open the bell menu and tap "Enable Notifications" -> "Allow".'}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Actions */}
+            <div className="pt-2 flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+              <button
+                type="button"
+                onClick={handleTestAudioChime}
+                className="flex-1 bg-gray-100 dark:bg-zinc-800 hover:bg-gray-200 dark:hover:bg-zinc-700 text-text font-bold text-xs py-2.5 px-3 rounded-xl transition-all flex items-center justify-center space-x-1.5 cursor-pointer"
+              >
+                <Volume2 className="w-3.5 h-3.5 text-primary" />
+                <span>{audioTestPlayed ? (appLanguage === 'ms' ? 'Bunyi Berjaya!' : 'Chime Played!') : (appLanguage === 'ms' ? 'Uji Bunyi Peringatan' : 'Test Sound Alert')}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowIOSModal(false)}
+                className="flex-1 bg-primary hover:bg-primary/90 text-white font-bold text-xs py-2.5 px-3 rounded-xl shadow-md transition-all cursor-pointer text-center"
+              >
+                {appLanguage === 'ms' ? 'Faham, Terima Kasih' : 'Got it, Thanks'}
+              </button>
+            </div>
           </div>
         </div>
       )}
