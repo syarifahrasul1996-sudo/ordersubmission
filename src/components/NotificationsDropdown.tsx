@@ -575,35 +575,28 @@ export function NotificationsDropdown() {
                 </div>
               )}
 
-              {/* State 2: Enabled - Show FID & Test Actions */}
+              {/* State 2: Enabled - Clean User-Friendly Status & Test Actions */}
               {fcmStatus === 'enabled' && registeredFid && (
                 <div className="space-y-2 pt-1">
-                  <div className="flex items-center justify-between text-[10px]">
-                    <span className="font-semibold text-subtext">
-                      {appLanguage === 'ms' ? 'Installation ID (FID):' : 'Installation ID (FID):'}
-                    </span>
-                    <button
-                      onClick={handleCopyFid}
-                      className="font-bold text-primary hover:underline flex items-center space-x-1 cursor-pointer bg-primary/10 px-1.5 py-0.5 rounded border border-primary/20"
-                    >
-                      <Copy className="w-3 h-3" />
-                      <span>{copied ? (appLanguage === 'ms' ? 'Disalin!' : 'Copied!') : (appLanguage === 'ms' ? 'Salin FID' : 'Copy FID')}</span>
-                    </button>
+                  <div className="p-2.5 bg-emerald-500/10 dark:bg-emerald-950/20 border border-emerald-500/20 rounded-xl flex items-center space-x-2.5">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-bold text-emerald-800 dark:text-emerald-300">
+                        {appLanguage === 'ms' ? 'Notifikasi Latar Belakang Aktif' : 'Background Notifications Active'}
+                      </p>
+                      <p className="text-[10px] text-emerald-700/80 dark:text-emerald-400/80">
+                        {appLanguage === 'ms' 
+                          ? 'Peranti anda sedia menerima amaran tarikh akhir pesanan.' 
+                          : 'This device is ready to receive order deadline alerts.'}
+                      </p>
+                    </div>
                   </div>
-
-                  <input
-                    type="text"
-                    readOnly
-                    value={registeredFid}
-                    onClick={(e) => (e.target as HTMLInputElement).select()}
-                    className="w-full p-1.5 bg-white dark:bg-zinc-950 rounded border border-gray-200 dark:border-zinc-800 font-mono text-[9px] text-gray-700 dark:text-zinc-300 select-all focus:outline-none"
-                  />
 
                   {/* Send Test Notification Button */}
                   <button
                     onClick={handleSendTest}
                     disabled={testSending}
-                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs py-1.5 px-3 rounded-lg shadow-sm active:scale-95 transition-all cursor-pointer flex items-center justify-center space-x-1.5 disabled:opacity-50"
+                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs py-2 px-3 rounded-lg shadow-sm active:scale-95 transition-all cursor-pointer flex items-center justify-center space-x-1.5 disabled:opacity-50"
                   >
                     {testSending ? (
                       <>
@@ -628,6 +621,27 @@ export function NotificationsDropdown() {
                       {testResult.message}
                     </div>
                   )}
+
+                  {/* Subtle, collapsible technical info tucked away */}
+                  <details className="text-[9px] text-subtext pt-0.5 opacity-70 hover:opacity-100 transition-opacity">
+                    <summary className="cursor-pointer hover:underline font-semibold flex items-center justify-between">
+                      <span>{appLanguage === 'ms' ? 'Maklumat Teknikal Peranti (FID)' : 'Technical Device Info (FID)'}</span>
+                      <span className="font-mono text-[8px]">{registeredFid.substring(0, 8)}...</span>
+                    </summary>
+                    <div className="mt-1.5 p-2 bg-white dark:bg-zinc-950 rounded-lg border border-gray-200 dark:border-zinc-800 space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="font-mono text-[8px] text-subtext select-all break-all">{registeredFid}</span>
+                        <button
+                          type="button"
+                          onClick={handleCopyFid}
+                          className="ml-2 font-bold text-primary hover:underline flex items-center space-x-0.5 cursor-pointer shrink-0"
+                        >
+                          <Copy className="w-2.5 h-2.5" />
+                          <span>{copied ? (appLanguage === 'ms' ? 'Disalin' : 'Copied') : (appLanguage === 'ms' ? 'Salin' : 'Copy')}</span>
+                        </button>
+                      </div>
+                    </div>
+                  </details>
                 </div>
               )}
 
