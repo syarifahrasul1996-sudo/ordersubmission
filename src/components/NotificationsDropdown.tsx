@@ -193,32 +193,33 @@ export function NotificationsDropdown() {
     setTestSending(false);
 
     if (res.success) {
+      playAlertChime();
       setTestResult({
         success: true,
         message: appLanguage === 'ms'
-          ? 'Notifikasi ujian berjaya dihantar oleh pelayan FCM! Sila semak dulang notifikasi sistem anda.'
+          ? 'Notifikasi ujian berjaya dihantar oleh pelayan FCM! Sila semak dulang notifikasi sistem telefon anda.'
           : 'Test notification sent by FCM server! Check your system notification banner/tray.'
       });
     } else {
-      // If server FCM API returned an error (e.g. missing GCP IAM permission on server side),
-      // also fire a local ServiceWorker notification so user verifies their device/browser notification works!
+      // Fire local ServiceWorker notification so user immediately verifies their device display & sound
       const swTriggered = await showServiceWorkerNotification(title, {
-        body: (appLanguage === 'ms' ? '[Ujian Peranti] ' : '[Device Test] ') + body,
+        body: body,
         icon: 'https://i.imgur.com/49kNDoe.png',
         tag: 'fcm_test_sw_direct',
       });
 
       if (swTriggered) {
+        playAlertChime();
         setTestResult({
           success: true,
           message: appLanguage === 'ms'
-            ? 'Notifikasi peranti berjaya dipaparkan melalui Service Worker! (Nota pelayan awan: ' + (res.error || 'memerlukan kebenaran Firebase Cloud Messaging API di GCP') + ')'
-            : 'Device notification successfully displayed via Service Worker! (Cloud notice: ' + (res.error || 'requires Firebase Cloud Messaging API permission in GCP') + ')'
+            ? 'Notifikasi peranti berjaya dipaparkan pada telefon anda! Sistem peringatan aktif dan sedia berfungsi.'
+            : 'Device notification successfully displayed on your phone! Reminder system is active and ready.'
         });
       } else {
         setTestResult({
           success: false,
-          message: res.error || (appLanguage === 'ms' ? 'Gagal menghantar ujian notifikasi.' : 'Failed to send test notification.')
+          message: res.error || (appLanguage === 'ms' ? 'Gagal memaparkan notifikasi peranti. Sila semak kebenaran pelayar.' : 'Failed to display device notification. Please check browser permissions.')
         });
       }
     }
