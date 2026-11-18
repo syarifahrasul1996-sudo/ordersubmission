@@ -2,9 +2,11 @@
 // to ensure FCM does not overwrite custom click handling
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const rawUrl = event.notification.data?.url || '/';
+
+  const rawData = event.notification.data?.FCM_MSG?.data || event.notification.data || {};
+  const rawUrl = rawData.url || '/';
   const targetUrl = new URL(rawUrl, self.location.origin).href;
-  const orderId = event.notification.data?.orderId;
+  const orderId = rawData.orderId;
 
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
@@ -18,7 +20,7 @@ self.addEventListener('notificationclick', (event) => {
             });
           }
           if (client.url !== targetUrl && 'navigate' in client) {
-            client.navigate(targetUrl);
+            client.navigate(targetUrl).catch(() => {});
           }
           return client.focus();
         }
@@ -30,7 +32,7 @@ self.addEventListener('notificationclick', (event) => {
   );
 });
 
-self.addEventListener('install', (event) => {
+self.addEventListener('install', () => {
   self.skipWaiting();
 });
 
@@ -55,7 +57,7 @@ const messaging = firebase.messaging();
 
 messaging.onBackgroundMessage((payload) => {
   console.log('[firebase-messaging-sw.js] Background message received:', payload);
-  
+
   // Prevent duplicate background notifications:
   // When payload contains a `notification` property, Firebase Messaging automatically displays it.
   // Only manually display a notification for data-only messages (when payload.notification is absent).

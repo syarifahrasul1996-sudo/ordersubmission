@@ -12,7 +12,91 @@ export function SetupHelper({ onClose, appLanguage }: SetupHelperProps) {
   const [copied, setCopied] = useState(false);
   const [showToast, setShowToast] = useState(false);
 
-  const scriptCode = `function doPost(e) {
+  const scriptCode = `// Required Script Properties (Project Settings -> Script Properties):
+// 1. APPS_SCRIPT_SECRET: Random secret shared with your web app (Settings -> APPS_SCRIPT_SECRET)
+// 2. ALLOWED_SPREADSHEET_IDS: Comma-separated Google Sheet IDs permitted by this script
+// 3. ALLOWED_EMAILS (optional): Comma-separated Google emails if authenticating via Google ID token
+
+function safeStringCompare(a, b) {
+  var strA = String(a || "");
+  var strB = String(b || "");
+  if (!strA || !strB || strA.length !== strB.length) return false;
+  var mismatch = 0;
+  for (var i = 0; i < strA.length; i++) {
+    mismatch |= strA.charCodeAt(i) ^ strB.charCodeAt(i);
+  }
+  return mismatch === 0;
+}
+
+function getAllowedEmailSet(props) {
+  var raw = String(props.getProperty("ALLOWED_EMAILS") || "");
+  var emails = [];
+  if (raw) {
+    raw.split(",").forEach(function(item) {
+      var trimmed = item.trim().toLowerCase();
+      if (trimmed) emails.push(trimmed);
+    });
+  }
+  return emails;
+}
+
+function verifyGoogleIdToken(idToken, allowedEmails) {
+  if (!idToken || allowedEmails.length === 0) return false;
+  try {
+    var resp = UrlFetchApp.fetch(
+      "https://oauth2.googleapis.com/tokeninfo?id_token=" + encodeURIComponent(idToken),
+      { muteHttpExceptions: true }
+    );
+    if (resp.getResponseCode() !== 200) return false;
+    var payload = JSON.parse(resp.getContentText() || "{}");
+    var verified = payload.email_verified === true || payload.email_verified === "true";
+    var email = String(payload.email || "").trim().toLowerCase();
+    return Boolean(verified && email && allowedEmails.indexOf(email) !== -1);
+  } catch (err) {
+    return false;
+  }
+}
+
+function verifyRequestAuth(params, bodyData) {
+  var props = PropertiesService.getScriptProperties();
+  var configuredSecret = String(props.getProperty("APPS_SCRIPT_SECRET") || "").trim();
+  var allowedEmails = getAllowedEmailSet(props);
+
+  if (!configuredSecret && allowedEmails.length === 0) {
+    return { ok: false, message: "Unauthorized: Configure APPS_SCRIPT_SECRET or ALLOWED_EMAILS in Script Properties." };
+  }
+
+  var providedSecret = String((bodyData && bodyData.secret) || (params && params.secret) || "").trim();
+  if (configuredSecret && providedSecret && safeStringCompare(configuredSecret, providedSecret)) {
+    return { ok: true };
+  }
+
+  var providedIdToken = String((bodyData && bodyData.idToken) || (params && params.idToken) || "").trim();
+  if (providedIdToken && verifyGoogleIdToken(providedIdToken, allowedEmails)) {
+    return { ok: true };
+  }
+
+  return { ok: false, message: "Unauthorized: Invalid or missing credentials." };
+}
+
+function validateAllowedSpreadsheet(spreadsheetId) {
+  var cleanId = String(spreadsheetId || "").trim();
+  if (!cleanId) return { ok: false, message: "Missing spreadsheetId" };
+
+  var raw = String(PropertiesService.getScriptProperties().getProperty("ALLOWED_SPREADSHEET_IDS") || "");
+  var allowedIds = raw.split(",").map(function(s) { return s.trim(); }).filter(Boolean);
+  try {
+    var active = SpreadsheetApp.getActiveSpreadsheet();
+    if (active && allowedIds.indexOf(active.getId()) === -1) allowedIds.push(active.getId());
+  } catch (err) {}
+
+  if (allowedIds.length === 0 || allowedIds.indexOf(cleanId) === -1) {
+    return { ok: false, message: "Forbidden: spreadsheetId is not in ALLOWED_SPREADSHEET_IDS." };
+  }
+  return { ok: true, spreadsheetId: cleanId };
+}
+
+function doPost(e) {
   var lock = LockService.getScriptLock();
   var hasLock = false;
 
@@ -20,40 +104,69 @@ export function SetupHelper({ onClose, appLanguage }: SetupHelperProps) {
     lock.waitLock(10000);
     hasLock = true;
 
-    var data = JSON.parse(e.postData.contents);
+    if (!e || !e.postData || !e.postData.contents) {
+      return jsonResponse({ status: "error", message: "Missing POST body" });
+    }
 
-    var spreadsheetId = data.spreadsheetId;
+    var data = JSON.parse(e.postData.contents);
+    var authResult = verifyRequestAuth(e.parameter || {}, data);
+    if (!authResult.ok) {
+      return jsonResponse({ status: "error", code: 401, message: authResult.message });
+    }
+
+    var action = data.action || "update_order";
+    if (action === "test_diagnostic_connection" || (data.rowData && data.rowData[0] === "test_diagnostic_connection")) {
+      return jsonResponse({ status: "success", message: "Diagnostic connection successful" });
+    }
+
+    var sheetCheck = validateAllowedSpreadsheet(data.spreadsheetId);
+    if (!sheetCheck.ok) {
+      return jsonResponse({ status: "error", code: 403, message: sheetCheck.message });
+    }
+
+    var ss = SpreadsheetApp.openById(sheetCheck.spreadsheetId);
+    var sheets = ss.getSheets();
+
+    if (action === "delete_order") {
+      var orderId = data.orderId;
+      if (!orderId) return jsonResponse({ status: "error", message: "Missing orderId" });
+      var deleted = false;
+      for (var s = 0; s < sheets.length; s++) {
+        var row = findRowByOrderId(sheets[s], orderId);
+        if (row) {
+          sheets[s].deleteRow(row);
+          deleted = true;
+          break;
+        }
+      }
+      return jsonResponse({ status: "success", deleted: deleted });
+    }
+
+    if (action === "update_delivered") {
+      var orderId = data.orderId;
+      var isDelivered = data.isDelivered === true || data.isDelivered === "true" || data.isDelivered === 1 || data.isDelivered === "1";
+      if (!orderId) return jsonResponse({ status: "error", message: "Missing orderId" });
+      var updated = false;
+      for (var s = 0; s < sheets.length; s++) {
+        var row = findRowByOrderId(sheets[s], orderId);
+        if (row) {
+          sheets[s].getRange(row, 1).setValue(isDelivered);
+          updated = true;
+          break;
+        }
+      }
+      return jsonResponse({ status: "success", updated: updated, isDelivered: isDelivered });
+    }
+
     var sheetNameEn = data.sheetNameEn;
     var sheetNameMs = data.sheetNameMs;
     var rowData = data.rowData;
 
-    if (rowData && rowData[0] === "test_diagnostic_connection") {
-      return jsonResponse({
-        status: "success",
-        message: "Diagnostic connection successful"
-      });
-    }
-
-    if (!spreadsheetId) {
-      return jsonResponse({
-        status: "error",
-        message: "Missing spreadsheetId"
-      });
-    }
-
     if (!Array.isArray(rowData)) {
-      return jsonResponse({
-        status: "error",
-        message: "Missing or invalid rowData"
-      });
+      return jsonResponse({ status: "error", message: "Missing or invalid rowData" });
     }
 
-    var ss = SpreadsheetApp.openById(spreadsheetId);
-
-    var sheet =
-      ss.getSheetByName(sheetNameEn) ||
-      ss.getSheetByName(sheetNameMs);
-
+    var sheet = ss.getSheetByName(sheetNameEn) || ss.getSheetByName(sheetNameMs);
     if (!sheet) {
       sheet = ss.insertSheet(sheetNameEn);
     }
@@ -64,81 +177,103 @@ export function SetupHelper({ onClose, appLanguage }: SetupHelperProps) {
     if (rowData[0] === "FALSE" || rowData[0] === false) rowData[0] = false;
 
     var orderId = String(rowData[10] || "").trim();
-
     if (!orderId) {
-      return jsonResponse({
-        status: "error",
-        message: "Missing Order ID in column K"
-      });
+      return jsonResponse({ status: "error", message: "Missing Order ID in column K" });
     }
 
     var existingRow = findRowByOrderId(sheet, orderId);
-
     if (existingRow) {
-      if (typeof rowData[0] === "boolean") {
-        // preserve explicitly passed boolean status
-      } else {
-        var dVal = String(rowData[0]).trim().toLowerCase();
-        if (dVal === "true" || dVal === "1" || dVal === "yes" || dVal === "done" || dVal === "siap" || dVal === "selesai" || dVal === "ya") {
-          rowData[0] = true;
-        } else if (dVal === "false" || dVal === "0" || dVal === "no") {
-          rowData[0] = false;
-        } else {
-          var existingCheckbox = sheet.getRange(existingRow, 1).getValue();
-          var eVal = String(existingCheckbox).trim().toLowerCase();
-          rowData[0] = (existingCheckbox === true || eVal === "true" || eVal === "1" || eVal === "yes" || eVal === "done" || eVal === "siap" || eVal === "selesai" || eVal === "ya");
-        }
-      }
-
       sheet.getRange(existingRow, 1, 1, rowData.length).setValues([rowData]);
       applyRowTemplate(sheet, existingRow);
-
-      return jsonResponse({
-        status: "success",
-        message: "Updated order " + orderId,
-        orderId: orderId
-      });
+      return jsonResponse({ status: "success", message: "Updated order " + orderId, orderId: orderId });
     }
 
     sheet.appendRow(rowData);
-
     var newRow = sheet.getLastRow();
     applyRowTemplate(sheet, newRow);
 
-    return jsonResponse({
-      status: "success",
-      message: "Created order " + orderId,
-      orderId: orderId
-    });
-
+    return jsonResponse({ status: "success", message: "Created order " + orderId, orderId: orderId });
   } catch (error) {
-    return jsonResponse({
-      status: "error",
-      message: error.toString()
-    });
-
+    return jsonResponse({ status: "error", message: error.toString() });
   } finally {
     if (hasLock) lock.releaseLock();
   }
 }
 
+function doGet(e) {
+  var params = (e && e.parameter) || {};
+  var action = params.action;
+
+  var authResult = verifyRequestAuth(params, null);
+  if (!authResult.ok) {
+    return jsonResponse({ status: "error", code: 401, message: authResult.message });
+  }
+
+  if (action === "update_delivered" || action === "delete_order" || action === "update_order") {
+    return jsonResponse({ status: "error", code: 405, message: "Method Not Allowed: Mutations must use HTTP POST." });
+  }
+
+  var sheetCheck = validateAllowedSpreadsheet(params.spreadsheetId);
+  if (!sheetCheck.ok) {
+    return jsonResponse({ status: "error", code: 403, message: sheetCheck.message });
+  }
+
+  // Read-only actions: sync_recent, get_dashboard_orders, search_database, get_link
+  var ss = SpreadsheetApp.openById(sheetCheck.spreadsheetId);
+  var sheets = ss.getSheets();
+
+  if (action === "get_link") {
+    var orderId = params.orderId;
+    var foundLink = "";
+    for (var s = 0; s < sheets.length; s++) {
+      var row = findRowByOrderId(sheets[s], orderId);
+      if (row) {
+        foundLink = String(sheets[s].getRange(row, 10).getValue() || "");
+        break;
+      }
+    }
+    return jsonResponse({ status: "success", link: foundLink });
+  }
+
+  if (action === "sync_recent" || action === "get_dashboard_orders" || action === "search_database") {
+    var query = (params.query || "").trim().toLowerCase();
+    var recentOrders = [];
+    for (var s = 0; s < sheets.length; s++) {
+      var sheet = sheets[s];
+      var lastRow = sheet.getLastRow();
+      if (lastRow < 2) continue;
+      var values = sheet.getRange(2, 1, lastRow - 1, 12).getValues();
+      for (var r = 0; r < values.length; r++) {
+        var rowData = values[r];
+        if (!rowData[1] && !rowData[2] && !rowData[3]) continue;
+        var nameCheck = String(rowData[1]).trim().toLowerCase();
+        if (nameCheck === "nama" || nameCheck === "name" || nameCheck === "customer name") continue;
+        var doneVal = String(rowData[0]).trim().toLowerCase();
+        var isDeliveredVal = (doneVal === "true" || doneVal === "1" || rowData[0] === true);
+        var nameVal = String(rowData[1] || "");
+        var phoneVal = String(rowData[2] || "");
+        var orderVal = String(rowData[3] || "");
+        var templateVal = String(rowData[4] || "");
+        var orderIdVal = String(rowData[10] || "");
+        var bayaranVal = rowData[11] !== undefined && rowData[11] !== null ? rowData[11] : "";
+        if (query && (nameVal + " " + phoneVal + " " + orderVal + " " + templateVal + " " + orderIdVal).toLowerCase().indexOf(query) === -1) continue;
+        recentOrders.push({
+          isDelivered: isDeliveredVal, name: nameVal, phone: phoneVal, order: orderVal,
+          template: templateVal, bahasa: String(rowData[5] || ""), addon: String(rowData[6] || ""),
+          jenis: String(rowData[7] || ""), due: String(rowData[8] || ""), link: String(rowData[9] || ""),
+          orderId: orderIdVal, bayaran: bayaranVal, price: bayaranVal
+        });
+      }
+    }
+    return jsonResponse({ status: "success", orders: recentOrders });
+  }
+
+  return jsonResponse({ status: "error", code: 400, message: "Unknown action" });
+}
+
 function ensureSheetSetup(sheet) {
   if (sheet.getLastRow() === 0) {
-    sheet.appendRow([
-      "Done",
-      "Nama",
-      "Phone Number",
-      "Order",
-      "Template",
-      "Bahasa",
-      "Add On",
-      "Jenis",
-      "Due",
-      "Link",
-      "Order ID",
-      "Bayaran"
-    ]);
-
+    sheet.appendRow(["Done", "Nama", "Phone Number", "Order", "Template", "Bahasa", "Add On", "Jenis", "Due", "Link", "Order ID", "Bayaran"]);
     sheet.appendRow(["", "", "", "", "", "", "", "", "", "", "", ""]);
     applyRowTemplate(sheet, 2);
   }
@@ -146,268 +281,26 @@ function ensureSheetSetup(sheet) {
 
 function findRowByOrderId(sheet, orderId) {
   var lastRow = sheet.getLastRow();
-
-  if (lastRow < 3) return null;
-
-  var values = sheet.getRange(3, 11, lastRow - 2, 1).getValues();
-
+  if (lastRow < 2) return null;
+  var values = sheet.getRange(2, 11, lastRow - 1, 1).getValues();
   for (var i = 0; i < values.length; i++) {
-    if (String(values[i][0] || "").trim() === orderId) {
-      return i + 3;
-    }
+    if (String(values[i][0] || "").trim() === String(orderId).trim()) return i + 2;
   }
-
   return null;
 }
 
 function applyRowTemplate(sheet, targetRow) {
   var lastCol = sheet.getLastColumn();
-
   if (targetRow === 2) {
     sheet.getRange(targetRow, 1).insertCheckboxes();
     return;
   }
-
-  sheet.getRange(2, 1, 1, lastCol)
-    .copyTo(
-      sheet.getRange(targetRow, 1, 1, lastCol),
-      SpreadsheetApp.CopyPasteType.PASTE_FORMAT,
-      false
-    );
-
-  sheet.getRange(2, 1, 1, lastCol)
-    .copyTo(
-      sheet.getRange(targetRow, 1, 1, lastCol),
-      SpreadsheetApp.CopyPasteType.PASTE_DATA_VALIDATION,
-      false
-    );
+  sheet.getRange(2, 1, 1, lastCol).copyTo(sheet.getRange(targetRow, 1, 1, lastCol), SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
+  sheet.getRange(2, 1, 1, lastCol).copyTo(sheet.getRange(targetRow, 1, 1, lastCol), SpreadsheetApp.CopyPasteType.PASTE_DATA_VALIDATION, false);
 }
 
 function jsonResponse(obj) {
-  return ContentService
-    .createTextOutput(JSON.stringify(obj))
-    .setMimeType(ContentService.MimeType.JSON);
-}
-
-function doGet(e) {
-  var action = e.parameter.action;
-  
-  if (action === "update_delivered") {
-    var orderId = e.parameter.orderId;
-    var spreadsheetId = e.parameter.spreadsheetId;
-    var isDelivered = e.parameter.isDelivered;
-    var callback = e.parameter.callback;
-
-    try {
-      var ss = SpreadsheetApp.openById(spreadsheetId);
-      var sheets = ss.getSheets();
-      var updated = false;
-
-      for (var s = 0; s < sheets.length; s++) {
-        var sheet = sheets[s];
-        var row = findRowByOrderId(sheet, orderId);
-        if (row) {
-          sheet.getRange(row, 1).setValue(isDelivered === "true" || isDelivered === true);
-          updated = true;
-          break;
-        }
-      }
-
-      var result = { status: "success", updated: updated };
-      if (callback) {
-        return ContentService.createTextOutput(callback + '(' + JSON.stringify(result) + ')')
-          .setMimeType(ContentService.MimeType.JAVASCRIPT);
-      }
-      return jsonResponse(result);
-    } catch(err) {
-      var errResult = { status: "error", message: err.toString() };
-      if (callback) {
-        return ContentService.createTextOutput(callback + '(' + JSON.stringify(errResult) + ')')
-          .setMimeType(ContentService.MimeType.JAVASCRIPT);
-      }
-      return jsonResponse(errResult);
-    }
-  }
-
-  if (action === "sync_recent" || action === "get_dashboard_orders" || action === "search_database") {
-    var spreadsheetId = e.parameter.spreadsheetId;
-    var callback = e.parameter.callback;
-    var query = (e.parameter.query || "").trim().toLowerCase();
-
-    try {
-      var ss = SpreadsheetApp.openById(spreadsheetId);
-      var sheets = ss.getSheets();
-      var now = new Date();
-      var monthNamesEn = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-      var monthNamesMs = ["Januari", "Februari", "Mac", "April", "Mei", "Jun", "Julai", "Ogos", "September", "Oktober", "November", "Disember"];
-      
-      var targetSheets = [];
-      for (var mOffset = -3; mOffset <= 6; mOffset++) {
-        var d = new Date(now.getFullYear(), now.getMonth() + mOffset, 1);
-        targetSheets.push(monthNamesEn[d.getMonth()] + " " + d.getFullYear());
-        targetSheets.push(monthNamesMs[d.getMonth()] + " " + d.getFullYear());
-      }
-      
-      var matchedAnyTarget = false;
-      for (var checkIndex = 0; checkIndex < sheets.length; checkIndex++) {
-        if (targetSheets.indexOf(sheets[checkIndex].getName()) !== -1) {
-          matchedAnyTarget = true;
-          break;
-        }
-      }
-
-      var recentOrders = [];
-      for (var s = 0; s < sheets.length; s++) {
-        var sheet = sheets[s];
-        if (!matchedAnyTarget || action === "search_database" || action === "get_dashboard_orders" || targetSheets.indexOf(sheet.getName()) !== -1) {
-          var lastRow = sheet.getLastRow();
-          if (lastRow >= 2) {
-            var values = sheet.getRange(2, 1, lastRow - 1, 12).getValues();
-            for (var r = 0; r < values.length; r++) {
-              var rowData = values[r];
-              if (!rowData[1] && !rowData[2] && !rowData[3]) continue;
-              var nameCheck = String(rowData[1]).trim().toLowerCase();
-              if (nameCheck === "nama" || nameCheck === "name" || nameCheck === "customer name") continue;
-
-              var doneVal = String(rowData[0]).trim().toLowerCase();
-              var isDeliveredVal = (doneVal === "true" || doneVal === "1" || doneVal === "yes" || doneVal === "done" || doneVal === "siap" || doneVal === "selesai" || doneVal === "ya" || doneVal === "y" || doneVal === "v" || doneVal === "✓" || rowData[0] === true);
-              
-              var nameVal = String(rowData[1] || "");
-              var phoneVal = String(rowData[2] || "");
-              var orderVal = String(rowData[3] || "");
-              var templateVal = String(rowData[4] || "");
-              var bahasaVal = String(rowData[5] || "");
-              var addonVal = String(rowData[6] || "");
-              var jenisVal = String(rowData[7] || "");
-              var dueVal = String(rowData[8] || "");
-              var linkVal = String(rowData[9] || "");
-              var orderIdVal = String(rowData[10] || "");
-              var bayaranVal = rowData[11] !== undefined && rowData[11] !== null ? rowData[11] : "";
-
-              if (query !== "") {
-                var fullSearchStr = (nameVal + " " + phoneVal + " " + orderVal + " " + templateVal + " " + orderIdVal).toLowerCase();
-                if (fullSearchStr.indexOf(query) === -1) continue;
-              }
-
-              recentOrders.push({
-                isDelivered: isDeliveredVal,
-                name: nameVal,
-                phone: phoneVal,
-                order: orderVal,
-                template: templateVal,
-                bahasa: bahasaVal,
-                addon: addonVal,
-                harga: bayaranVal,
-                itemPrice: bayaranVal,
-                bayaran: bayaranVal,
-                price: bayaranVal,
-                jenis: jenisVal,
-                due: dueVal,
-                link: linkVal,
-                orderId: orderIdVal
-              });
-            }
-          }
-        }
-      }
-      
-      var result = { status: "success", orders: recentOrders };
-      if (callback) {
-        return ContentService.createTextOutput(callback + '(' + JSON.stringify(result) + ')')
-          .setMimeType(ContentService.MimeType.JAVASCRIPT);
-      }
-      return jsonResponse(result);
-    } catch(err) {
-      var errResult = { status: "error", message: err.toString() };
-      if (callback) {
-        return ContentService.createTextOutput(callback + '(' + JSON.stringify(errResult) + ')')
-          .setMimeType(ContentService.MimeType.JAVASCRIPT);
-      }
-      return jsonResponse(errResult);
-    }
-  }
-  
-  if (action === "get_link") {
-    var orderId = e.parameter.orderId;
-    var spreadsheetId = e.parameter.spreadsheetId;
-    var callback = e.parameter.callback;
-    
-    try {
-      var ss = SpreadsheetApp.openById(spreadsheetId);
-      var sheets = ss.getSheets();
-      
-      var foundLink = "";
-      for (var s = 0; s < sheets.length; s++) {
-        var sheet = sheets[s];
-        var row = findRowByOrderId(sheet, orderId);
-        if (row) {
-          foundLink = sheet.getRange(row, 10).getValue(); // Column J is Link (10th column)
-          break;
-        }
-      }
-      
-      var result = { status: "success", link: foundLink };
-      if (callback) {
-        return ContentService.createTextOutput(callback + "(" + JSON.stringify(result) + ")")
-          .setMimeType(ContentService.MimeType.JAVASCRIPT);
-      }
-      return jsonResponse(result);
-    } catch(err) {
-      var errResult = { status: "error", message: err.toString() };
-      if (callback) {
-        return ContentService.createTextOutput(callback + "(" + JSON.stringify(errResult) + ")")
-          .setMimeType(ContentService.MimeType.JAVASCRIPT);
-      }
-      return jsonResponse(errResult);
-    }
-  }
-
-  if (action === "delete_order") {
-    var orderId = e.parameter.orderId;
-    var spreadsheetId = e.parameter.spreadsheetId;
-    var callback = e.parameter.callback;
-
-    try {
-      var ss = SpreadsheetApp.openById(spreadsheetId);
-      var sheets = ss.getSheets();
-      var deleted = false;
-
-      for (var s = 0; s < sheets.length; s++) {
-        var sheet = sheets[s];
-        var row = findRowByOrderId(sheet, orderId);
-        if (row) {
-          sheet.deleteRow(row);
-          deleted = true;
-          break;
-        }
-      }
-
-      var result = { status: "success", deleted: deleted };
-      if (callback) {
-        return ContentService.createTextOutput(callback + "(" + JSON.stringify(result) + ")")
-          .setMimeType(ContentService.MimeType.JAVASCRIPT);
-      }
-      return jsonResponse(result);
-    } catch(err) {
-      var errResult = { status: "error", message: err.toString() };
-      if (callback) {
-        return ContentService.createTextOutput(callback + "(" + JSON.stringify(errResult) + ")")
-          .setMimeType(ContentService.MimeType.JAVASCRIPT);
-      }
-      return jsonResponse(errResult);
-    }
-  }
-  
-  return ContentService.createTextOutput("OK").setMimeType(ContentService.MimeType.TEXT);
-}
-
-function doOptions(e) {
-  return ContentService.createTextOutput("")
-    .setMimeType(ContentService.MimeType.TEXT)
-    .setHeader("Access-Control-Allow-Origin", "*")
-    .setHeader("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
-    .setHeader("Access-Control-Allow-Headers", "Content-Type");
-}
+  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
 }`;
 
   const copyToClipboard = () => {
@@ -478,13 +371,17 @@ function doOptions(e) {
             </h3>
             <ul className="list-decimal pl-5 space-y-2 text-sm text-subtext leading-relaxed">
               <li>{appLanguage === 'ms' ? 'Pergi ke ' : 'Go to '} <strong>Extensions &gt; Apps Script</strong>.</li>
-              <li>{appLanguage === 'ms' ? 'Gantikan semua kod lama dengan kod di atas.' : 'Replace all old code with the code above.'}</li>
-              <li className="text-orange-600 dark:text-orange-400 font-bold bg-orange-50 dark:bg-orange-900/20 p-2 rounded-lg">
-                ⚠️ {appLanguage === 'ms' ? 'JANGAN klik butang "Run" di dalam Apps Script editor. Ia akan ralat (e is undefined). Teruskan ke Publish / Deploy.' : 'DO NOT click the "Run" button inside the Apps Script editor for doPost. It will error (e is undefined). Just proceed to Publish / Deploy.'}
+              <li>{appLanguage === 'ms' ? 'Gantikan semua kod lama dengan kod selamat di atas (atau apps-script.js).' : 'Replace all old code with the secured code above (or apps-script.js).'}</li>
+              <li>
+                {appLanguage === 'ms'
+                  ? 'Buka Project Settings > Script Properties dan tambah APPS_SCRIPT_SECRET (kata laluan rawak) dan ALLOWED_SPREADSHEET_IDS (ID Sheet anda, dipisahkan koma).'
+                  : 'Open Project Settings > Script Properties and add APPS_SCRIPT_SECRET (a random secret) and ALLOWED_SPREADSHEET_IDS (comma-separated allowed Sheet IDs).'}
               </li>
-              <li>{appLanguage === 'ms' ? 'Klik ' : 'Click '} <strong>Deploy &gt; New deployment</strong>.</li>
-              <li>{appLanguage === 'ms' ? 'Pilih jenis ' : 'Select type '} <strong>Web app</strong>. Set "Execute as: Me" dan "Who has access: Anyone".</li>
-              <li>{appLanguage === 'ms' ? 'Salin URL Web App yang baru dan masukkan ke dalam kod web app (webhookUrl).' : 'Copy the new Web App URL and place it in the web app.'}</li>
+              <li className="text-orange-600 dark:text-orange-400 font-bold bg-orange-50 dark:bg-orange-900/20 p-2 rounded-lg">
+                ⚠️ {appLanguage === 'ms' ? 'JANGAN klik butang "Run" di dalam Apps Script editor. Teruskan ke Deploy.' : 'DO NOT click the "Run" button inside the Apps Script editor for doPost. Proceed directly to Deploy.'}
+              </li>
+              <li>{appLanguage === 'ms' ? 'Klik ' : 'Click '} <strong>Deploy &gt; New deployment</strong> &rarr; <strong>Web app</strong> ("Execute as: Me", "Who has access: Anyone").</li>
+              <li>{appLanguage === 'ms' ? 'Salin URL Web App serta APPS_SCRIPT_SECRET dan masukkan di Sejarah > Tetapan Database.' : 'Paste the Web App URL and APPS_SCRIPT_SECRET into History > Database Settings.'}</li>
             </ul>
           </div>
         </div>

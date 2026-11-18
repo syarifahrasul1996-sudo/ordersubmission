@@ -1,5 +1,6 @@
 import React, { ErrorInfo, ReactNode } from 'react';
 import { AlertTriangle, RefreshCcw } from 'lucide-react';
+import { clearOrderHistoryDb } from '../utils/storage';
 
 interface Props {
   children: ReactNode;
@@ -37,9 +38,12 @@ export class ErrorBoundary extends React.Component<Props, State> {
     window.location.reload();
   };
 
-  private handleClearAll = () => {
+  private handleClearAll = async () => {
     try {
       localStorage.clear();
+    } catch {}
+    try {
+      await clearOrderHistoryDb();
     } catch {}
     window.location.reload();
   };

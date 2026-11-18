@@ -1,7 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 
 export default async function handler(req: IncomingMessage & { body?: any }, res: ServerResponse) {
-  // Enable CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
@@ -12,40 +11,21 @@ export default async function handler(req: IncomingMessage & { body?: any }, res
     return;
   }
 
-  if (req.method === 'GET') {
-    res.setHeader('Content-Type', 'application/json');
-    res.statusCode = 200;
-    res.end(JSON.stringify({ success: true, status: 'ready' }));
-    return;
-  }
+  const fid = typeof req.body?.fid === 'string' ? req.body.fid.trim() : '';
+  const secret =
+    typeof req.body?.secret === 'string' && req.body.secret.trim()
+      ? req.body.secret.trim()
+      : `loc_${Math.random().toString(36).slice(2, 12)}`;
 
-  let body = '';
-  req.on('data', chunk => {
-    body += chunk;
-  });
-
-  req.on('end', () => {
-    try {
-      const data = body ? JSON.parse(body) : {};
-      const fid = data.fid || 'fid_' + Math.random().toString(36).substring(2, 10);
-      const secret = data.secret || 'sec_' + Math.random().toString(36).substring(2, 12);
-
-      res.setHeader('Content-Type', 'application/json');
-      res.statusCode = 200;
-      res.end(JSON.stringify({
-        success: true,
-        fid,
-        secret,
-        registered: true
-      }));
-    } catch {
-      res.setHeader('Content-Type', 'application/json');
-      res.statusCode = 200;
-      res.end(JSON.stringify({
-        success: true,
-        registered: true,
-        secret: 'sec_' + Date.now().toString(36)
-      }));
-    }
-  });
+  res.setHeader('Content-Type', 'application/json');
+  res.statusCode = 200;
+  res.end(
+    JSON.stringify({
+      success: true,
+      fid,
+      secret,
+      registered: true,
+      activeDevicesCount: 1,
+    })
+  );
 }

@@ -1,9 +1,10 @@
-import { initializeApp, getApp, getApps } from 'firebase/app';
-import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User } from 'firebase/auth';
-import firebaseConfig from '../../firebase-applet-config.json';
-
-const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
-const auth = getAuth(app);
+import {
+  signInWithPopup,
+  GoogleAuthProvider,
+  onAuthStateChanged,
+  User,
+} from 'firebase/auth';
+import { firebaseAuth } from '../firebaseClient';
 
 const provider = new GoogleAuthProvider();
 provider.addScope('https://www.googleapis.com/auth/documents');
@@ -11,41 +12,48 @@ provider.addScope('https://www.googleapis.com/auth/drive.file');
 
 let isSigningIn = false;
 
-const getStoredToken = () => {
+// Store OAuth access token strictly in memory (never in localStorage)
+let cachedAccessToken: string | null = null;
+let cachedAccessTokenExpiry = 0;
+
+function purgeLegacyLocalStorageTokens(): void {
+  if (typeof window === 'undefined') return;
   try {
-    const token = localStorage.getItem('google_docs_access_token');
-    const expiry = localStorage.getItem('google_docs_access_token_expiry');
-    if (token && expiry && Date.now() < parseInt(expiry, 10)) {
-      return token;
-    }
     localStorage.removeItem('google_docs_access_token');
     localStorage.removeItem('google_docs_access_token_expiry');
-  } catch (e) {
-    console.warn('LocalStorage error:', e);
+  } catch {
+    // ignore storage errors
   }
-  return null;
-};
+}
 
-let cachedAccessToken: string | null = getStoredToken();
+purgeLegacyLocalStorageTokens();
+
+function getValidInMemoryToken(): string | null {
+  if (cachedAccessToken && Date.now() < cachedAccessTokenExpiry) {
+    return cachedAccessToken;
+  }
+  cachedAccessToken = null;
+  cachedAccessTokenExpiry = 0;
+  return null;
+}
 
 export const initAuth = (
   onAuthSuccess?: (user: User, token: string) => void,
   onAuthFailure?: () => void
 ) => {
-  return onAuthStateChanged(auth, async (user: User | null) => {
+  purgeLegacyLocalStorageTokens();
+  return onAuthStateChanged(firebaseAuth, async (user: User | null) => {
     if (user) {
-      cachedAccessToken = getStoredToken();
-      if (cachedAccessToken) {
-        if (onAuthSuccess) onAuthSuccess(user, cachedAccessToken);
+      const token = getValidInMemoryToken();
+      if (token) {
+        if (onAuthSuccess) onAuthSuccess(user, token);
       } else if (!isSigningIn) {
-        if (onAuthSuccess) onAuthSuccess(user, "");
+        if (onAuthSuccess) onAuthSuccess(user, '');
       }
     } else {
       cachedAccessToken = null;
-      try {
-        localStorage.removeItem('google_docs_access_token');
-        localStorage.removeItem('google_docs_access_token_expiry');
-      } catch (e) {}
+      cachedAccessTokenExpiry = 0;
+      purgeLegacyLocalStorageTokens();
       if (onAuthFailure) onAuthFailure();
     }
   });
@@ -54,20 +62,17 @@ export const initAuth = (
 export const googleSignIn = async (): Promise<{ user: User; accessToken: string } | null> => {
   try {
     isSigningIn = true;
-    const result = await signInWithPopup(auth, provider);
+    const result = await signInWithPopup(firebaseAuth, provider);
     const credential = GoogleAuthProvider.credentialFromResult(result);
     if (!credential?.accessToken) {
       throw new Error('Failed to get access token from Firebase Auth');
     }
 
     cachedAccessToken = credential.accessToken;
-    try {
-      localStorage.setItem('google_docs_access_token', cachedAccessToken);
-      // Google access tokens expire in 1 hour (3600 seconds). We save it with a 55 minutes margin (3300 seconds).
-      localStorage.setItem('google_docs_access_token_expiry', (Date.now() + 3300 * 1000).toString());
-    } catch (e) {
-      console.warn('LocalStorage save error:', e);
-    }
+    // Google access tokens expire in 1 hour (3600s); retain a 55-minute in-memory margin
+    cachedAccessTokenExpiry = Date.now() + 3300 * 1000;
+    purgeLegacyLocalStorageTokens();
+
     return { user: result.user, accessToken: cachedAccessToken };
   } catch (error: any) {
     console.error('Sign in error:', error);
@@ -78,15 +83,12 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
 };
 
 export const getAccessToken = async (): Promise<string | null> => {
-  cachedAccessToken = getStoredToken();
-  return cachedAccessToken;
+  return getValidInMemoryToken();
 };
 
 export const logout = async () => {
-  await auth.signOut();
+  await firebaseAuth.signOut();
   cachedAccessToken = null;
-  try {
-    localStorage.removeItem('google_docs_access_token');
-    localStorage.removeItem('google_docs_access_token_expiry');
-  } catch (e) {}
+  cachedAccessTokenExpiry = 0;
+  purgeLegacyLocalStorageTokens();
 };

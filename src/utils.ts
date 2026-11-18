@@ -1,4 +1,5 @@
 import type { OrderHistoryItem } from './types';
+import { safeGetLocalStorage } from './utils/storage';
 
 export function calculateDeadline(state: any, appLanguage: string) {
   const now = state.timestamp ? new Date(state.timestamp) : new Date();
@@ -840,115 +841,112 @@ export function extractPendapatanValue(source: any): number {
 }
 
 /**
- * Utility to safely parse raw JSON or JSONP text response (e.g. callbackName({...}))
+ * Safely parses JSON text from Google Apps Script / proxy responses and throws a clear contextual error
+ * if an HTML page or malformed payload is received instead of silently failing.
  */
-export function parseJsonpOrJson(text: string): any {
-  if (!text) return null;
-  const trimmed = text.trim();
-  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-    return JSON.parse(trimmed);
+export function parseJsonResponse<T = any>(text: string): T {
+  const trimmed = (text || '').trim();
+  if (!trimmed) {
+    throw new Error('Empty response received from Google Apps Script');
   }
-  const match = trimmed.match(/^[a-zA-Z0-9_$]+\s*\(([\s\S]*)\)\s*;?$/);
-  if (match && match[1]) {
-    return JSON.parse(match[1]);
+  if (trimmed.startsWith('<')) {
+    throw new Error('Google Apps Script returned an HTML page instead of JSON. Check Web App access ("Anyone") and URL.');
   }
-  throw new Error('Invalid JSON/JSONP payload format');
+  try {
+    return JSON.parse(trimmed) as T;
+  } catch (err: any) {
+    throw new Error(`Invalid JSON payload from Google Apps Script: ${err?.message || 'parse error'}`);
+  }
 }
 
 /**
- * Executes a Google Apps Script request using multi-level fallback strategy:
- * 1. Express backend proxy `/api/sync-proxy?url=...`
- * 2. Direct browser `fetch()`
- * 3. Dynamic `<script>` tag insertion (JSONP)
+ * Executes a read-only Google Apps Script request using fetch + JSON:
+ * 1. Authenticated Express backend proxy `/api/sync-proxy?url=...` (recommended)
+ * 2. Direct browser `fetch()` fallback when unauthenticated / offline proxy 404
+ * Never injects external `<script>` tags (JSONP removed).
  */
 export async function smartFetchGoogleScript<T = any>(
   urlInput: URL | string,
-  callbackName?: string,
   timeoutMs = 50000
 ): Promise<T> {
-  const urlStr = urlInput.toString();
-  const cbName = callbackName || ('jsonp_cb_' + Math.round(1000000 * Math.random()));
+  const parsedTarget = typeof urlInput === 'string' ? new URL(urlInput) : new URL(urlInput.toString());
+  parsedTarget.searchParams.delete('callback');
 
-  let requestUrl = urlStr;
-  if (!requestUrl.includes('callback=')) {
-    const separator = requestUrl.includes('?') ? '&' : '?';
-    requestUrl = `${requestUrl}${separator}callback=${cbName}`;
+  const secret = (safeGetLocalStorage('db_script_secret') || '').trim();
+  if (secret && !parsedTarget.searchParams.has('secret')) {
+    parsedTarget.searchParams.set('secret', secret);
   }
 
-  // Strategy 1: Server-side proxy
+  const requestUrl = parsedTarget.toString();
+
+  // Strategy 1: Authenticated server-side proxy (bypasses browser CORS reliably & keeps tokens verified)
+  let proxyFailureReason = '';
   try {
-    const proxyUrl = `/api/sync-proxy?url=${encodeURIComponent(requestUrl)}`;
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), Math.min(timeoutMs, 50000));
+    const { getFirebaseIdToken } = await import('./firebaseClient');
+    const idToken = await getFirebaseIdToken();
+    if (idToken) {
+      const proxyUrl = `/api/sync-proxy?url=${encodeURIComponent(requestUrl)}`;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), Math.min(timeoutMs, 50000));
 
-    const resp = await fetch(proxyUrl, { signal: controller.signal });
-    clearTimeout(timeoutId);
-
-    if (resp.ok) {
-      const text = await resp.text();
-      if (text && text.trim()) {
-        const parsed = parseJsonpOrJson(text);
-        if (parsed) return parsed as T;
-      }
-    }
-  } catch (e) {
-    // Proxy failed or unavailable, fallback to next strategy
-  }
-
-  // Strategy 2: Direct browser fetch
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), Math.min(timeoutMs, 50000));
-
-    const resp = await fetch(requestUrl, { signal: controller.signal });
-    clearTimeout(timeoutId);
-
-    if (resp.ok) {
-      const text = await resp.text();
-      if (text && text.trim()) {
-        const parsed = parseJsonpOrJson(text);
-        if (parsed) return parsed as T;
-      }
-    }
-  } catch (e) {
-    // Direct fetch failed or CORS blocked, fallback to script element
-  }
-
-  // Strategy 3: Dynamic <script> tag insertion (JSONP)
-  return new Promise<T>((resolve, reject) => {
-    const script = document.createElement('script');
-    script.src = requestUrl;
-    script.async = true;
-
-    const timeoutId = setTimeout(() => {
-      cleanup();
-      reject(new Error(`Google Sheet request timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
-
-    const cleanup = () => {
-      clearTimeout(timeoutId);
       try {
-        if (script.parentNode) {
-          script.parentNode.removeChild(script);
+        const resp = await fetch(proxyUrl, {
+          signal: controller.signal,
+          headers: {
+            Authorization: `Bearer ${idToken}`,
+          },
+        });
+        clearTimeout(timeoutId);
+
+        if (resp.status === 401 || resp.status === 403) {
+          const errData = await resp.json().catch(() => ({}));
+          throw new Error(errData.error || `Proxy authorization failed (${resp.status})`);
         }
-      } catch (e) {}
-      delete (window as any)[cbName];
-    };
 
-    (window as any)[cbName] = (data: T) => {
-      cleanup();
-      resolve(data);
-    };
+        if (resp.ok) {
+          const text = await resp.text();
+          return parseJsonResponse<T>(text);
+        }
 
-    script.onerror = (event: any) => {
-      if (event && typeof event !== 'string') {
-        if (typeof (event as any).preventDefault === 'function') (event as any).preventDefault();
-        if (typeof (event as any).stopPropagation === 'function') (event as any).stopPropagation();
+        if (resp.status !== 404) {
+          const errText = await resp.text().catch(() => '');
+          proxyFailureReason = `Proxy HTTP ${resp.status}${errText ? `: ${errText.slice(0, 120)}` : ''}`;
+          throw new Error(proxyFailureReason);
+        }
+      } finally {
+        clearTimeout(timeoutId);
       }
-      cleanup();
-      reject(new Error('Google Sheet script loading failed'));
-    };
+    } else {
+      proxyFailureReason = 'Sign in with Google to use the authenticated server proxy.';
+    }
+  } catch (err: any) {
+    if (err?.message?.includes('authorization') || err?.message?.includes('HTTP ')) {
+      throw err;
+    }
+    proxyFailureReason = err?.message || 'Server proxy unreachable';
+  }
 
-    document.body.appendChild(script);
-  });
+  // Strategy 2: Direct browser fetch with JSON (handled locally without global error suppression)
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), Math.min(timeoutMs, 50000));
+  try {
+    const resp = await fetch(requestUrl, {
+      signal: controller.signal,
+      redirect: 'follow',
+    });
+    clearTimeout(timeoutId);
+
+    if (!resp.ok) {
+      throw new Error(`Google Apps Script returned HTTP ${resp.status}`);
+    }
+
+    const text = await resp.text();
+    return parseJsonResponse<T>(text);
+  } catch (err: any) {
+    clearTimeout(timeoutId);
+    const detail = err?.name === 'AbortError'
+      ? `Google Sheet request timed out after ${timeoutMs}ms`
+      : (err?.message || 'Direct fetch blocked by CORS or network error');
+    throw new Error(proxyFailureReason ? `${detail} (${proxyFailureReason})` : detail);
+  }
 }

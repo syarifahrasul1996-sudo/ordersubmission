@@ -1,4 +1,5 @@
 import express from "express";
+import fs from "fs";
 import path from "path";
 import crypto from "crypto";
 import { createServer as createViteServer } from "vite";
@@ -18,6 +19,10 @@ interface PushInstallationRecord {
   fid: string;
   secretHash: string;
   enabled: boolean;
+  deviceLabel?: string;
+  platform?: string;
+  userAgent?: string;
+  lastSeenAt?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -43,6 +48,12 @@ interface OrderReminderRecord {
   lastThreeHourAlertedAt?: string;
 }
 
+interface PersistedPushStore {
+  installations: Record<string, PushInstallationRecord>;
+  reminders: Record<string, OrderReminderRecord>;
+  readNotificationIds: Record<string, number>;
+}
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
@@ -54,11 +65,23 @@ async function startServer() {
     res.header("Access-Control-Allow-Origin", "*");
     res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, HEAD");
     res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization");
+    if (req.path === "/firebase-messaging-sw.js") {
+      res.header("Cache-Control", "no-cache, no-store, must-revalidate");
+      res.header("Service-Worker-Allowed", "/");
+    }
     if (req.method === "OPTIONS") {
       return res.sendStatus(200);
     }
     next();
   });
+
+  function buildTargetPayload(targetId: string, base: Record<string, any>) {
+    // Legacy FCM registration tokens contain ':', whereas Firebase Installation IDs (FIDs) do not
+    if (targetId.includes(":")) {
+      return { token: targetId, ...base };
+    }
+    return { fid: targetId, ...base };
+  }
 
   // Initialize Firebase Admin SDK (singleton)
   let adminApp: App;
@@ -102,13 +125,112 @@ async function startServer() {
   }
 
   // =========================================================================
-  // Primary Storage: Cloud Firestore with in-process resilient cache fallback
+  // Primary Storage: Cloud Firestore + Durable Disk Store (.data/push-store.json)
   // =========================================================================
+
+  const DATA_DIR = path.join(process.cwd(), ".data");
+  const PUSH_STORE_PATH = path.join(DATA_DIR, "push-store.json");
 
   const memoryInstallationStore = new Map<string, PushInstallationRecord>();
   const memoryRemindersStore = new Map<string, OrderReminderRecord>();
+  const readNotificationMap = new Map<string, number>();
 
-  // Installation store helpers (Firestore source of truth + memory cache)
+  // Load persisted store from disk on startup
+  function loadPersistedStoreFromDisk() {
+    try {
+      if (!fs.existsSync(PUSH_STORE_PATH)) return;
+      const raw = fs.readFileSync(PUSH_STORE_PATH, "utf8");
+      if (!raw.trim()) return;
+      const parsed = JSON.parse(raw) as Partial<PersistedPushStore>;
+      if (parsed.installations && typeof parsed.installations === "object") {
+        for (const [k, v] of Object.entries(parsed.installations)) {
+          if (v && v.fid) {
+            memoryInstallationStore.set(k, v);
+          }
+        }
+      }
+      if (parsed.reminders && typeof parsed.reminders === "object") {
+        for (const [k, v] of Object.entries(parsed.reminders)) {
+          if (v && v.id) {
+            memoryRemindersStore.set(k, v);
+          }
+        }
+      }
+      if (parsed.readNotificationIds && typeof parsed.readNotificationIds === "object") {
+        for (const [k, ts] of Object.entries(parsed.readNotificationIds)) {
+          if (typeof ts === "number") {
+            readNotificationMap.set(k, ts);
+          }
+        }
+      }
+      console.log(
+        `[Push Store] Loaded ${memoryInstallationStore.size} installations, ${memoryRemindersStore.size} reminders, ${readNotificationMap.size} read states from disk`
+      );
+    } catch (err: any) {
+      console.warn("[Push Store] Failed to load persisted store:", err?.message || err);
+    }
+  }
+
+  let persistTimer: NodeJS.Timeout | null = null;
+  function writeStoreSyncAtomic() {
+    try {
+      if (!fs.existsSync(DATA_DIR)) {
+        fs.mkdirSync(DATA_DIR, { recursive: true });
+      }
+      const payload: PersistedPushStore = {
+        installations: Object.fromEntries(memoryInstallationStore.entries()),
+        reminders: Object.fromEntries(memoryRemindersStore.entries()),
+        readNotificationIds: Object.fromEntries(readNotificationMap.entries()),
+      };
+      const tmpPath = `${PUSH_STORE_PATH}.tmp.${process.pid}`;
+      fs.writeFileSync(tmpPath, JSON.stringify(payload, null, 2), "utf8");
+      fs.renameSync(tmpPath, PUSH_STORE_PATH);
+    } catch (err: any) {
+      console.warn("[Push Store] Failed to persist store to disk:", err?.message || err);
+    }
+  }
+
+  function schedulePersistToDisk(immediate = false) {
+    if (immediate) {
+      if (persistTimer) {
+        clearTimeout(persistTimer);
+        persistTimer = null;
+      }
+      writeStoreSyncAtomic();
+      return;
+    }
+    if (persistTimer) return;
+    persistTimer = setTimeout(() => {
+      persistTimer = null;
+      writeStoreSyncAtomic();
+    }, 250);
+  }
+
+  loadPersistedStoreFromDisk();
+
+  // =========================================================================
+  // Real-time Cross-Device SSE Broadcaster
+  // =========================================================================
+  const sseClients = new Set<express.Response>();
+
+  function broadcastNotificationSync(reason: string, extra?: Record<string, any>) {
+    if (sseClients.size === 0) return;
+    const payload = JSON.stringify({
+      reason,
+      serverTime: new Date().toISOString(),
+      ...extra,
+    });
+    const frame = `event: sync\ndata: ${payload}\n\n`;
+    for (const client of Array.from(sseClients)) {
+      try {
+        client.write(frame);
+      } catch {
+        sseClients.delete(client);
+      }
+    }
+  }
+
+  // Installation store helpers (Firestore + durable disk + memory cache)
   async function getInstallationFromStorage(safeDocId: string): Promise<PushInstallationRecord | null> {
     if (db && firestoreAvailable) {
       try {
@@ -120,6 +242,10 @@ async function startServer() {
             fid: data.fid,
             secretHash: data.secretHash,
             enabled: data.enabled !== false,
+            deviceLabel: data.deviceLabel,
+            platform: data.platform,
+            userAgent: data.userAgent,
+            lastSeenAt: data.lastSeenAt || (data.updatedAt?.toDate ? data.updatedAt.toDate().toISOString() : data.updatedAt),
             createdAt: data.createdAt?.toDate ? data.createdAt.toDate().toISOString() : (data.createdAt || new Date().toISOString()),
             updatedAt: data.updatedAt?.toDate ? data.updatedAt.toDate().toISOString() : (data.updatedAt || new Date().toISOString()),
           };
@@ -130,7 +256,7 @@ async function startServer() {
         if (err?.code === 7 || err?.message?.includes("PERMISSION_DENIED") || err?.message?.includes("Missing or insufficient permissions")) {
           if (firestoreAvailable) {
             firestoreAvailable = false;
-            console.info("[FCM Server] Firestore permission not active on project. Operating with resilient in-memory storage.");
+            console.info("[FCM Server] Firestore permission not active on project. Operating with durable disk storage.");
           }
         } else {
           console.warn("[FCM Server] Firestore lookup notice:", err?.message || err);
@@ -142,6 +268,7 @@ async function startServer() {
 
   async function saveInstallationToStorage(safeDocId: string, record: PushInstallationRecord): Promise<void> {
     memoryInstallationStore.set(safeDocId, record);
+    schedulePersistToDisk(true);
     if (db && firestoreAvailable) {
       try {
         const docRef = db.collection("pushInstallations").doc(safeDocId);
@@ -149,6 +276,9 @@ async function startServer() {
           fid: record.fid,
           secretHash: record.secretHash,
           enabled: record.enabled,
+          deviceLabel: record.deviceLabel || "",
+          platform: record.platform || "",
+          lastSeenAt: record.lastSeenAt || record.updatedAt,
           createdAt: FieldValue.serverTimestamp(),
           updatedAt: FieldValue.serverTimestamp(),
         }, { merge: true });
@@ -157,7 +287,7 @@ async function startServer() {
         if (err?.code === 7 || err?.message?.includes("PERMISSION_DENIED") || err?.message?.includes("Missing or insufficient permissions")) {
           if (firestoreAvailable) {
             firestoreAvailable = false;
-            console.info("[FCM Server] Firestore write permission not active on project. Operating with resilient in-memory storage.");
+            console.info("[FCM Server] Firestore write permission not active on project. Operating with durable disk storage.");
           }
         } else {
           console.warn("[FCM Server] Error writing installation to Firestore:", err?.message || err);
@@ -168,8 +298,8 @@ async function startServer() {
 
   async function getAllActiveInstallations(): Promise<PushInstallationRecord[]> {
     const recordsMap = new Map<string, PushInstallationRecord>();
-    
-    // Add memory cached items first
+
+    // Add persisted/memory cached items first
     for (const [id, rec] of memoryInstallationStore.entries()) {
       if (rec.enabled) {
         recordsMap.set(id, rec);
@@ -185,6 +315,9 @@ async function startServer() {
             fid: data.fid,
             secretHash: data.secretHash,
             enabled: data.enabled !== false,
+            deviceLabel: data.deviceLabel,
+            platform: data.platform,
+            lastSeenAt: data.lastSeenAt || (data.updatedAt?.toDate ? data.updatedAt.toDate().toISOString() : data.updatedAt),
             createdAt: data.createdAt?.toDate ? data.createdAt.toDate().toISOString() : (data.createdAt || new Date().toISOString()),
             updatedAt: data.updatedAt?.toDate ? data.updatedAt.toDate().toISOString() : (data.updatedAt || new Date().toISOString()),
           };
@@ -195,13 +328,48 @@ async function startServer() {
         if (err?.code === 7 || err?.message?.includes("PERMISSION_DENIED") || err?.message?.includes("Missing or insufficient permissions")) {
           if (firestoreAvailable) {
             firestoreAvailable = false;
-            console.info("[FCM Server] Firestore query permission not active on project. Using memory installations.");
+            console.info("[FCM Server] Firestore query permission not active on project. Using durable disk installations.");
           }
         }
       }
     }
 
     return Array.from(recordsMap.values());
+  }
+
+  async function getAllNonDeletedReminders(): Promise<OrderReminderRecord[]> {
+    if (db && firestoreAvailable) {
+      try {
+        const snap = await db.collection("orderReminders").where("isDeleted", "==", false).get();
+        snap.forEach((doc) => {
+          const data = doc.data() as any;
+          const existing = memoryRemindersStore.get(doc.id);
+          const record: OrderReminderRecord = {
+            id: doc.id,
+            orderId: data.orderId || doc.id,
+            customerName: data.customerName || "Pelanggan",
+            mainType: data.mainType || "Pesanan",
+            subType: data.subType || "",
+            dueTimestamp: Number(data.dueTimestamp || 0),
+            isDelivered: Boolean(data.isDelivered),
+            isDeleted: Boolean(data.isDeleted),
+            hasNotified20Min: Boolean(data.hasNotified20Min || existing?.hasNotified20Min),
+            hasDueAlerted: Boolean(data.hasDueAlerted || existing?.hasDueAlerted),
+            hasThreeHourAlerted: Boolean(data.hasThreeHourAlerted || existing?.hasThreeHourAlerted),
+            googleSheetLink: data.googleSheetLink || "",
+            language: data.language === "en" ? "en" : "ms",
+            updatedAt: data.updatedAt?.toDate ? data.updatedAt.toDate().toISOString() : (data.updatedAt || existing?.updatedAt),
+          };
+          memoryRemindersStore.set(doc.id, record);
+        });
+      } catch (err: any) {
+        if (err?.code === 7 || err?.message?.includes("PERMISSION_DENIED")) {
+          firestoreAvailable = false;
+        }
+      }
+    }
+
+    return Array.from(memoryRemindersStore.values()).filter((r) => !r.isDeleted);
   }
 
   // =========================================================================
@@ -214,10 +382,118 @@ async function startServer() {
     return res.json({
       status: "ok",
       activeInstallationsCount: active.length,
+      remindersCount: memoryRemindersStore.size,
+      sseClientsCount: sseClients.size,
       firestoreAvailable,
       fcmMessagingAvailable,
       serverTime: new Date().toISOString()
     });
+  });
+
+  // 0b. Real-time Server-Sent Events (SSE) stream for multi-device instant sync
+  app.get(["/api/notifications/stream", "/api/notifications/stream/"], async (req, res) => {
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.flushHeaders?.();
+
+    sseClients.add(res);
+
+    const active = await getAllActiveInstallations();
+    res.write(
+      `event: sync\ndata: ${JSON.stringify({
+        reason: "connected",
+        activeDevicesCount: active.length,
+        serverTime: new Date().toISOString(),
+      })}\n\n`
+    );
+
+    const keepalive = setInterval(() => {
+      try {
+        res.write(": ping\n\n");
+      } catch {
+        clearInterval(keepalive);
+        sseClients.delete(res);
+      }
+    }, 25000);
+
+    req.on("close", () => {
+      clearInterval(keepalive);
+      sseClients.delete(res);
+    });
+  });
+
+  // 0c. Unified cross-device notification state endpoint
+  app.get(["/api/notifications/state", "/api/notifications/state/"], async (_req, res) => {
+    try {
+      const [activeInstallations, reminders] = await Promise.all([
+        getAllActiveInstallations(),
+        getAllNonDeletedReminders(),
+      ]);
+
+      return res.json({
+        success: true,
+        activeDevicesCount: activeInstallations.length,
+        devices: activeInstallations.map((inst) => ({
+          id: crypto.createHash("sha256").update(inst.fid).digest("hex").slice(0, 12),
+          fidSuffix: inst.fid.slice(-6),
+          deviceLabel: inst.deviceLabel || "Peranti Berdaftar",
+          platform: inst.platform || "web",
+          lastSeenAt: inst.lastSeenAt || inst.updatedAt,
+        })),
+        reminders,
+        readNotificationIds: Array.from(readNotificationMap.keys()),
+        fcmMessagingAvailable,
+        serverTime: new Date().toISOString(),
+      });
+    } catch (err: any) {
+      console.error("[Sync Server] Error fetching notification state:", err);
+      return res.status(500).json({ success: false, error: err?.message || "Failed to fetch notification state" });
+    }
+  });
+
+  // 0d. Shared read/unread notification state sync across all devices
+  app.post(["/api/notifications/read", "/api/notifications/read/"], async (req, res) => {
+    try {
+      const { ids, action } = req.body || {};
+      const op = action === "unread" || action === "clear" ? action : "read";
+      const now = Date.now();
+
+      if (op === "clear") {
+        readNotificationMap.clear();
+      } else if (Array.isArray(ids)) {
+        for (const rawId of ids.slice(0, 500)) {
+          if (typeof rawId !== "string" || !rawId.trim()) continue;
+          const cleanId = rawId.trim().slice(0, 200);
+          if (op === "unread") {
+            readNotificationMap.delete(cleanId);
+          } else {
+            readNotificationMap.set(cleanId, now);
+          }
+        }
+      } else {
+        return res.status(400).json({ success: false, error: "Expected 'ids' array or action='clear'" });
+      }
+
+      // Prune oldest read entries if store grows beyond 500 items
+      if (readNotificationMap.size > 500) {
+        const sorted = Array.from(readNotificationMap.entries()).sort((a, b) => b[1] - a[1]).slice(0, 500);
+        readNotificationMap.clear();
+        for (const [k, v] of sorted) {
+          readNotificationMap.set(k, v);
+        }
+      }
+
+      schedulePersistToDisk();
+      const readList = Array.from(readNotificationMap.keys());
+      broadcastNotificationSync("read_updated", { readNotificationIds: readList });
+
+      return res.json({ success: true, readNotificationIds: readList });
+    } catch (err: any) {
+      console.error("[Sync Server] Error updating read notifications:", err);
+      return res.status(500).json({ success: false, error: err?.message || "Failed to update read notifications" });
+    }
   });
 
   // 1. Register Firebase Installation ID (FID) atomically
@@ -231,7 +507,7 @@ async function startServer() {
 
   app.post(["/api/push/register", "/api/push/register/"], async (req, res) => {
     try {
-      const { fid, secret } = req.body;
+      const { fid, secret, deviceLabel, platform } = req.body;
 
       if (!fid || typeof fid !== "string" || fid.trim() === "") {
         return res.status(400).json({ success: false, error: "Invalid or missing 'fid' in request body" });
@@ -239,6 +515,9 @@ async function startServer() {
 
       const cleanFid = fid.trim();
       const safeDocId = crypto.createHash("sha256").update(cleanFid).digest("hex");
+      const ua = typeof req.headers["user-agent"] === "string" ? req.headers["user-agent"].slice(0, 200) : "";
+      const cleanLabel = typeof deviceLabel === "string" && deviceLabel.trim() ? deviceLabel.trim().slice(0, 60) : undefined;
+      const cleanPlatform = typeof platform === "string" && platform.trim() ? platform.trim().slice(0, 40) : undefined;
 
       const existing = await getInstallationFromStorage(safeDocId);
 
@@ -251,14 +530,20 @@ async function startServer() {
           fid: cleanFid,
           secretHash,
           enabled: true,
+          deviceLabel: cleanLabel || "Peranti Berdaftar",
+          platform: cleanPlatform || "web",
+          userAgent: ua,
+          lastSeenAt: now,
           createdAt: now,
           updatedAt: now,
         };
 
         await saveInstallationToStorage(safeDocId, newRecord);
+        const active = await getAllActiveInstallations();
+        broadcastNotificationSync("devices_updated", { activeDevicesCount: active.length });
 
-        console.log(`[FCM Server] Registered new anonymous FID: ...${cleanFid.slice(-8)}`);
-        return res.json({ success: true, fid: cleanFid, secret: newSecret, registered: true });
+        console.log(`[FCM Server] Registered new anonymous FID: ...${cleanFid.slice(-8)} (${newRecord.deviceLabel})`);
+        return res.json({ success: true, fid: cleanFid, secret: newSecret, registered: true, activeDevicesCount: active.length });
       } else {
         let returnSecret = secret;
         if (!secret || typeof secret !== "string" || secret.trim() === "") {
@@ -274,13 +559,23 @@ async function startServer() {
           }
         }
 
+        const now = new Date().toISOString();
+        const wasDisabled = !existing.enabled;
         existing.enabled = true;
-        existing.updatedAt = new Date().toISOString();
+        existing.lastSeenAt = now;
+        existing.updatedAt = now;
+        if (cleanLabel) existing.deviceLabel = cleanLabel;
+        if (cleanPlatform) existing.platform = cleanPlatform;
+        if (ua) existing.userAgent = ua;
 
         await saveInstallationToStorage(safeDocId, existing);
+        const active = await getAllActiveInstallations();
+        if (wasDisabled) {
+          broadcastNotificationSync("devices_updated", { activeDevicesCount: active.length });
+        }
 
         console.log(`[FCM Server] Re-registered existing FID: ...${cleanFid.slice(-8)}`);
-        return res.json({ success: true, fid: cleanFid, secret: returnSecret, registered: true });
+        return res.json({ success: true, fid: cleanFid, secret: returnSecret, registered: true, activeDevicesCount: active.length });
       }
     } catch (err: any) {
       console.error("[FCM Server] Registration error:", err?.message || err);
@@ -326,6 +621,8 @@ async function startServer() {
       existing.updatedAt = new Date().toISOString();
 
       await saveInstallationToStorage(safeDocId, existing);
+      const active = await getAllActiveInstallations();
+      broadcastNotificationSync("devices_updated", { activeDevicesCount: active.length });
 
       console.log(`[FCM Server] Unregistered FID: ...${cleanFid.slice(-8)}`);
       return res.json({ success: true, unregistered: true });
@@ -335,10 +632,10 @@ async function startServer() {
     }
   });
 
-  // 3. Send Test FCM Notification with strict installation ownership verification & real error handling
+  // 3. Send Test Notification across ALL synced devices (FCM + real-time SSE broadcast)
   app.post(["/api/push/send-test", "/api/push/send-test/"], async (req, res) => {
     try {
-      const { fid, secret, title, body } = req.body;
+      const { fid, secret, title, body, broadcastAll = true } = req.body;
 
       if (!fid || typeof fid !== "string" || fid.trim() === "") {
         return res.status(400).json({ success: false, error: "Missing or invalid 'fid' parameter", code: "INVALID_FID" });
@@ -353,94 +650,129 @@ async function startServer() {
       }
 
       const targetFid = fid.trim();
-      const safeDocId = crypto.createHash("sha256").update(targetFid).digest("hex");
-      const existing = await getInstallationFromStorage(safeDocId);
+      const isLocalPlaceholder = targetFid === "local_device";
 
-      if (!existing) {
-        return res.status(404).json({
-          success: false,
-          error: "Installation ID not found in registered devices. Please re-register notifications.",
-          code: "INSTALLATION_NOT_FOUND",
-        });
-      }
+      if (!isLocalPlaceholder) {
+        const safeDocId = crypto.createHash("sha256").update(targetFid).digest("hex");
+        const existing = await getInstallationFromStorage(safeDocId);
 
-      if (!existing.enabled) {
-        return res.status(400).json({
-          success: false,
-          error: "Installation is disabled or unregistered.",
-          code: "INSTALLATION_DISABLED",
-        });
-      }
-
-      const providedHash = crypto.createHash("sha256").update(secret.trim()).digest("hex");
-      if (!timingSafeCompare(existing.secretHash, providedHash)) {
-        return res.status(403).json({
-          success: false,
-          error: "Unauthorized: Invalid installation secret. You cannot send notifications to another installation's FID.",
-          code: "INVALID_SECRET",
-        });
-      }
-
-      if (!messaging || !fcmMessagingAvailable) {
-        return res.status(503).json({
-          success: false,
-          error: "Firebase Admin Cloud Messaging push permission (cloudmessaging.messages.create) is not granted to the server service account on Google Cloud. Client-side Service Worker notifications remain fully functional in your browser.",
-          code: "FCM_PERMISSION_UNAVAILABLE",
-        });
-      }
-
-      const notificationTitle = (title && typeof title === "string") ? title.slice(0, 100) : "🔥 Test FCM Notification";
-      const notificationBody = (body && typeof body === "string") ? body.slice(0, 300) : "Firebase Cloud Messaging is active and working properly!";
-
-      console.log(`[FCM Server] Sending authenticated test message to target: ...${targetFid.slice(-8)}`);
-
-      const messagePayload = {
-        token: targetFid,
-        notification: {
-          title: notificationTitle,
-          body: notificationBody,
-        },
-        webpush: {
-          notification: {
-            icon: "https://i.imgur.com/49kNDoe.png",
-            badge: "https://i.imgur.com/49kNDoe.png",
-            tag: "test_notification",
-          },
-          data: {
-            url: "/",
-            source: "fcm_test",
-            timestamp: String(Date.now()),
-          },
-        },
-      };
-
-      try {
-        const messageId = await messaging.send(messagePayload as any);
-        console.log("[FCM Server] Test message accepted by FCM! MessageId:", messageId);
-
-        return res.json({
-          success: true,
-          messageId,
-          sentToFid: targetFid,
-        });
-      } catch (sendErr: any) {
-        const errorCode = sendErr?.code || "FCM_SEND_ERROR";
-        let userMessage = sendErr?.message || "Failed to deliver push notification via Firebase.";
-
-        if (sendErr?.message?.includes("cloudmessaging.messages.create") || sendErr?.message?.includes("PERMISSION_DENIED") || errorCode === "messaging/authentication-error") {
-          fcmMessagingAvailable = false;
-          userMessage = "Google Cloud Service Account lacks 'cloudmessaging.messages.create' permission on project order-submission-501208. Browser Service Worker notifications will handle reminders.";
-          console.info("[FCM Server] Cloud Messaging permission missing on Google Cloud project. Background push dispatch paused; browser notifications remain active.");
-        } else if (errorCode === "messaging/invalid-registration-token" || errorCode === "messaging/registration-token-not-registered") {
-          userMessage = "The device registration token or FID is expired or invalid in Firebase Cloud Messaging. Please disable and re-enable notifications.";
+        if (!existing) {
+          return res.status(404).json({
+            success: false,
+            error: "Installation ID not found in registered devices. Please re-register notifications.",
+            code: "INSTALLATION_NOT_FOUND",
+          });
         }
 
-        return res.status(502).json({
-          success: false,
-          error: userMessage,
-          code: errorCode,
-        });
+        if (!existing.enabled) {
+          return res.status(400).json({
+            success: false,
+            error: "Installation is disabled or unregistered.",
+            code: "INSTALLATION_DISABLED",
+          });
+        }
+
+        const providedHash = crypto.createHash("sha256").update(secret.trim()).digest("hex");
+        if (!timingSafeCompare(existing.secretHash, providedHash)) {
+          return res.status(403).json({
+            success: false,
+            error: "Unauthorized: Invalid installation secret. You cannot send notifications to another installation's FID.",
+            code: "INVALID_SECRET",
+          });
+        }
+
+        existing.lastSeenAt = new Date().toISOString();
+        memoryInstallationStore.set(safeDocId, existing);
+        schedulePersistToDisk();
       }
+
+      const notificationTitle = (title && typeof title === "string") ? title.slice(0, 100) : "🔥 Ujian Notifikasi";
+      const notificationBody = (body && typeof body === "string") ? body.slice(0, 300) : "Peringatan pesanan disegerakkan merentasi semua peranti!";
+
+      const allInstallations = broadcastAll
+        ? await getAllActiveInstallations()
+        : (isLocalPlaceholder ? [] : [{ fid: targetFid } as PushInstallationRecord]);
+
+      // Always broadcast real-time SSE alert so open browsers/PWA tabs across all devices receive the chime + SW alert immediately
+      broadcastNotificationSync("test_alert", {
+        title: notificationTitle,
+        body: notificationBody,
+        senderFidSuffix: targetFid.slice(-8),
+        timestamp: Date.now(),
+      });
+
+      let sentCount = 0;
+      let firstMessageId: string | undefined;
+      let lastFcmError: string | undefined;
+
+      if (messaging && fcmMessagingAvailable && allInstallations.length > 0) {
+        await Promise.allSettled(
+          allInstallations.map(async (inst) => {
+            const messagePayload = buildTargetPayload(inst.fid, {
+              notification: {
+                title: notificationTitle,
+                body: notificationBody,
+              },
+              webpush: {
+                notification: {
+                  icon: "https://i.imgur.com/49kNDoe.png",
+                  badge: "https://i.imgur.com/49kNDoe.png",
+                  tag: "test_notification",
+                },
+                fcmOptions: {
+                  link: "/",
+                },
+                data: {
+                  url: "/",
+                  source: "fcm_test",
+                  timestamp: String(Date.now()),
+                },
+              },
+            });
+
+            try {
+              const msgId = await messaging!.send(messagePayload as any);
+              sentCount++;
+              if (!firstMessageId) firstMessageId = msgId;
+              console.log(`[FCM Server] Test message accepted by FCM for ...${inst.fid.slice(-8)}! MessageId:`, msgId);
+            } catch (sendErr: any) {
+              const errorCode = sendErr?.code || "FCM_SEND_ERROR";
+              if (
+                sendErr?.message?.includes("cloudmessaging.messages.create") ||
+                sendErr?.message?.includes("PERMISSION_DENIED") ||
+                errorCode === "messaging/authentication-error"
+              ) {
+                fcmMessagingAvailable = false;
+                lastFcmError = "Google Cloud Service Account lacks 'cloudmessaging.messages.create' permission.";
+              } else if (
+                errorCode === "messaging/invalid-registration-token" ||
+                errorCode === "messaging/registration-token-not-registered"
+              ) {
+                const staleDocId = crypto.createHash("sha256").update(inst.fid).digest("hex");
+                const staleRec = memoryInstallationStore.get(staleDocId);
+                if (staleRec) {
+                  staleRec.enabled = false;
+                  staleRec.updatedAt = new Date().toISOString();
+                  saveInstallationToStorage(staleDocId, staleRec).catch(() => {});
+                }
+                lastFcmError = "Expired device token deactivated.";
+              } else {
+                lastFcmError = sendErr?.message || errorCode;
+              }
+            }
+          })
+        );
+      }
+
+      return res.json({
+        success: true,
+        messageId: firstMessageId || (sseClients.size > 0 ? "sse_broadcast" : "local_ready"),
+        sentCount,
+        totalDevices: allInstallations.length,
+        sseDelivered: sseClients.size > 0,
+        fcmAvailable: fcmMessagingAvailable,
+        ...(lastFcmError ? { fcmNotice: lastFcmError } : {}),
+      });
     } catch (err: any) {
       console.error("[FCM Server] Push test endpoint error:", err);
       return res.status(500).json({
@@ -457,49 +789,76 @@ async function startServer() {
 
   app.post(["/api/reminders/sync", "/api/reminders/sync/"], async (req, res) => {
     try {
-      const { orders } = req.body;
+      const { orders, deviceFid } = req.body;
       if (!Array.isArray(orders)) {
         return res.status(400).json({ success: false, error: "Expected 'orders' array" });
       }
 
+      if (deviceFid && typeof deviceFid === "string" && deviceFid.trim()) {
+        const devDocId = crypto.createHash("sha256").update(deviceFid.trim()).digest("hex");
+        const devRec = memoryInstallationStore.get(devDocId);
+        if (devRec) {
+          devRec.lastSeenAt = new Date().toISOString();
+          memoryInstallationStore.set(devDocId, devRec);
+        }
+      }
+
       const reminderStates: Record<string, { hasNotified20Min: boolean; hasDueAlerted: boolean; hasThreeHourAlerted: boolean }> = {};
+      let hasMeaningfulChange = false;
 
       for (const ord of orders) {
         if (!ord || !ord.id || !ord.dueTimestamp) continue;
 
         const safeId = String(ord.id);
         const existingMem = memoryRemindersStore.get(safeId);
+        const nextDueTimestamp = Number(ord.dueTimestamp);
+        const wasRescheduledFuture =
+          existingMem &&
+          nextDueTimestamp !== existingMem.dueTimestamp &&
+          nextDueTimestamp > Date.now();
 
-        const updatedRecord: OrderReminderRecord = {
+        const nextRecord: OrderReminderRecord = {
           id: safeId,
           orderId: ord.orderId || safeId,
           customerName: String(ord.customerName || 'Pelanggan'),
           mainType: String(ord.mainType || 'Pesanan'),
           subType: ord.subType ? String(ord.subType) : '',
-          dueTimestamp: Number(ord.dueTimestamp),
+          dueTimestamp: nextDueTimestamp,
           isDelivered: Boolean(ord.isDelivered),
           isDeleted: Boolean(ord.isDeleted),
-          hasNotified20Min: Boolean(ord.hasNotified20Min || existingMem?.hasNotified20Min),
-          hasDueAlerted: Boolean(ord.hasDueAlerted || existingMem?.hasDueAlerted),
-          hasThreeHourAlerted: Boolean(ord.hasThreeHourAlerted || existingMem?.hasThreeHourAlerted),
-          googleSheetLink: ord.googleSheetLink ? String(ord.googleSheetLink) : '',
+          hasNotified20Min: wasRescheduledFuture ? Boolean(ord.hasNotified20Min) : Boolean(ord.hasNotified20Min || existingMem?.hasNotified20Min),
+          hasDueAlerted: wasRescheduledFuture ? Boolean(ord.hasDueAlerted) : Boolean(ord.hasDueAlerted || existingMem?.hasDueAlerted),
+          hasThreeHourAlerted: wasRescheduledFuture ? Boolean(ord.hasThreeHourAlerted) : Boolean(ord.hasThreeHourAlerted || existingMem?.hasThreeHourAlerted),
+          googleSheetLink: ord.googleSheetLink ? String(ord.googleSheetLink) : (existingMem?.googleSheetLink || ''),
           language: ord.language === 'en' ? 'en' : 'ms',
+          createdAt: existingMem?.createdAt || new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         };
 
-        memoryRemindersStore.set(safeId, updatedRecord);
+        if (
+          !existingMem ||
+          existingMem.dueTimestamp !== nextRecord.dueTimestamp ||
+          existingMem.isDelivered !== nextRecord.isDelivered ||
+          existingMem.isDeleted !== nextRecord.isDeleted ||
+          existingMem.googleSheetLink !== nextRecord.googleSheetLink ||
+          existingMem.customerName !== nextRecord.customerName
+        ) {
+          hasMeaningfulChange = true;
+        }
+
+        memoryRemindersStore.set(safeId, nextRecord);
 
         reminderStates[safeId] = {
-          hasNotified20Min: updatedRecord.hasNotified20Min,
-          hasDueAlerted: updatedRecord.hasDueAlerted,
-          hasThreeHourAlerted: updatedRecord.hasThreeHourAlerted,
+          hasNotified20Min: nextRecord.hasNotified20Min,
+          hasDueAlerted: nextRecord.hasDueAlerted,
+          hasThreeHourAlerted: nextRecord.hasThreeHourAlerted,
         };
 
         if (db && firestoreAvailable) {
           try {
             const docRef = db.collection("orderReminders").doc(safeId);
             docRef.set({
-              ...updatedRecord,
+              ...nextRecord,
               updatedAt: FieldValue.serverTimestamp(),
             }, { merge: true }).catch((e) => {
               if (e?.code === 7 || e?.message?.includes("PERMISSION_DENIED")) {
@@ -510,7 +869,25 @@ async function startServer() {
         }
       }
 
-      return res.json({ success: true, reminderStates });
+      if (hasMeaningfulChange || orders.length > 0) {
+        schedulePersistToDisk();
+      }
+      if (hasMeaningfulChange) {
+        broadcastNotificationSync("reminders_updated", { count: orders.length });
+      }
+
+      const [allReminders, activeInstallations] = await Promise.all([
+        getAllNonDeletedReminders(),
+        getAllActiveInstallations(),
+      ]);
+
+      return res.json({
+        success: true,
+        reminderStates,
+        allReminders,
+        readNotificationIds: Array.from(readNotificationMap.keys()),
+        activeDevicesCount: activeInstallations.length,
+      });
     } catch (err: any) {
       console.error("[FCM Server] Error syncing reminders:", err);
       return res.status(500).json({ success: false, error: err?.message || "Failed to sync reminders" });
@@ -519,72 +896,19 @@ async function startServer() {
 
   // Server-side reminder check loop (runs every 30 seconds)
   async function checkAndSendPushReminders() {
-    if (!messaging || !fcmMessagingAvailable) return;
-
     try {
       const now = Date.now();
       const TWENTY_MINS = 20 * 60 * 1000;
       const THREE_HOURS = 3 * 60 * 60 * 1000;
 
-      // 1. Gather all active orders from memory store and Firestore
-      const activeOrders: OrderReminderRecord[] = [];
-
-      for (const ord of memoryRemindersStore.values()) {
-        if (!ord.isDelivered && !ord.isDeleted) {
-          activeOrders.push({ ...ord });
-        }
-      }
-
-      if (db && firestoreAvailable) {
-        try {
-          const snap = await db.collection("orderReminders")
-            .where("isDelivered", "==", false)
-            .where("isDeleted", "==", false)
-            .get();
-
-          snap.forEach((doc) => {
-            const data = doc.data() as any;
-            const existingIdx = activeOrders.findIndex(o => o.id === doc.id);
-            const record: OrderReminderRecord = {
-              id: doc.id,
-              orderId: data.orderId || doc.id,
-              customerName: data.customerName || 'Pelanggan',
-              mainType: data.mainType || 'Pesanan',
-              subType: data.subType || '',
-              dueTimestamp: Number(data.dueTimestamp),
-              isDelivered: Boolean(data.isDelivered),
-              isDeleted: Boolean(data.isDeleted),
-              hasNotified20Min: Boolean(data.hasNotified20Min),
-              hasDueAlerted: Boolean(data.hasDueAlerted),
-              hasThreeHourAlerted: Boolean(data.hasThreeHourAlerted),
-              googleSheetLink: data.googleSheetLink || '',
-              language: data.language === 'en' ? 'en' : 'ms',
-            };
-
-            if (existingIdx !== -1) {
-              activeOrders[existingIdx] = record;
-            } else {
-              activeOrders.push(record);
-            }
-            memoryRemindersStore.set(doc.id, record);
-          });
-        } catch (dbErr: any) {
-          if (dbErr?.code === 7 || dbErr?.message?.includes("PERMISSION_DENIED")) {
-            firestoreAvailable = false;
-          }
-        }
-      }
-
+      const allNonDeleted = await getAllNonDeletedReminders();
+      const activeOrders = allNonDeleted.filter((ord) => !ord.isDelivered && !ord.isDeleted);
       if (activeOrders.length === 0) return;
 
-      // 2. Gather all active installations
       const installations = await getAllActiveInstallations();
-      if (installations.length === 0) return;
+      let storeModified = false;
 
-      // 3. Check deadlines
       for (const order of activeOrders) {
-        if (!fcmMessagingAvailable) break;
-
         const timeUntilDue = order.dueTimestamp - now;
         const lang = order.language || 'ms';
 
@@ -596,38 +920,55 @@ async function startServer() {
             : `Pesanan untuk ${order.customerName} (${order.mainType} ${order.subType}) berbaki kurang dari 20 minit!`;
 
           let sentSuccessfully = false;
-          for (const inst of installations) {
-            try {
-              await messaging.send({
-                token: inst.fid,
-                notification: { title, body },
-                webpush: {
-                  notification: {
-                    icon: "https://i.imgur.com/49kNDoe.png",
-                    badge: "https://i.imgur.com/49kNDoe.png",
-                    tag: `due_soon_${order.id}`,
+          if (sseClients.size > 0) {
+            broadcastNotificationSync("order_alert", {
+              orderId: order.orderId || order.id,
+              alertType: "due_soon",
+              title,
+              body,
+            });
+            sentSuccessfully = true;
+          }
+
+          if (messaging && fcmMessagingAvailable && installations.length > 0) {
+            for (const inst of installations) {
+              try {
+                await messaging.send(buildTargetPayload(inst.fid, {
+                  notification: { title, body },
+                  webpush: {
+                    notification: {
+                      icon: "https://i.imgur.com/49kNDoe.png",
+                      badge: "https://i.imgur.com/49kNDoe.png",
+                      tag: `due_soon_${order.id}`,
+                    },
+                    fcmOptions: { link: "/" },
+                    data: {
+                      url: "/",
+                      orderId: order.orderId || order.id,
+                      type: "due_soon",
+                    },
                   },
-                  data: {
-                    url: "/",
-                    orderId: order.orderId || order.id,
-                    type: "due_soon",
-                  },
-                },
-              } as any);
-              sentSuccessfully = true;
-              console.log(`[FCM Server] Sent 20-min push for order ${order.orderId || order.id} to FID ...${inst.fid.slice(-8)}`);
-            } catch (err: any) {
-              if (err?.message?.includes("cloudmessaging.messages.create") || err?.code === 7 || err?.message?.includes("PERMISSION_DENIED")) {
-                fcmMessagingAvailable = false;
-                console.info("[FCM Server] Cloud Messaging permission missing on Google Cloud project. Background push loop paused.");
-                break;
+                }) as any);
+                sentSuccessfully = true;
+                console.log(`[FCM Server] Sent 20-min push for order ${order.orderId || order.id} to FID ...${inst.fid.slice(-8)}`);
+              } catch (err: any) {
+                if (err?.message?.includes("cloudmessaging.messages.create") || err?.code === 7 || err?.message?.includes("PERMISSION_DENIED") || err?.code === "messaging/authentication-error") {
+                  fcmMessagingAvailable = false;
+                  break;
+                } else if (err?.code === "messaging/registration-token-not-registered" || err?.code === "messaging/invalid-registration-token") {
+                  const staleDocId = crypto.createHash("sha256").update(inst.fid).digest("hex");
+                  inst.enabled = false;
+                  saveInstallationToStorage(staleDocId, inst).catch(() => {});
+                }
               }
             }
           }
 
           if (sentSuccessfully) {
             order.hasNotified20Min = true;
+            order.lastNotified20MinAt = new Date().toISOString();
             memoryRemindersStore.set(order.id, order);
+            storeModified = true;
             if (db && firestoreAvailable) {
               try {
                 await db.collection("orderReminders").doc(order.id).update({
@@ -648,38 +989,55 @@ async function startServer() {
             : `Tempahan untuk ${order.customerName} (${order.mainType} ${order.subType}) sudah sampai tempoh sekarang!`;
 
           let sentSuccessfully = false;
-          for (const inst of installations) {
-            try {
-              await messaging.send({
-                token: inst.fid,
-                notification: { title, body },
-                webpush: {
-                  notification: {
-                    icon: "https://i.imgur.com/49kNDoe.png",
-                    badge: "https://i.imgur.com/49kNDoe.png",
-                    tag: `due_now_${order.id}`,
+          if (sseClients.size > 0) {
+            broadcastNotificationSync("order_alert", {
+              orderId: order.orderId || order.id,
+              alertType: "due_now",
+              title,
+              body,
+            });
+            sentSuccessfully = true;
+          }
+
+          if (messaging && fcmMessagingAvailable && installations.length > 0) {
+            for (const inst of installations) {
+              try {
+                await messaging.send(buildTargetPayload(inst.fid, {
+                  notification: { title, body },
+                  webpush: {
+                    notification: {
+                      icon: "https://i.imgur.com/49kNDoe.png",
+                      badge: "https://i.imgur.com/49kNDoe.png",
+                      tag: `due_now_${order.id}`,
+                    },
+                    fcmOptions: { link: "/" },
+                    data: {
+                      url: "/",
+                      orderId: order.orderId || order.id,
+                      type: "due_now",
+                    },
                   },
-                  data: {
-                    url: "/",
-                    orderId: order.orderId || order.id,
-                    type: "due_now",
-                  },
-                },
-              } as any);
-              sentSuccessfully = true;
-              console.log(`[FCM Server] Sent Due-Now push for order ${order.orderId || order.id} to FID ...${inst.fid.slice(-8)}`);
-            } catch (err: any) {
-              if (err?.message?.includes("cloudmessaging.messages.create") || err?.code === 7 || err?.message?.includes("PERMISSION_DENIED")) {
-                fcmMessagingAvailable = false;
-                console.info("[FCM Server] Cloud Messaging permission missing on Google Cloud project. Background push loop paused.");
-                break;
+                }) as any);
+                sentSuccessfully = true;
+                console.log(`[FCM Server] Sent Due-Now push for order ${order.orderId || order.id} to FID ...${inst.fid.slice(-8)}`);
+              } catch (err: any) {
+                if (err?.message?.includes("cloudmessaging.messages.create") || err?.code === 7 || err?.message?.includes("PERMISSION_DENIED") || err?.code === "messaging/authentication-error") {
+                  fcmMessagingAvailable = false;
+                  break;
+                } else if (err?.code === "messaging/registration-token-not-registered" || err?.code === "messaging/invalid-registration-token") {
+                  const staleDocId = crypto.createHash("sha256").update(inst.fid).digest("hex");
+                  inst.enabled = false;
+                  saveInstallationToStorage(staleDocId, inst).catch(() => {});
+                }
               }
             }
           }
 
           if (sentSuccessfully) {
             order.hasDueAlerted = true;
+            order.lastDueAlertedAt = new Date().toISOString();
             memoryRemindersStore.set(order.id, order);
+            storeModified = true;
             if (db && firestoreAvailable) {
               try {
                 await db.collection("orderReminders").doc(order.id).update({
@@ -699,38 +1057,55 @@ async function startServer() {
           const body = `${order.customerName} (${order.mainType}) - Dah siap ke belum? Sila semak status pesanan.`;
 
           let sentSuccessfully = false;
-          for (const inst of installations) {
-            try {
-              await messaging.send({
-                token: inst.fid,
-                notification: { title, body },
-                webpush: {
-                  notification: {
-                    icon: "https://i.imgur.com/49kNDoe.png",
-                    badge: "https://i.imgur.com/49kNDoe.png",
-                    tag: `three_hour_${order.id}`,
+          if (sseClients.size > 0) {
+            broadcastNotificationSync("order_alert", {
+              orderId: order.orderId || order.id,
+              alertType: "three_hour_check",
+              title,
+              body,
+            });
+            sentSuccessfully = true;
+          }
+
+          if (messaging && fcmMessagingAvailable && installations.length > 0) {
+            for (const inst of installations) {
+              try {
+                await messaging.send(buildTargetPayload(inst.fid, {
+                  notification: { title, body },
+                  webpush: {
+                    notification: {
+                      icon: "https://i.imgur.com/49kNDoe.png",
+                      badge: "https://i.imgur.com/49kNDoe.png",
+                      tag: `three_hour_${order.id}`,
+                    },
+                    fcmOptions: { link: "/" },
+                    data: {
+                      url: "/",
+                      orderId: order.orderId || order.id,
+                      type: "three_hour_check",
+                    },
                   },
-                  data: {
-                    url: "/",
-                    orderId: order.orderId || order.id,
-                    type: "three_hour_check",
-                  },
-                },
-              } as any);
-              sentSuccessfully = true;
-              console.log(`[FCM Server] Sent 3-Hour follow up push for order ${order.orderId || order.id} to FID ...${inst.fid.slice(-8)}`);
-            } catch (err: any) {
-              if (err?.message?.includes("cloudmessaging.messages.create") || err?.code === 7 || err?.message?.includes("PERMISSION_DENIED")) {
-                fcmMessagingAvailable = false;
-                console.info("[FCM Server] Cloud Messaging permission missing on Google Cloud project. Background push loop paused.");
-                break;
+                }) as any);
+                sentSuccessfully = true;
+                console.log(`[FCM Server] Sent 3-Hour follow up push for order ${order.orderId || order.id} to FID ...${inst.fid.slice(-8)}`);
+              } catch (err: any) {
+                if (err?.message?.includes("cloudmessaging.messages.create") || err?.code === 7 || err?.message?.includes("PERMISSION_DENIED") || err?.code === "messaging/authentication-error") {
+                  fcmMessagingAvailable = false;
+                  break;
+                } else if (err?.code === "messaging/registration-token-not-registered" || err?.code === "messaging/invalid-registration-token") {
+                  const staleDocId = crypto.createHash("sha256").update(inst.fid).digest("hex");
+                  inst.enabled = false;
+                  saveInstallationToStorage(staleDocId, inst).catch(() => {});
+                }
               }
             }
           }
 
           if (sentSuccessfully) {
             order.hasThreeHourAlerted = true;
+            order.lastThreeHourAlertedAt = new Date().toISOString();
             memoryRemindersStore.set(order.id, order);
+            storeModified = true;
             if (db && firestoreAvailable) {
               try {
                 await db.collection("orderReminders").doc(order.id).update({
@@ -742,6 +1117,11 @@ async function startServer() {
             }
           }
         }
+      }
+
+      if (storeModified) {
+        schedulePersistToDisk();
+        broadcastNotificationSync("reminders_updated");
       }
     } catch (loopErr: any) {
       console.error("[FCM Server] Scheduled reminder loop error:", loopErr?.message || loopErr);

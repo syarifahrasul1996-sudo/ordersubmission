@@ -1,9 +1,12 @@
-import { initializeApp } from 'firebase/app';
-import { getAuth, signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider, onAuthStateChanged, User } from 'firebase/auth';
-import firebaseConfig from '../firebase-applet-config.json';
-
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
+import {
+  signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
+  GoogleAuthProvider,
+  onAuthStateChanged,
+  User,
+} from 'firebase/auth';
+import { firebaseAuth } from './firebaseClient';
 
 const provider = new GoogleAuthProvider();
 provider.addScope('https://www.googleapis.com/auth/spreadsheets');
@@ -11,35 +14,48 @@ provider.addScope('https://www.googleapis.com/auth/contacts');
 
 let isSigningIn = false;
 
-const getStoredToken = () => {
-  const token = localStorage.getItem('google_access_token');
-  const expiry = localStorage.getItem('google_access_token_expiry');
-  if (token && expiry && Date.now() < parseInt(expiry, 10)) {
-    return token;
+// Store OAuth access token strictly in memory (never in localStorage)
+let cachedAccessToken: string | null = null;
+let cachedAccessTokenExpiry = 0;
+
+function purgeLegacyLocalStorageTokens(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.removeItem('google_access_token');
+    localStorage.removeItem('google_access_token_expiry');
+  } catch {
+    // ignore storage errors
   }
-  localStorage.removeItem('google_access_token');
-  localStorage.removeItem('google_access_token_expiry');
-  return null;
 }
 
-let cachedAccessToken: string | null = getStoredToken();
+purgeLegacyLocalStorageTokens();
+
+function getValidInMemoryToken(): string | null {
+  if (cachedAccessToken && Date.now() < cachedAccessTokenExpiry) {
+    return cachedAccessToken;
+  }
+  cachedAccessToken = null;
+  cachedAccessTokenExpiry = 0;
+  return null;
+}
 
 export const initAuth = (
   onAuthSuccess?: (user: User, token: string) => void,
   onAuthFailure?: () => void
 ) => {
-  return onAuthStateChanged(auth, async (user: User | null) => {
+  purgeLegacyLocalStorageTokens();
+  return onAuthStateChanged(firebaseAuth, async (user: User | null) => {
     if (user) {
-      cachedAccessToken = getStoredToken();
-      if (cachedAccessToken) {
-        if (onAuthSuccess) onAuthSuccess(user, cachedAccessToken);
+      const token = getValidInMemoryToken();
+      if (token) {
+        if (onAuthSuccess) onAuthSuccess(user, token);
       } else if (!isSigningIn) {
         if (onAuthFailure) onAuthFailure();
       }
     } else {
       cachedAccessToken = null;
-      localStorage.removeItem('google_access_token');
-      localStorage.removeItem('google_access_token_expiry');
+      cachedAccessTokenExpiry = 0;
+      purgeLegacyLocalStorageTokens();
       if (onAuthFailure) onAuthFailure();
     }
   });
@@ -48,24 +64,25 @@ export const initAuth = (
 export const googleSignIn = async (): Promise<{ user: User; accessToken: string } | null> => {
   try {
     isSigningIn = true;
-    // Try popup first as it is more reliable in iframes if successful
-    const result = await signInWithPopup(auth, provider);
+    const result = await signInWithPopup(firebaseAuth, provider);
     const credential = GoogleAuthProvider.credentialFromResult(result);
     if (!credential?.accessToken) {
       throw new Error('Failed to get access token from Firebase Auth');
     }
 
     cachedAccessToken = credential.accessToken;
-    localStorage.setItem('google_access_token', cachedAccessToken);
-    localStorage.setItem('google_access_token_expiry', (Date.now() + 3500 * 1000).toString());
+    cachedAccessTokenExpiry = Date.now() + 3500 * 1000;
+    purgeLegacyLocalStorageTokens();
 
     return { user: result.user, accessToken: cachedAccessToken };
   } catch (error: any) {
     console.error('Sign in error:', error);
-    if (error.code === 'auth/popup-blocked' || error.code === 'auth/cancelled-query' || error.code === 'auth/popup-closed-by-user') {
-      // Fallback to redirect if popup is blocked or closed prematurely
-      console.log('Popup issue detected, trying redirect...');
-      await signInWithRedirect(auth, provider);
+    if (
+      error.code === 'auth/popup-blocked' ||
+      error.code === 'auth/cancelled-query' ||
+      error.code === 'auth/popup-closed-by-user'
+    ) {
+      await signInWithRedirect(firebaseAuth, provider);
       return null;
     }
     throw error;
@@ -76,17 +93,17 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
 
 export const handleRedirectResult = async (): Promise<{ user: User; accessToken: string } | null> => {
   try {
-    const result = await getRedirectResult(auth);
+    const result = await getRedirectResult(firebaseAuth);
     if (!result) return null;
-    
+
     const credential = GoogleAuthProvider.credentialFromResult(result);
     if (!credential?.accessToken) {
-       throw new Error('Failed to get access token from Firebase Auth');
+      throw new Error('Failed to get access token from Firebase Auth');
     }
 
     cachedAccessToken = credential.accessToken;
-    localStorage.setItem('google_access_token', cachedAccessToken);
-    localStorage.setItem('google_access_token_expiry', (Date.now() + 3500 * 1000).toString());
+    cachedAccessTokenExpiry = Date.now() + 3500 * 1000;
+    purgeLegacyLocalStorageTokens();
 
     return { user: result.user, accessToken: cachedAccessToken };
   } catch (error: any) {
@@ -96,12 +113,12 @@ export const handleRedirectResult = async (): Promise<{ user: User; accessToken:
 };
 
 export const getAccessToken = async (): Promise<string | null> => {
-  return getStoredToken();
+  return getValidInMemoryToken();
 };
 
 export const logout = async () => {
-  await auth.signOut();
+  await firebaseAuth.signOut();
   cachedAccessToken = null;
-  localStorage.removeItem('google_access_token');
-  localStorage.removeItem('google_access_token_expiry');
+  cachedAccessTokenExpiry = 0;
+  purgeLegacyLocalStorageTokens();
 };

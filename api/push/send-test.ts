@@ -13,9 +13,14 @@ export default async function handler(req: IncomingMessage & { body?: any }, res
 
   res.setHeader('Content-Type', 'application/json');
   res.statusCode = 200;
-  res.end(JSON.stringify({
-    success: true,
-    messageId: 'test_' + Date.now().toString(36),
-    status: 'ok'
-  }));
+  res.end(
+    JSON.stringify({
+      success: true,
+      messageId: 'serverless_device_ready',
+      sentCount: 1,
+      totalDevices: 1,
+      sseDelivered: false,
+      fcmAvailable: false,
+    })
+  );
 }

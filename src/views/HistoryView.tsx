@@ -2,13 +2,28 @@ import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { AppState, INITIAL_STATE } from '../types';
 import { cn } from '../cn';
-import { Clock, Trash2, Calendar, AlertCircle, RefreshCcw, Save, Bell, Check, Search, Database, Phone, Settings, ChevronDown, ChevronUp, Link, X, ArrowRight, Zap } from 'lucide-react';
+import { Clock, Trash2, Calendar, AlertCircle, RefreshCcw, Save, Bell, Check, Search, Database, Phone, Settings, ChevronDown, ChevronUp, Link, X, ArrowRight, Zap, Code } from 'lucide-react';
 import { useAppContext } from '../AppContext';
 import { formatPhoneUniversal, getWhatsAppLink, isWhatsAppUsername, parsePhoneAndUsername, parseDateStringToTimestamp, normalizeNameStr, normalizePhoneDigits, parseMainType, deduplicateHistoryList, reconcileOrdersByUniqueId, extractPendapatanValue, smartFetchGoogleScript } from '../utils';
 import { getOrderDueTimestamp } from '../utils/orderWindow';
-
-const GOOGLE_SCRIPT_URL =
-  'https://script.google.com/macros/s/AKfycbw5KpBvJyFpIXmsHueg4XPSRkZ0mg6kxHqjMGp3WEs8Hx_JodvKSoKEg6RMsdH54iCa/exec';
+import {
+  getAnnualSheets,
+  mergeMissingDefaultYears,
+  getGlobalScriptUrl,
+  setGlobalScriptUrl as persistGlobalScriptUrl,
+  getScriptSecret,
+  setScriptSecret as persistScriptSecret,
+  isValidAppsScriptUrl,
+  postToGoogleScript,
+  extractSpreadsheetId as extractSheetIdUtil,
+} from '../utils/cloudConfig';
+import {
+  getCurrentFirebaseUser,
+  signInWithFirebaseGoogle,
+  subscribeToFirebaseAuth,
+} from '../firebaseClient';
+import { safeSetLocalStorage, safeSetLocalStorageJSON } from '../utils/storage';
+import { SetupHelper } from '../components/SetupHelper';
 
 const formatCustomerName = (name?: any) => {
   const str = String(name || '').trim();
@@ -153,55 +168,30 @@ export function HistoryView() {
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState('');
   const [showDbSettings, setShowDbSettings] = useState(false);
-  const [globalScriptUrl, setGlobalScriptUrl] = useState<string>(() => {
-    return localStorage.getItem('db_global_script_url') || GOOGLE_SCRIPT_URL;
-  });
+  const [showSetupHelper, setShowSetupHelper] = useState(false);
+  const [globalScriptUrl, setGlobalScriptUrl] = useState<string>(() => getGlobalScriptUrl());
+  const [scriptSecret, setScriptSecret] = useState<string>(() => getScriptSecret());
+  const [showSecretValue, setShowSecretValue] = useState(false);
+  const [firebaseUser, setFirebaseUser] = useState(() => getCurrentFirebaseUser());
+  const [isSigningInGoogle, setIsSigningInGoogle] = useState(false);
 
   useEffect(() => {
-  const timer = window.setInterval(() => {
-    setCurrentTime(Date.now());
-  }, 60 * 1000);
+    return subscribeToFirebaseAuth((u) => setFirebaseUser(u));
+  }, []);
 
-  return () => {
-    window.clearInterval(timer);
-  };
-}, []);
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setCurrentTime(Date.now());
+    }, 60 * 1000);
 
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, []);
 
-  const [annualSheets, setAnnualSheets] = useState<{ year: string; spreadsheetId: string; scriptUrl: string }[]>(() => {
-    try {
-      const saved = localStorage.getItem('db_annual_sheets');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed.map((s: any) => ({
-            year: String(s.year || ''),
-            spreadsheetId: String(s.spreadsheetId || ''),
-            scriptUrl: String(s.scriptUrl || '')
-          }));
-        }
-      }
-    } catch (e) {
-      console.error(e);
-    }
-    return [
-      {
-        year: '2024',
-        spreadsheetId: '1B9zdWXVLnvj0jNNVnKxcb6cJnS1VLCIdB4j-RR3wOlg',
-        scriptUrl: ''
-      },
-      {
-        year: '2025',
-        spreadsheetId: '1myU9apnYWWtU3snnCw14qI6ZS05i4DY6oOswLz1sCwo',
-        scriptUrl: ''
-      },
-      {
-        year: '2026',
-        spreadsheetId: state.spreadsheetId || '1kUAJYUVhr9bPYErtpnohpvuGGyhBSvJyEOIyzEFivJo',
-        scriptUrl: ''
-      }
-    ];
-  });
+  const [annualSheets, setAnnualSheets] = useState<{ year: string; spreadsheetId: string; scriptUrl: string }[]>(() =>
+    getAnnualSheets()
+  );
 
   const localizedHistoryItems = useMemo(() => {
     const reconciled = reconcileOrdersByUniqueId(history);
@@ -362,14 +352,7 @@ export function HistoryView() {
     return { today: todayCount, tomorrow: tomorrowCount, day2: day2Count, day3: day3Count };
   }, [history, currentTime]);
 
-  const extractId = (input: string) => {
-    const trimmed = input.trim();
-    if (trimmed.includes('docs.google.com/spreadsheets/d/')) {
-      const match = trimmed.match(/\/d\/([a-zA-Z0-9-_]+)/);
-      return match ? match[1] : trimmed;
-    }
-    return trimmed;
-  };
+  const extractId = extractSheetIdUtil;
 
   const getActiveScriptUrl = (sId?: string) => {
     if (globalScriptUrl && globalScriptUrl.trim() !== '') {
@@ -386,11 +369,7 @@ export function HistoryView() {
     if (firstActive) {
       return firstActive.scriptUrl.trim();
     }
-    return GOOGLE_SCRIPT_URL;
-  };
-
-  const jsonpRequest = (url: URL, callbackName: string) => {
-    return smartFetchGoogleScript(url, callbackName);
+    return '';
   };
 
   const handleSyncLink = async (e: React.MouseEvent, item: any) => {
@@ -398,24 +377,29 @@ export function HistoryView() {
     e.stopPropagation();
 
     const spreadsheetId = item.state?.spreadsheetId || state.spreadsheetId;
+    const activeUrl = getActiveScriptUrl(spreadsheetId);
 
-    if (!item.state?.orderId || !spreadsheetId) {
-      setAlertMsg({ type: 'error', message: appLanguage === 'ms' ? 'Kekurangan Order ID atau Spreadsheet ID.' : 'Missing Order ID or Spreadsheet ID.' });
+    if (!item.state?.orderId || !spreadsheetId || !isValidAppsScriptUrl(activeUrl)) {
+      setAlertMsg({
+        type: 'error',
+        message:
+          appLanguage === 'ms'
+            ? 'Kekurangan Order ID, Spreadsheet ID, atau URL Apps Script.'
+            : 'Missing Order ID, Spreadsheet ID, or Apps Script URL.',
+      });
       return;
     }
 
     setSyncingId(item.id);
 
     try {
-      const callbackName = 'jsonp_callback_' + Math.round(100000 * Math.random());
-      const url = new URL(getActiveScriptUrl(spreadsheetId));
+      const url = new URL(activeUrl);
 
       url.searchParams.append('action', 'get_link');
       url.searchParams.append('orderId', item.state.orderId);
       url.searchParams.append('spreadsheetId', spreadsheetId);
-      url.searchParams.append('callback', callbackName);
 
-      const data = await jsonpRequest(url, callbackName);
+      const data = await smartFetchGoogleScript(url);
 
       if (data.status === 'success' && data.link) {
         updateSpecificHistoryItem(item.id, {
@@ -458,73 +442,47 @@ export function HistoryView() {
       }),
     });
 
-    // 2. If spreadsheetId and orderId are configured, gently sync update with Google Sheets in background
-    if (spreadsheetId && orderId) {
-      const activeUrl = getActiveScriptUrl(spreadsheetId);
-      const callbackName = 'jsonp_callback_delivered_' + Math.round(Math.random() * 100000);
-      const url = new URL(activeUrl);
+    // 2. If spreadsheetId, orderId, and script URL are configured, sync POST-only update with Google Sheets
+    const activeUrl = getActiveScriptUrl(spreadsheetId);
+    if (spreadsheetId && orderId && isValidAppsScriptUrl(activeUrl)) {
+      const payload = {
+        action: 'update_delivered',
+        spreadsheetId,
+        orderId,
+        isDelivered: newStatus,
+      };
 
-      url.searchParams.append('action', 'update_delivered');
-      url.searchParams.append('spreadsheetId', spreadsheetId);
-      url.searchParams.append('orderId', orderId);
-      url.searchParams.append('isDelivered', String(newStatus));
-      url.searchParams.append('callback', callbackName);
-
-      const triggerPostFallback = () => {
-        console.log("Executing no-cors POST update_delivered fallback...");
-        fetch(activeUrl, {
-          method: 'POST',
-          mode: 'no-cors',
-          headers: {
-            'Content-Type': 'text/plain;charset=utf-8'
-          },
-          body: JSON.stringify({
-            action: 'update_delivered',
-            spreadsheetId: spreadsheetId,
-            orderId: orderId,
-            isDelivered: newStatus
-          })
-        }).then(() => {
-  console.log(
-    'no-cors POST sent, but server response could not be verified.'
-  );
-
-  updateSpecificHistoryItem(item.id, {
-    syncStatus: 'sent_unverified',
-    syncLastAttempt: Date.now(),
-  });
-        }).catch(postErr => {
-          console.error("POST delivered status fallback failed, queuing for offline:", postErr);
-          addToOfflineQueue({
-            action: 'update_delivered',
-            spreadsheetId: spreadsheetId,
-            orderId: orderId,
-            isDelivered: newStatus
-          }, activeUrl, item.id);
+      try {
+        const result = await postToGoogleScript(activeUrl, payload);
+        if (result?.status === 'success') {
+          updateSpecificHistoryItem(item.id, {
+            syncStatus: 'synced',
+            syncLastSuccess: Date.now(),
+            syncFailCount: 0,
+          });
+          handleGlobalSync(true);
+        } else if (result?.status === 'sent_unverified') {
+          updateSpecificHistoryItem(item.id, {
+            syncStatus: 'sent_unverified',
+            syncLastAttempt: Date.now(),
+          });
+        } else {
+          console.warn('POST update_delivered returned error:', result?.message);
+          addToOfflineQueue(payload, activeUrl, item.id);
           updateSpecificHistoryItem(item.id, {
             syncStatus: 'failed',
             syncFailCount: (item.state?.syncFailCount || 0) + 1,
             syncLastAttempt: Date.now(),
           });
-        });
-      };
-
-      try {
-        const result = await jsonpRequest(url, callbackName);
-        if (!result || result.status !== 'success') {
-          console.warn('Synced status check warning, trying POST fallback:', result?.message || 'Update failed');
-          triggerPostFallback();
-        } else {
-          updateSpecificHistoryItem(item.id, {
-             syncStatus: 'synced',
-             syncLastSuccess: Date.now(),
-             syncFailCount: 0,
-          });
-          handleGlobalSync(true);
         }
-      } catch (err) {
-        console.warn('Failed to sync delivered status update in background, running POST fallback:', err);
-        triggerPostFallback();
+      } catch (postErr) {
+        console.warn('POST update_delivered failed, queuing for offline:', postErr);
+        addToOfflineQueue(payload, activeUrl, item.id);
+        updateSpecificHistoryItem(item.id, {
+          syncStatus: 'failed',
+          syncFailCount: (item.state?.syncFailCount || 0) + 1,
+          syncLastAttempt: Date.now(),
+        });
       }
     }
   };
@@ -561,61 +519,33 @@ export function HistoryView() {
   };
 
   const deleteOrderFromCloud = async (spreadsheetId: string, orderId: string) => {
-    if (spreadsheetId && orderId) {
-      const activeUrl = getActiveScriptUrl(spreadsheetId);
-      const callbackName = 'jsonp_callback_delete_' + Math.round(Math.random() * 100000);
-      const url = new URL(activeUrl);
-
-      url.searchParams.append('action', 'delete_order');
-      url.searchParams.append('spreadsheetId', spreadsheetId);
-      url.searchParams.append('orderId', orderId);
-      url.searchParams.append('callback', callbackName);
-
-      const triggerPostFallback = async () => {
-        console.log("Executing no-cors POST delete_order fallback...");
-        try {
-          await fetch(activeUrl, {
-            method: 'POST',
-            mode: 'no-cors',
-            headers: {
-              'Content-Type': 'text/plain;charset=utf-8'
-            },
-            body: JSON.stringify({
-              action: 'delete_order',
-              spreadsheetId: spreadsheetId,
-              orderId: orderId
-            })
-          });
-          console.log("no-cors POST delete fallback succeeded!");
-        } catch (postErr) {
-          console.error("POST delete fallback failed, queuing for offline:", postErr);
-          addToOfflineQueue({
-            action: 'delete_order',
-            spreadsheetId: spreadsheetId,
-            orderId: orderId
-          }, activeUrl);
-        }
+    const activeUrl = getActiveScriptUrl(spreadsheetId);
+    if (spreadsheetId && orderId && isValidAppsScriptUrl(activeUrl)) {
+      const payload = {
+        action: 'delete_order',
+        spreadsheetId,
+        orderId,
       };
-
       try {
-        const resp = await jsonpRequest(url, callbackName);
-        if (resp && resp.status === 'success') {
-          console.log('Successfully deleted order from cloud:', resp);
-        } else {
-          console.warn('JSONP deletion failed, attempting POST fallback:', resp);
-          await triggerPostFallback();
+        const resp = await postToGoogleScript(activeUrl, payload);
+        if (resp?.status === 'error') {
+          console.warn('POST delete_order rejected:', resp.message);
+          addToOfflineQueue(payload, activeUrl);
         }
-      } catch (err) {
-        console.warn('Failed to delete order from cloud via JSONP, running fallback:', err);
-        await triggerPostFallback();
+      } catch (postErr) {
+        console.error('POST delete_order failed, queuing for offline:', postErr);
+        addToOfflineQueue(payload, activeUrl);
       }
     }
   };
 
   const handleGlobalSync = async (silent = false) => {
-    // Collect all active annual sheets
+    // Collect all active annual sheets with valid script URL
     const activeConfigs = annualSheets.filter(
-      sheet => sheet.spreadsheetId && sheet.spreadsheetId.trim() !== ''
+      sheet =>
+        sheet.spreadsheetId &&
+        sheet.spreadsheetId.trim() !== '' &&
+        isValidAppsScriptUrl(sheet.scriptUrl.trim() || globalScriptUrl)
     );
 
     if (activeConfigs.length === 0) {
@@ -623,8 +553,8 @@ export function HistoryView() {
         setAlertMsg({
           type: 'error',
           message: appLanguage === 'ms'
-            ? 'Sila konfigurasikan sekurang-kurangnya satu spreadsheet ID di bahagian Tetapan Database terlebih dahulu.'
-            : 'Please configure at least one spreadsheet ID in Database Settings first.'
+            ? 'Sila konfigurasikan sekurang-kurangnya satu Spreadsheet ID dan Pautan Apps Script di bahagian Tetapan Database terlebih dahulu.'
+            : 'Please configure at least one Spreadsheet ID and Apps Script URL in Database Settings first.'
         });
       }
       return;
@@ -641,22 +571,19 @@ export function HistoryView() {
       let totalNewCou = 0;
       let totalUpdCou = 0;
 
-      // Perform JSONP sync_recent requests across all active yearly sheets
+      // Perform sync_recent requests across all active yearly sheets
       const fetchPromises = activeConfigs.map(async (sheet) => {
         const rawId = sheet.spreadsheetId.trim();
         const sId = extractId(rawId);
-        const sUrl = sheet.scriptUrl.trim() || GOOGLE_SCRIPT_URL;
+        const sUrl = sheet.scriptUrl.trim() || globalScriptUrl;
 
-        const safeYear = String(sheet.year).replace(/[^\w]/g, '_');
-        const callbackName = 'jsonp_callback_sync_' + Math.round(100000 * Math.random()) + '_' + safeYear;
         const url = new URL(sUrl);
 
         url.searchParams.append('action', 'sync_recent');
         url.searchParams.append('spreadsheetId', sId);
-        url.searchParams.append('callback', callbackName);
 
         try {
-          const data = await jsonpRequest(url, callbackName);
+          const data = await smartFetchGoogleScript(url);
           if (data && data.status === 'success' && Array.isArray(data.orders)) {
             return { year: sheet.year, orders: data.orders, spreadsheetId: sId, success: true };
           }
@@ -841,7 +768,7 @@ export function HistoryView() {
         return deduplicateHistoryList(updatedHistory);
       });
 
-      localStorage.setItem('db_last_sync_time', String(currentNow));
+      safeSetLocalStorage('db_last_sync_time', String(currentNow));
       console.log(`[Sync Debug] Manual sync finished at ${new Date(currentNow).toISOString()}`, {
         successfulSheets: results.filter(r => r.success).length,
         failedSheets: results.filter(r => !r.success).length,
@@ -954,14 +881,18 @@ export function HistoryView() {
   };
 
   const handleRemoteSearch = async () => {
-    const activeConfigs = annualSheets.filter(s => s.spreadsheetId.trim() !== '');
+    const activeConfigs = annualSheets.filter(
+      s =>
+        s.spreadsheetId.trim() !== '' &&
+        isValidAppsScriptUrl(s.scriptUrl.trim() || globalScriptUrl)
+    );
 
     if (activeConfigs.length === 0) {
       setAlertMsg({
         type: 'error',
         message: appLanguage === 'ms'
-          ? 'Sila tetapkan sekurang-kurangnya satu Spreadsheet ID/Pautan di dalam Tetapan sebelum mencari.'
-          : 'Please set at least one Spreadsheet ID/Link in settings before searching.'
+          ? 'Sila tetapkan sekurang-kurangnya satu Spreadsheet ID dan Pautan Apps Script di dalam Tetapan sebelum mencari.'
+          : 'Please set at least one Spreadsheet ID and Apps Script URL in settings before searching.'
       });
       setShowDbSettings(true);
       return;
@@ -977,31 +908,22 @@ export function HistoryView() {
     const allMatchedOrders: any[] = [];
     const errors: string[] = [];
 
-    const extractId = (input: string) => {
-      const trimmed = input.trim();
-      if (trimmed.includes('docs.google.com/spreadsheets/d/')) {
-        const match = trimmed.match(/\/d\/([a-zA-Z0-9-_]+)/);
-        return match ? match[1] : trimmed;
-      }
-      return trimmed;
-    };
+    const extractId = extractSheetIdUtil;
 
     try {
       await Promise.all(
         activeConfigs.map(async (sheet) => {
           try {
             const sId = extractId(sheet.spreadsheetId);
-            const sUrl = sheet.scriptUrl.trim() || GOOGLE_SCRIPT_URL;
+            const sUrl = sheet.scriptUrl.trim() || globalScriptUrl;
 
-            const callbackName = 'jsonp_callback_db_search_' + Math.round(100000 * Math.random()) + '_' + sheet.year;
             const url = new URL(sUrl);
 
             url.searchParams.append('action', 'search_database');
             url.searchParams.append('spreadsheetId', sId);
             url.searchParams.append('query', q);
-            url.searchParams.append('callback', callbackName);
 
-            const data = await jsonpRequest(url, callbackName);
+            const data = await smartFetchGoogleScript(url);
 
             if (data.status === 'success' && Array.isArray(data.orders)) {
               const annotated = data.orders.map((o: any) => {
@@ -1122,8 +1044,14 @@ export function HistoryView() {
     const currentStatus = !!orderData.isDelivered;
     const newStatus = isRetry ? currentStatus : !currentStatus;
 
-    if (!spreadsheetId || !orderId) {
-      setAlertMsg({ type: 'error', message: appLanguage === 'ms' ? 'Kekurangan Order ID atau Spreadsheet ID.' : 'Missing Order ID or Spreadsheet ID.' });
+    if (!spreadsheetId || !orderId || !isValidAppsScriptUrl(scriptUrl)) {
+      setAlertMsg({
+        type: 'error',
+        message:
+          appLanguage === 'ms'
+            ? 'Kekurangan Order ID, Spreadsheet ID, atau URL Apps Script.'
+            : 'Missing Order ID, Spreadsheet ID, or Apps Script URL.',
+      });
       return;
     }
 
@@ -1148,162 +1076,71 @@ export function HistoryView() {
       });
     }
 
+    const payload = {
+      action: 'update_delivered',
+      spreadsheetId,
+      orderId,
+      isDelivered: newStatus,
+    };
+
     try {
-      const callbackName = 'jsonp_callback_remote_delivered_' + Math.round(Math.random() * 100000);
-      const url = new URL(scriptUrl);
-
-      url.searchParams.append('action', 'update_delivered');
-      url.searchParams.append('spreadsheetId', spreadsheetId);
-      url.searchParams.append('orderId', orderId);
-      url.searchParams.append('isDelivered', String(newStatus));
-      url.searchParams.append('callback', callbackName);
-
-      const result = await jsonpRequest(url, callbackName);
-      if (result.status !== 'success') {
-        console.warn('Synced status check warning:', result.message || 'Update failed');
-          // Try POST fallback
-          console.log("Executing no-cors POST update_delivered fallback from remote...");
-          fetch(scriptUrl, {
-            method: 'POST',
-            mode: 'no-cors',
-            headers: {
-              'Content-Type': 'text/plain;charset=utf-8'
-            },
-            body: JSON.stringify({
-              action: 'update_delivered',
-              spreadsheetId: spreadsheetId,
-              orderId: orderId,
-              isDelivered: newStatus
-            })
-          }).then(() => {
-  console.log(
-    'no-cors POST sent, but server response could not be verified.'
-  );
-
-  setRemoteResults((prev) =>
-    prev.map((item, idx) =>
-      idx === index
-        ? {
+      const result = await postToGoogleScript(scriptUrl, payload);
+      if (result?.status === 'success') {
+        setRemoteResults((prev) =>
+          prev.map((item, idx) => (idx === index ? {
             ...item,
-            syncStatus: 'sent_unverified',
-            syncLastAttempt: Date.now()
-          }
-        : item
-    )
-  );
-
-  if (existingIdx !== -1) {
-    updateSpecificHistoryItem(history[existingIdx].id, {
-      syncStatus: 'sent_unverified',
-      syncLastAttempt: Date.now()
-    });
-  }
-          }).catch((postErr) => {
-             console.error("POST delivered status fallback failed, queuing for offline:", postErr);
-             addToOfflineQueue({
-               action: 'update_delivered',
-               spreadsheetId: spreadsheetId,
-               orderId: orderId,
-               isDelivered: newStatus
-             }, scriptUrl, existingIdx !== -1 ? history[existingIdx].id : undefined);
-
-             setRemoteResults((prev) =>
-              prev.map((item, idx) => (idx === index ? { 
-                ...item, 
-                syncStatus: 'failed',
-                syncFailCount: (item.syncFailCount || 0) + 1,
-                syncLastAttempt: Date.now()
-              } : item))
-            );
-            if (existingIdx !== -1) {
-              updateSpecificHistoryItem(history[existingIdx].id, {
-                syncStatus: 'failed',
-                syncFailCount: (history[existingIdx].state?.syncFailCount || 0) + 1,
-                syncLastAttempt: Date.now()
-              });
-            }
-          });
-      } else {
-         setRemoteResults((prev) =>
-          prev.map((item, idx) => (idx === index ? { 
-            ...item, 
             syncStatus: 'synced',
             syncLastSuccess: Date.now(),
             syncFailCount: 0
           } : item))
         );
         if (existingIdx !== -1) {
-           updateSpecificHistoryItem(history[existingIdx].id, {
-             syncStatus: 'synced',
-             syncLastSuccess: Date.now(),
-             syncFailCount: 0
-           });
+          updateSpecificHistoryItem(history[existingIdx].id, {
+            syncStatus: 'synced',
+            syncLastSuccess: Date.now(),
+            syncFailCount: 0
+          });
         }
-      }
-    } catch (err) {
-      console.warn('Failed to sync delivered status update in background:', err);
-      // Try POST fallback
-      console.log("Executing no-cors POST update_delivered fallback from remote catch...");
-      fetch(scriptUrl, {
-        method: 'POST',
-        mode: 'no-cors',
-        headers: {
-          'Content-Type': 'text/plain;charset=utf-8'
-        },
-        body: JSON.stringify({
-          action: 'update_delivered',
-          spreadsheetId: spreadsheetId,
-          orderId: orderId,
-          isDelivered: newStatus
-        })
-      }).then(() => {
-  console.log(
-    'no-cors POST sent, but server response could not be verified.'
-  );
-
-  setRemoteResults((prev) =>
-    prev.map((item, idx) =>
-      idx === index
-        ? {
-            ...item,
-            syncStatus: 'sent_unverified',
-            syncLastAttempt: Date.now()
-          }
-        : item
-    )
-  );
-
-  if (existingIdx !== -1) {
-    updateSpecificHistoryItem(history[existingIdx].id, {
-      syncStatus: 'sent_unverified',
-      syncLastAttempt: Date.now()
-    });
-  }
-}).catch((postErr) => {
-         console.error("POST delivered status fallback failed, queuing for offline:", postErr);
-         addToOfflineQueue({
-           action: 'update_delivered',
-           spreadsheetId: spreadsheetId,
-           orderId: orderId,
-           isDelivered: newStatus
-         }, scriptUrl, existingIdx !== -1 ? history[existingIdx].id : undefined);
-
-         setRemoteResults((prev) =>
-          prev.map((item, idx) => (idx === index ? { 
-            ...item, 
-            syncStatus: 'failed',
-            syncFailCount: (item.syncFailCount || 0) + 1,
-            syncLastAttempt: Date.now()
-          } : item))
+      } else if (result?.status === 'sent_unverified') {
+        setRemoteResults((prev) =>
+          prev.map((item, idx) =>
+            idx === index
+              ? {
+                  ...item,
+                  syncStatus: 'sent_unverified',
+                  syncLastAttempt: Date.now()
+                }
+              : item
+          )
         );
         if (existingIdx !== -1) {
           updateSpecificHistoryItem(history[existingIdx].id, {
-            syncStatus: 'failed',
-            syncFailCount: (history[existingIdx].state?.syncFailCount || 0) + 1,
+            syncStatus: 'sent_unverified',
             syncLastAttempt: Date.now()
           });
         }
-      });
+      } else {
+        throw new Error(result?.message || 'Update failed');
+      }
+    } catch (postErr) {
+      console.error("POST delivered status update failed, queuing for offline:", postErr);
+      addToOfflineQueue(payload, scriptUrl, existingIdx !== -1 ? history[existingIdx].id : undefined);
+
+      setRemoteResults((prev) =>
+        prev.map((item, idx) => (idx === index ? {
+          ...item,
+          syncStatus: 'failed',
+          syncFailCount: (item.syncFailCount || 0) + 1,
+          syncLastAttempt: Date.now()
+        } : item))
+      );
+      if (existingIdx !== -1) {
+        updateSpecificHistoryItem(history[existingIdx].id, {
+          syncStatus: 'failed',
+          syncFailCount: (history[existingIdx].state?.syncFailCount || 0) + 1,
+          syncLastAttempt: Date.now()
+        });
+      }
     }
   };
 
@@ -2099,18 +1936,91 @@ export function HistoryView() {
                   : 'Configure the Spreadsheet ID for each year. You can paste the full Google Sheet Link (URL) or directly the Spreadsheet ID.'}
               </div>
 
+              {/* Authenticated Account Status for Cloud Proxy & Reminders */}
+              <div className="p-3 bg-white rounded-lg border border-gray-100 shadow-sm flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-primary block">
+                    {appLanguage === 'ms' ? 'Pengesahan Akaun (Cloud Proxy):' : 'Account Authentication (Cloud Proxy):'}
+                  </span>
+                  <span className="text-[11px] text-subtext truncate block">
+                    {firebaseUser
+                      ? `${firebaseUser.email || firebaseUser.displayName || 'Signed In'}`
+                      : appLanguage === 'ms'
+                        ? 'Log masuk Google diperlukan untuk proxy awan & segerak peringatan.'
+                        : 'Google sign-in is required for the backend proxy & reminder sync.'}
+                  </span>
+                </div>
+                {!firebaseUser && (
+                  <button
+                    type="button"
+                    disabled={isSigningInGoogle}
+                    onClick={async () => {
+                      try {
+                        setIsSigningInGoogle(true);
+                        await signInWithFirebaseGoogle();
+                      } catch (err: any) {
+                        setAlertMsg({
+                          type: 'error',
+                          message: err?.message || 'Google Sign-In failed',
+                        });
+                      } finally {
+                        setIsSigningInGoogle(false);
+                      }
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-primary text-white font-bold text-[11px] shrink-0 active:scale-95 transition-all disabled:opacity-50"
+                  >
+                    {isSigningInGoogle ? '...' : appLanguage === 'ms' ? 'Log Masuk' : 'Sign In'}
+                  </button>
+                )}
+              </div>
+
               {/* Web App Script URL block shared for all */}
-              <div className="p-3 bg-white rounded-lg border border-gray-100 shadow-sm space-y-1.5">
-                <span className="text-[10px] font-black uppercase tracking-wider text-primary block">
-                  {appLanguage === 'ms' ? 'Pautan Web App Apps Script (Kongsi Untuk Semua):' : 'Global Web App Apps Script URL (Shared for All):'}
-                </span>
-                <input
-                  type="text"
-                  className="w-full text-xs bg-gray-50 font-mono rounded px-2.5 py-1.5 border border-gray-200 outline-none text-text focus:bg-white"
-                  value={globalScriptUrl}
-                  onChange={(e) => setGlobalScriptUrl(e.target.value)}
-                  placeholder="https://script.google.com/macros/s/.../exec"
-                />
+              <div className="p-3 bg-white rounded-lg border border-gray-100 shadow-sm space-y-2">
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-primary block">
+                      {appLanguage === 'ms' ? 'Pautan Web App Apps Script (Kongsi Untuk Semua):' : 'Global Web App Apps Script URL (Shared for All):'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setShowSetupHelper(true)}
+                      className="inline-flex items-center gap-1 text-[10px] font-bold text-blue-600 hover:text-blue-700 hover:underline shrink-0"
+                    >
+                      <Code className="w-3 h-3" />
+                      <span>{appLanguage === 'ms' ? 'Kod & Panduan Apps Script' : 'Apps Script Code & Setup'}</span>
+                    </button>
+                  </div>
+                  <input
+                    type="text"
+                    className="w-full text-xs bg-gray-50 font-mono rounded px-2.5 py-1.5 border border-gray-200 outline-none text-text focus:bg-white"
+                    value={globalScriptUrl}
+                    onChange={(e) => setGlobalScriptUrl(e.target.value)}
+                    placeholder="https://script.google.com/macros/s/.../exec"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-primary block">
+                      {appLanguage === 'ms' ? 'Kunci Rahsia Apps Script (APPS_SCRIPT_SECRET):' : 'Apps Script Shared Secret (APPS_SCRIPT_SECRET):'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setShowSecretValue(!showSecretValue)}
+                      className="text-[10px] font-bold text-subtext hover:text-text"
+                    >
+                      {showSecretValue ? (appLanguage === 'ms' ? 'Sembunyi' : 'Hide') : (appLanguage === 'ms' ? 'Papar' : 'Show')}
+                    </button>
+                  </div>
+                  <input
+                    type={showSecretValue ? 'text' : 'password'}
+                    className="w-full text-xs bg-gray-50 font-mono rounded px-2.5 py-1.5 border border-gray-200 outline-none text-text focus:bg-white"
+                    value={scriptSecret}
+                    onChange={(e) => setScriptSecret(e.target.value)}
+                    placeholder={appLanguage === 'ms' ? 'Masukkan kunci rahsia dari Script Properties...' : 'Enter shared secret from Script Properties...'}
+                    autoComplete="off"
+                  />
+                </div>
               </div>
 
               <div className="space-y-4">
@@ -2179,37 +2089,60 @@ export function HistoryView() {
                         )}
                       </div>
                     </div>
+
+                    <div className="space-y-1">
+                      <span className="text-[10px] text-subtext font-medium block">
+                        {appLanguage === 'ms' ? 'URL Apps Script Khusus Tahun Ini (Pilihan - jika berbeza):' : 'Year-Specific Apps Script URL (Optional - if different):'}
+                      </span>
+                      <input
+                        type="text"
+                        value={sheet.scriptUrl}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setAnnualSheets(prev => prev.map((s, idx) => idx === index ? { ...s, scriptUrl: val } : s));
+                        }}
+                        placeholder={appLanguage === 'ms' ? 'Kosongkan untuk guna URL global di atas...' : 'Leave blank to use Global Web App URL above...'}
+                        className="w-full text-xs bg-gray-50 font-mono rounded px-2.5 py-1.5 border border-gray-200 outline-none text-text focus:bg-white"
+                      />
+                    </div>
                   </div>
                 ))}
+              </div>
+
+              <div className="flex flex-col sm:flex-row gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAnnualSheets(prev => mergeMissingDefaultYears(prev));
+                  }}
+                  className="flex-1 py-2.5 px-3 border border-blue-200 hover:border-blue-400 text-blue-700 font-bold rounded-xl flex items-center justify-center space-x-1.5 text-xs active:scale-[0.98] transition-all bg-blue-50/60"
+                >
+                  <Calendar className="w-3.5 h-3.5" />
+                  <span>{appLanguage === 'ms' ? 'Lengkapkan Slot 2024–2026' : 'Restore 2024–2026 Year Slots'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAnnualSheets(prev => [...prev, { year: '', spreadsheetId: '', scriptUrl: '' }]);
+                  }}
+                  className="flex-1 py-2.5 px-3 border border-dashed border-gray-300 hover:border-blue-400 hover:text-blue-600 text-subtext font-bold rounded-xl flex items-center justify-center space-x-1.5 text-xs active:scale-[0.98] transition-all bg-white"
+                >
+                  <span className="text-base font-normal">+</span>
+                  <span>{appLanguage === 'ms' ? 'Tambah Tahun Baru' : 'Add New Year'}</span>
+                </button>
               </div>
 
               <button
                 type="button"
                 onClick={() => {
-                  setAnnualSheets(prev => [...prev, { year: '', spreadsheetId: '', scriptUrl: '' }]);
-                }}
-                className="w-full py-2.5 border border-dashed border-gray-300 hover:border-blue-400 hover:text-blue-600 text-subtext font-bold rounded-xl flex items-center justify-center space-x-1.5 text-xs active:scale-[0.98] transition-all bg-white"
-              >
-                <span className="text-base font-normal">+</span>
-                <span>{appLanguage === 'ms' ? 'Tambah Tahun Baru' : 'Add New Year'}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  localStorage.setItem('db_annual_sheets', JSON.stringify(annualSheets));
-                  localStorage.setItem('db_global_script_url', globalScriptUrl);
+                  safeSetLocalStorageJSON('db_annual_sheets', annualSheets);
+                  persistGlobalScriptUrl(globalScriptUrl);
+                  persistScriptSecret(scriptSecret);
                   // Save and sync with context state
                   const firstActive = annualSheets.find(s => s.spreadsheetId !== '');
                   if (firstActive) {
-                    const extractId = (input: string) => {
-                      if (input.includes('docs.google.com/spreadsheets/d/')) {
-                        const match = input.match(/\/d\/([a-zA-Z0-9-_]+)/);
-                        return match ? match[1] : input;
-                      }
-                      return input;
-                    };
-                    updateOrderHistoryState({ spreadsheetId: extractId(firstActive.spreadsheetId) });
+                    updateOrderHistoryState({ spreadsheetId: extractSheetIdUtil(firstActive.spreadsheetId) });
                   }
                   setAlertMsg({
                     type: 'success',
@@ -2787,6 +2720,9 @@ export function HistoryView() {
       </div>
     </div>,
     document.body
+  )}
+  {showSetupHelper && (
+    <SetupHelper onClose={() => setShowSetupHelper(false)} appLanguage={appLanguage} />
   )}
 </div>
   );

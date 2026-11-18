@@ -22,8 +22,86 @@ export type FCMStatus =
   | 'permission-denied' 
   | 'permission-granted' 
   | 'registering' 
-  | 'enabled' 
+  | 'enabled'
   | 'failed';
+
+export interface SyncedDeviceInfo {
+  id: string;
+  fidSuffix: string;
+  deviceLabel: string;
+  platform: string;
+  lastSeenAt: string;
+}
+
+export interface ServerOrderReminder {
+  id: string;
+  orderId?: string;
+  customerName: string;
+  mainType: string;
+  subType?: string;
+  dueTimestamp: number;
+  isDelivered: boolean;
+  isDeleted: boolean;
+  hasNotified20Min: boolean;
+  hasDueAlerted: boolean;
+  hasThreeHourAlerted: boolean;
+  googleSheetLink?: string;
+  language?: 'ms' | 'en';
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface CrossDeviceNotificationState {
+  success: boolean;
+  activeDevicesCount: number;
+  devices: SyncedDeviceInfo[];
+  reminders: ServerOrderReminder[];
+  readNotificationIds: string[];
+  fcmMessagingAvailable?: boolean;
+  serverTime?: string;
+}
+
+/**
+ * Derive a clean, human-readable device label & platform for multi-device sync UI.
+ */
+export function getDeviceMetadata(): { deviceLabel: string; platform: string } {
+  if (typeof window === 'undefined') {
+    return { deviceLabel: 'Web Device', platform: 'web' };
+  }
+  const ua = window.navigator.userAgent || '';
+  const standalone = isStandaloneMode();
+
+  let os = 'Desktop';
+  let platform = 'desktop';
+  if (/iPhone/.test(ua)) {
+    os = standalone ? 'iPhone PWA' : 'iPhone';
+    platform = 'ios';
+  } else if (/iPad/.test(ua) || (window.navigator.platform === 'MacIntel' && window.navigator.maxTouchPoints > 1)) {
+    os = standalone ? 'iPad PWA' : 'iPad';
+    platform = 'ios';
+  } else if (/Android/.test(ua)) {
+    os = standalone ? 'Android PWA' : 'Android';
+    platform = 'android';
+  } else if (/Mac OS X|Macintosh/.test(ua)) {
+    os = 'Mac';
+    platform = 'macos';
+  } else if (/Windows/.test(ua)) {
+    os = 'Windows';
+    platform = 'windows';
+  } else if (/Linux/.test(ua)) {
+    os = 'Linux';
+    platform = 'linux';
+  }
+
+  let browser = '';
+  if (/Edg\//.test(ua)) browser = 'Edge';
+  else if (/CriOS|Chrome\//.test(ua)) browser = 'Chrome';
+  else if (/FxiOS|Firefox\//.test(ua)) browser = 'Firefox';
+  else if (/Safari\//.test(ua) && !/Chrome/.test(ua)) browser = 'Safari';
+
+  const deviceLabel = standalone || !browser ? os : `${os} ${browser}`;
+  return { deviceLabel, platform };
+}
 
 /**
  * Check if current device is iOS (iPhone/iPad/iPod).
@@ -97,6 +175,48 @@ let unregisteredUnsubscribe: (() => void) | null = null;
 let foregroundUnsubscribe: (() => void) | null = null;
 
 /**
+ * Wait until a ServiceWorkerRegistration has an active worker (up to timeoutMs).
+ */
+async function waitForActiveServiceWorker(
+  registration: ServiceWorkerRegistration,
+  timeoutMs = 6000
+): Promise<ServiceWorkerRegistration> {
+  if (registration.active) return registration;
+
+  const targetWorker = registration.installing || registration.waiting;
+  if (!targetWorker) {
+    try {
+      const readyReg = await Promise.race([
+        navigator.serviceWorker.ready,
+        new Promise<ServiceWorkerRegistration>((_, reject) =>
+          setTimeout(() => reject(new Error('SW ready timeout')), timeoutMs)
+        )
+      ]);
+      return readyReg || registration;
+    } catch {
+      return registration;
+    }
+  }
+
+  return new Promise<ServiceWorkerRegistration>((resolve) => {
+    const timer = setTimeout(() => {
+      targetWorker.removeEventListener('statechange', onStateChange);
+      resolve(registration);
+    }, timeoutMs);
+
+    const onStateChange = () => {
+      if (targetWorker.state === 'activated' || registration.active) {
+        clearTimeout(timer);
+        targetWorker.removeEventListener('statechange', onStateChange);
+        resolve(registration);
+      }
+    };
+
+    targetWorker.addEventListener('statechange', onStateChange);
+  });
+}
+
+/**
  * Display a visible notification through ServiceWorkerRegistration.showNotification()
  * Fallback to Notification constructor only if ServiceWorker is unavailable.
  */
@@ -118,13 +238,21 @@ export async function showServiceWorkerNotification(
 
   try {
     if ('serviceWorker' in navigator) {
-      let registration = await navigator.serviceWorker.getRegistration('/firebase-messaging-sw.js');
+      let registration = await navigator.serviceWorker.getRegistration('/');
       if (!registration) {
-        registration = await navigator.serviceWorker.ready.catch(() => null as any);
+        registration = await navigator.serviceWorker.getRegistration('/firebase-messaging-sw.js');
       }
       if (!registration) {
-        const regs = await navigator.serviceWorker.getRegistrations();
-        registration = regs[0];
+        registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js', { scope: '/' }).catch(() => undefined);
+      }
+      if (registration) {
+        registration = await waitForActiveServiceWorker(registration, 4000);
+      }
+      if (!registration || !registration.active) {
+        registration = await Promise.race([
+          navigator.serviceWorker.ready,
+          new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), 3000))
+        ]);
       }
 
       if (registration && typeof registration.showNotification === 'function') {
@@ -244,13 +372,17 @@ export async function getFCMStatus(): Promise<FCMStatus> {
  * Send registered FID to application backend for persistent storage.
  * Includes automatic retry mechanism and resilient local fallback if offline or server returns 404.
  */
-async function syncFidToBackend(fid: string, maxRetries = 2): Promise<{ success: boolean; secret?: string; error?: string; localOnly?: boolean }> {
+async function syncFidToBackend(
+  fid: string,
+  maxRetries = 2
+): Promise<{ success: boolean; secret?: string; error?: string; localOnly?: boolean; activeDevicesCount?: number }> {
   let attempt = 0;
   let lastError = '';
 
   const existingSecret = getRegistrationSecret();
   const base = typeof window !== 'undefined' && window.location?.origin ? window.location.origin : '';
   const apiUrl = `${base}/api/push/register`;
+  const { deviceLabel, platform } = getDeviceMetadata();
 
   while (attempt <= maxRetries) {
     try {
@@ -261,6 +393,8 @@ async function syncFidToBackend(fid: string, maxRetries = 2): Promise<{ success:
         },
         body: JSON.stringify({
           fid,
+          deviceLabel,
+          platform,
           ...(existingSecret ? { secret: existingSecret } : {})
         }),
       });
@@ -273,7 +407,17 @@ async function syncFidToBackend(fid: string, maxRetries = 2): Promise<{ success:
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.success) {
         console.log('[FCM] FID successfully synchronized with backend database');
-        return { success: true, secret: data.secret };
+        if (data.secret) {
+          currentRegistrationSecret = data.secret;
+          try {
+            localStorage.setItem('fcm_registration_secret', data.secret);
+          } catch {}
+        }
+        return {
+          success: true,
+          secret: data.secret || existingSecret || undefined,
+          activeDevicesCount: typeof data.activeDevicesCount === 'number' ? data.activeDevicesCount : undefined,
+        };
       } else {
         lastError = data.error || `Server responded with status ${res.status}`;
       }
@@ -289,9 +433,7 @@ async function syncFidToBackend(fid: string, maxRetries = 2): Promise<{ success:
   }
 
   // Resilient fallback: Even if the remote server returned 404 or network was offline,
-  // do NOT fail the user's notification activation on their phone!
-  // The device's browser permission is granted and /firebase-messaging-sw.js is already running.
-  // Generate/retain local secret and save so local notifications and service worker notifications work immediately!
+  // retain local secret so on-device notifications and service worker alerts work immediately.
   const resilientSecret = existingSecret || ('loc_' + Math.random().toString(36).substring(2, 12) + Date.now().toString(36));
   console.info('[FCM] Device registered in resilient standalone mode for FID:', fid);
 
@@ -300,6 +442,17 @@ async function syncFidToBackend(fid: string, maxRetries = 2): Promise<{ success:
     secret: resilientSecret,
     localOnly: true
   };
+}
+
+/**
+ * Refresh this device's registration heartbeat on server so multi-device list & lastSeenAt stay accurate.
+ */
+export async function refreshDeviceRegistrationHeartbeat(): Promise<void> {
+  if (typeof window === 'undefined') return;
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  const fid = getCurrentFid();
+  if (!fid || fid === 'local_device') return;
+  await syncFidToBackend(fid, 1).catch(() => {});
 }
 
 /**
@@ -352,12 +505,13 @@ function attachSharedFCMListeners(
   foregroundUnsubscribe = onMessage(messaging, async (payload) => {
     console.log('[FCM] Foreground message received:', payload);
 
-    if (payload.notification) {
-      const title = payload.notification.title || 'Pesanan & Notifikasi';
-      const body = payload.notification.body || '';
+    if (payload.notification || payload.data?.title) {
+      const title = payload.notification?.title || payload.data?.title || 'Pesanan & Notifikasi';
+      const body = payload.notification?.body || payload.data?.body || '';
+      playAlertChime();
       await showServiceWorkerNotification(title, {
         body,
-        icon: payload.notification.icon || 'https://i.imgur.com/49kNDoe.png',
+        icon: payload.notification?.icon || payload.data?.icon || 'https://i.imgur.com/49kNDoe.png',
         data: payload.data || {},
         tag: (payload.data as any)?.tag || 'fcm_foreground',
       });
@@ -457,6 +611,14 @@ export async function enableFCMNotifications(onFidReceived?: (fid: string) => vo
   }
 
   try {
+    const inIframe = (() => {
+      try {
+        return window.self !== window.top;
+      } catch {
+        return true;
+      }
+    })();
+
     const supported = await isSupported().catch(() => false);
     if (!supported || !('Notification' in window) || !('serviceWorker' in navigator)) {
       console.warn('[FCM] Browser does not support Firebase Cloud Messaging');
@@ -466,6 +628,13 @@ export async function enableFCMNotifications(onFidReceived?: (fid: string) => vo
           fid: null,
           isIOSRequiresPWA: true,
           error: 'Pada iPhone/iPad, Apple memerlukan aplikasi ini ditambah ke Skrin Utama (Add to Home Screen) dahulu untuk mengaktifkan notifikasi push.'
+        };
+      }
+      if (inIframe) {
+        return {
+          success: false,
+          fid: null,
+          error: 'Notifikasi disekat di dalam mod pratonton (iframe). Sila klik butang "Tab Penuh" untuk membuka aplikasi dalam tab pelayar penuh.'
         };
       }
       return { success: false, fid: null, error: 'Pelayar ini tidak menyokong Web Push / Notifications.' };
@@ -481,6 +650,13 @@ export async function enableFCMNotifications(onFidReceived?: (fid: string) => vo
     if (permission === 'default') {
       permission = await Notification.requestPermission();
       if (permission !== 'granted') {
+        if (inIframe && permission === 'denied') {
+          return {
+            success: false,
+            fid: null,
+            error: 'Pelayar menyekat kebenaran notifikasi dalam tetingkap pratonton. Sila tekan "Tab Penuh" di sebelah dan cuba lagi.'
+          };
+        }
         return { success: false, fid: null, error: 'Kebenaran notifikasi tidak diberikan (' + permission + ')' };
       }
     }
@@ -488,16 +664,16 @@ export async function enableFCMNotifications(onFidReceived?: (fid: string) => vo
     // 2. Clean legacy service workers & register /firebase-messaging-sw.js
     await cleanLegacyServiceWorkers();
 
-    const swRegistration = await navigator.serviceWorker.register('/firebase-messaging-sw.js', {
+    const rawRegistration = await navigator.serviceWorker.register('/firebase-messaging-sw.js', {
       scope: '/'
     });
-    await navigator.serviceWorker.ready;
+    const swRegistration = await waitForActiveServiceWorker(rawRegistration, 8000);
 
     // 3. Initialize messaging instance
     const messaging = getMessaging(app);
     messagingInstance = messaging;
 
-    // 4. Asynchronous FID registration handling with 15-second timeout
+    // 4. Asynchronous FID registration handling with 20-second timeout & stale subscription recovery
     return await new Promise<{ success: boolean; fid: string | null; error?: string }>(async (resolve) => {
       let isSettled = false;
 
@@ -508,10 +684,10 @@ export async function enableFCMNotifications(onFidReceived?: (fid: string) => vo
           resolve({
             success: false,
             fid: null,
-            error: 'Masa tamat menunggu pendaftaran Firebase Installation ID.'
+            error: 'Masa tamat menunggu pendaftaran notifikasi. Sila pastikan sambungan internet stabil dan cuba lagi.'
           });
         }
-      }, 15000);
+      }, 20000);
 
       attachSharedFCMListeners(messaging, {
         onFidReceived,
@@ -531,6 +707,31 @@ export async function enableFCMNotifications(onFidReceived?: (fid: string) => vo
           serviceWorkerRegistration: swRegistration
         });
       } catch (regErr: any) {
+        // Recover from stale PushSubscription with mismatched VAPID key (very common on mobile PWAs)
+        const errMsg = String(regErr?.message || '');
+        const isSubConflict =
+          errMsg.includes('applicationServerKey') ||
+          errMsg.includes('InvalidAccessError') ||
+          errMsg.includes('Subscription failed') ||
+          regErr?.name === 'InvalidAccessError';
+
+        if (isSubConflict) {
+          try {
+            console.warn('[FCM] Detected stale push subscription conflict, resetting PushSubscription and retrying...');
+            const existingSub = await swRegistration.pushManager.getSubscription();
+            if (existingSub) {
+              await existingSub.unsubscribe();
+            }
+            await register(messaging, {
+              vapidKey: FCM_VAPID_KEY,
+              serviceWorkerRegistration: swRegistration
+            });
+            return;
+          } catch (retryErr: any) {
+            regErr = retryErr;
+          }
+        }
+
         if (!isSettled) {
           isSettled = true;
           clearTimeout(timeoutId);
@@ -556,6 +757,10 @@ export async function initFCMStartupReconciliation(onPayloadReceived?: (payload:
   if (typeof window === 'undefined') return () => {};
 
   try {
+    if (isIOS() && !isStandaloneMode()) {
+      return () => {};
+    }
+
     const supported = await isSupported().catch(() => false);
     if (!supported || !('Notification' in window) || !('serviceWorker' in navigator)) {
       return () => {};
@@ -565,27 +770,12 @@ export async function initFCMStartupReconciliation(onPayloadReceived?: (payload:
       return () => {};
     }
 
-    const storedFid = getCurrentFid();
-    const storedSecret = getRegistrationSecret();
-
-    if (!storedFid || !storedSecret) {
-      if (storedFid || storedSecret) {
-        currentRegisteredFid = null;
-        currentRegistrationSecret = null;
-        try {
-          localStorage.removeItem('fcm_registered_fid');
-          localStorage.removeItem('fcm_registration_secret');
-        } catch (e) {}
-      }
-      return () => {};
-    }
-
     await cleanLegacyServiceWorkers();
 
-    const swRegistration = await navigator.serviceWorker.register('/firebase-messaging-sw.js', {
+    const rawRegistration = await navigator.serviceWorker.register('/firebase-messaging-sw.js', {
       scope: '/'
     });
-    await navigator.serviceWorker.ready;
+    const swRegistration = await waitForActiveServiceWorker(rawRegistration, 8000);
 
     const messaging = getMessaging(app);
     messagingInstance = messaging;
@@ -598,6 +788,18 @@ export async function initFCMStartupReconciliation(onPayloadReceived?: (payload:
     await register(messaging, {
       vapidKey: FCM_VAPID_KEY,
       serviceWorkerRegistration: swRegistration
+    }).catch(async (err) => {
+      const msg = String(err?.message || '');
+      if (msg.includes('applicationServerKey') || msg.includes('InvalidAccessError')) {
+        const sub = await swRegistration.pushManager.getSubscription().catch(() => null);
+        if (sub) {
+          await sub.unsubscribe().catch(() => {});
+          await register(messaging, {
+            vapidKey: FCM_VAPID_KEY,
+            serviceWorkerRegistration: swRegistration
+          }).catch(() => {});
+        }
+      }
     });
 
     return () => {
@@ -623,21 +825,31 @@ export async function initFCMStartupReconciliation(onPayloadReceived?: (payload:
 export const initFCMForegroundListener = initFCMStartupReconciliation;
 
 /**
- * Send real test notification via backend FCM endpoint.
+ * Send real test notification via backend FCM + SSE broadcast endpoint across all synced devices.
  * Validates permission, service worker, and local installation credentials first.
  */
 export async function sendTestFCMNotification(
   fid: string, 
   title?: string, 
-  body?: string
-): Promise<{ success: boolean; messageId?: string; error?: string; code?: string }> {
+  body?: string,
+  broadcastAll = true
+): Promise<{
+  success: boolean;
+  messageId?: string;
+  sentCount?: number;
+  totalDevices?: number;
+  sseDelivered?: boolean;
+  fcmAvailable?: boolean;
+  error?: string;
+  code?: string;
+}> {
   try {
     if (typeof window === 'undefined') {
       return { success: false, error: 'Environment does not support push notifications.', code: 'WINDOW_UNDEFINED' };
     }
 
     const testTitle = title || '🔥 Ujian Notifikasi';
-    const testBody = body || 'Peringatan tempahan aktif dan berfungsi dengan lancar!';
+    const testBody = body || 'Peringatan tempahan aktif dan disegerakkan merentasi semua peranti!';
 
     // 1. Instant audio chime feedback
     playAlertChime();
@@ -676,50 +888,77 @@ export async function sendTestFCMNotification(
       };
     }
 
-    // 4. Try backend push send if backend is active
+    // 4. Try backend push send across all devices
     let serverSuccess = false;
     let serverMessageId: string | undefined;
+    let sentCount = 0;
+    let totalDevices = 0;
+    let sseDelivered = false;
+    let fcmAvailable: boolean | undefined;
 
-    try {
-      const secret = getRegistrationSecret();
+    const callSendTest = async (secretToUse: string) => {
       const base = typeof window !== 'undefined' && window.location?.origin ? window.location.origin : '';
-      const res = await fetch(`${base}/api/push/send-test`, {
+      return fetch(`${base}/api/push/send-test`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
           fid,
-          secret: secret || 'local_device',
+          secret: secretToUse,
           title: testTitle,
           body: testBody,
+          broadcastAll,
         }),
       });
+    };
+
+    try {
+      let secret = getRegistrationSecret() || 'local_device';
+      let res = await callSendTest(secret);
+
+      // Auto-recover if server forgot this FID (e.g. cold restart or prior standalone secret)
+      if ((res.status === 404 || res.status === 403) && fid && fid !== 'local_device') {
+        const resynced = await syncFidToBackend(fid, 1);
+        if (resynced.success && resynced.secret) {
+          secret = resynced.secret;
+          res = await callSendTest(secret);
+        }
+      }
 
       if (res.ok) {
         const data = await res.json().catch(() => ({}));
         if (data.success || data.messageId || data.status === 'ok') {
           serverSuccess = true;
           serverMessageId = data.messageId;
+          sentCount = typeof data.sentCount === 'number' ? data.sentCount : 0;
+          totalDevices = typeof data.totalDevices === 'number' ? data.totalDevices : 0;
+          sseDelivered = Boolean(data.sseDelivered);
+          fcmAvailable = typeof data.fcmAvailable === 'boolean' ? data.fcmAvailable : undefined;
         }
       }
     } catch {
       // Backend unavailable or 404 on static hosting - continue seamlessly to direct device notification
     }
 
-    if (serverSuccess) {
-      return { success: true, messageId: serverMessageId };
+    // 5. Always ensure this calling device also displays the notification visibly via Service Worker if FCM isn't dispatching
+    if (!serverSuccess || !fcmAvailable || sentCount === 0) {
+      await showServiceWorkerNotification(testTitle, {
+        body: testBody,
+        icon: 'https://i.imgur.com/49kNDoe.png',
+        tag: 'fcm_test_sw_direct',
+      });
     }
 
-    // 5. Direct on-device notification via Service Worker
-    const swResult = await showServiceWorkerNotification(testTitle, {
-      body: testBody,
-      icon: 'https://i.imgur.com/49kNDoe.png',
-      tag: 'fcm_test_sw_direct',
-    });
-
-    if (swResult) {
-      return { success: true, messageId: 'local_sw_test' };
+    if (serverSuccess) {
+      return {
+        success: true,
+        messageId: serverMessageId,
+        sentCount,
+        totalDevices,
+        sseDelivered,
+        fcmAvailable,
+      };
     }
 
     // 6. Direct Notification constructor fallback
@@ -729,16 +968,17 @@ export async function sendTestFCMNotification(
           body: testBody,
           icon: 'https://i.imgur.com/49kNDoe.png',
         });
-        return { success: true, messageId: 'local_notification_api' };
+        return { success: true, messageId: 'local_notification_api', sentCount: 1, totalDevices: 1 };
       }
     } catch (e) {
       console.warn('[FCM] Local notification constructor fallback notice:', e);
     }
 
-    // 7. If visual notification was suppressed by OS focus mode, sound chime already succeeded
     return {
       success: true,
       messageId: 'device_audio_chime',
+      sentCount: 1,
+      totalDevices: 1,
     };
   } catch (err: any) {
     console.warn('[FCM] Notice during test notification:', err);
@@ -751,7 +991,121 @@ export async function sendTestFCMNotification(
 }
 
 /**
- * Synchronize active order reminders to backend for server-side push scheduling
+ * Fetch unified cross-device notification state (synced devices, shared reminders, read notification IDs).
+ */
+export async function fetchCrossDeviceNotificationState(): Promise<CrossDeviceNotificationState | null> {
+  if (typeof window === 'undefined') return null;
+  try {
+    const base = window.location?.origin || '';
+    const res = await fetch(`${base}/api/notifications/state`, {
+      method: 'GET',
+      cache: 'no-store',
+    });
+    if (!res.ok) return null;
+    const data = await res.json().catch(() => null);
+    if (!data || !data.success) return null;
+    return data as CrossDeviceNotificationState;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Sync read/unread notification IDs across all devices.
+ */
+export async function syncReadNotificationsToBackend(
+  ids: string[],
+  action: 'read' | 'unread' | 'clear' = 'read'
+): Promise<string[] | null> {
+  if (typeof window === 'undefined') return null;
+  try {
+    const base = window.location?.origin || '';
+    const res = await fetch(`${base}/api/notifications/read`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ ids, action }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json().catch(() => null);
+    if (!data?.success || !Array.isArray(data.readNotificationIds)) return null;
+    return data.readNotificationIds;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Subscribe to real-time cross-device notification updates via Server-Sent Events (SSE).
+ */
+export function subscribeToNotificationStream(
+  onEvent: (event: { reason: string; [key: string]: any }) => void
+): () => void {
+  if (typeof window === 'undefined' || typeof EventSource === 'undefined') {
+    return () => {};
+  }
+
+  let closed = false;
+  let source: EventSource | null = null;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let consecutiveFailures = 0;
+
+  const connect = () => {
+    if (closed) return;
+    try {
+      const base = window.location?.origin || '';
+      source = new EventSource(`${base}/api/notifications/stream`);
+
+      source.addEventListener('sync', (msg: MessageEvent) => {
+        consecutiveFailures = 0;
+        try {
+          const parsed = JSON.parse(msg.data);
+          if (parsed && parsed.reason) {
+            onEvent(parsed);
+          }
+        } catch {}
+      });
+
+      source.onopen = () => {
+        consecutiveFailures = 0;
+      };
+
+      source.onerror = () => {
+        if (source) {
+          source.close();
+          source = null;
+        }
+        consecutiveFailures++;
+        if (closed || consecutiveFailures > 6) {
+          // Stop reconnecting if endpoint is unavailable (e.g. static host)
+          return;
+        }
+        const backoff = Math.min(3000 * consecutiveFailures, 20000);
+        reconnectTimer = setTimeout(connect, backoff);
+      };
+    } catch {
+      // EventSource blocked or unsupported
+    }
+  };
+
+  connect();
+
+  return () => {
+    closed = true;
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    if (source) {
+      source.close();
+      source = null;
+    }
+  };
+}
+
+/**
+ * Synchronize active order reminders to backend for cross-device and server-side push scheduling
  */
 export async function syncOrderRemindersToBackend(
   orders: Array<{
@@ -769,15 +1123,25 @@ export async function syncOrderRemindersToBackend(
     googleSheetLink?: string;
     language?: 'ms' | 'en';
   }>
-): Promise<{ success: boolean; reminderStates?: Record<string, { hasNotified20Min: boolean; hasDueAlerted: boolean; hasThreeHourAlerted: boolean }> }> {
+): Promise<{
+  success: boolean;
+  reminderStates?: Record<string, { hasNotified20Min: boolean; hasDueAlerted: boolean; hasThreeHourAlerted: boolean }>;
+  allReminders?: ServerOrderReminder[];
+  readNotificationIds?: string[];
+  activeDevicesCount?: number;
+}> {
   try {
     const base = typeof window !== 'undefined' && window.location?.origin ? window.location.origin : '';
+    const deviceFid = getCurrentFid();
     const res = await fetch(`${base}/api/reminders/sync`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ orders }),
+      body: JSON.stringify({
+        orders,
+        ...(deviceFid ? { deviceFid } : {}),
+      }),
     });
 
     if (!res.ok) {
@@ -788,6 +1152,9 @@ export async function syncOrderRemindersToBackend(
     return {
       success: Boolean(data.success),
       reminderStates: data.reminderStates,
+      allReminders: Array.isArray(data.allReminders) ? data.allReminders : undefined,
+      readNotificationIds: Array.isArray(data.readNotificationIds) ? data.readNotificationIds : undefined,
+      activeDevicesCount: typeof data.activeDevicesCount === 'number' ? data.activeDevicesCount : undefined,
     };
   } catch (e) {
     console.warn('[FCM] Background reminder sync failed (offline or server restarting):', e);

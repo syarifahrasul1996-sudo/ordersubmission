@@ -18,9 +18,12 @@ import {
   Share2,
   PlusSquare,
   X,
-  Info
+  Info,
+  RefreshCw,
+  MonitorSmartphone
 } from 'lucide-react';
 import { useAppContext } from '../AppContext';
+import { INITIAL_STATE, OrderHistoryItem } from '../types';
 import { getOrderDueTimestamp } from '../utils/orderWindow';
 import { 
   getFCMStatus, 
@@ -41,6 +44,7 @@ interface NotificationItem {
   title: string;
   message: string;
   severity: 'danger' | 'warning' | 'info' | 'success';
+  isFromOtherDevice?: boolean;
   actionText?: string;
   onAction?: () => void;
 }
@@ -54,7 +58,14 @@ export function NotificationsDropdown() {
     syncOfflineQueue,
     loadOrder,
     pushView,
-    drafts
+    drafts,
+    remoteReminders,
+    syncedDevicesCount,
+    syncedDevices,
+    sharedReadNotificationIds,
+    isSyncingNotifications,
+    markNotificationsRead,
+    syncAllDevicesNotifications
   } = useAppContext();
 
   const [isOpen, setIsOpen] = useState(false);
@@ -70,27 +81,19 @@ export function NotificationsDropdown() {
   const [regError, setRegError] = useState<string | null>(null);
   const [showIOSModal, setShowIOSModal] = useState(false);
   const [audioTestPlayed, setAudioTestPlayed] = useState(false);
+  const [nowTick, setNowTick] = useState(() => Date.now());
 
   const isAppleDevice = useMemo(() => isIOS(), []);
   const isPWA = useMemo(() => isStandaloneMode(), []);
-
-  // Read notification IDs stored in localStorage
-  const [readIds, setReadIds] = useState<string[]>(() => {
+  const inIframe = useMemo(() => {
     try {
-      const saved = localStorage.getItem('app_read_notifications');
-      return saved ? JSON.parse(saved) : [];
+      return typeof window !== 'undefined' && window.self !== window.top;
     } catch {
-      return [];
+      return true;
     }
-  });
+  }, []);
 
-  useEffect(() => {
-    try {
-      localStorage.setItem('app_read_notifications', JSON.stringify(readIds));
-    } catch (e) {
-      console.warn(e);
-    }
-  }, [readIds]);
+  const readIds = sharedReadNotificationIds;
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -101,6 +104,16 @@ export function NotificationsDropdown() {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  // Refresh live time every 30s and pull latest cross-device sync when opening dropdown
+  useEffect(() => {
+    if (isOpen) {
+      setNowTick(Date.now());
+      syncAllDevicesNotifications().catch(() => {});
+    }
+    const timer = setInterval(() => setNowTick(Date.now()), 30000);
+    return () => clearInterval(timer);
+  }, [isOpen, syncAllDevicesNotifications]);
 
   // Update status when dropdown is opened or on mount without prompting
   useEffect(() => {
@@ -130,6 +143,7 @@ export function NotificationsDropdown() {
       setRegisteredFid(result.fid);
       setFcmStatus('enabled');
       setRegError(null);
+      syncAllDevicesNotifications().catch(() => {});
     } else {
       setRegisteredFid(null);
       if (result.isIOSRequiresPWA) {
@@ -180,25 +194,38 @@ export function NotificationsDropdown() {
   };
 
   const handleSendTest = async () => {
-    if (!registeredFid) return;
     setTestSending(true);
     setTestResult(null);
 
     const title = appLanguage === 'ms' ? '🔥 Ujian FCM Berjaya!' : '🔥 FCM Test Successful!';
     const body = appLanguage === 'ms' 
-      ? 'Notifikasi Firebase Cloud Messaging berfungsi dengan lancar di pelayar ini.' 
-      : 'Firebase Cloud Messaging push notification is working reliably in this browser.';
+      ? 'Notifikasi peringatan pesanan berfungsi & disegerakkan ke semua peranti.' 
+      : 'Order reminder notifications are active & synced across all devices.';
 
-    const res = await sendTestFCMNotification(registeredFid, title, body);
+    const res = await sendTestFCMNotification(registeredFid || 'local_device', title, body, true);
     setTestSending(false);
 
     if (res.success) {
       playAlertChime();
+      const totalDevs = res.totalDevices || syncedDevicesCount || 1;
+      const sentDevs = res.sentCount || 0;
+      let msg = '';
+      if (sentDevs > 0 && totalDevs > 1) {
+        msg = appLanguage === 'ms'
+          ? `Notifikasi ujian dihantar & disegerakkan ke ${sentDevs}/${totalDevs} peranti berdaftar!`
+          : `Test notification delivered across ${sentDevs}/${totalDevs} synced devices!`;
+      } else if (res.sseDelivered && totalDevs > 1) {
+        msg = appLanguage === 'ms'
+          ? `Notifikasi disegerakkan secara langsung ke peranti aktif & dipaparkan pada skrin ini (${totalDevs} peranti berdaftar).`
+          : `Notification synced live to active devices and displayed here (${totalDevs} registered devices).`;
+      } else {
+        msg = appLanguage === 'ms'
+          ? 'Notifikasi ujian berjaya dipaparkan pada telefon/pelayar anda! Sistem peringatan aktif.'
+          : 'Test notification displayed on your device! Reminder system is active and ready.';
+      }
       setTestResult({
         success: true,
-        message: appLanguage === 'ms'
-          ? 'Notifikasi ujian berjaya dihantar oleh pelayan FCM! Sila semak dulang notifikasi sistem telefon anda.'
-          : 'Test notification sent by FCM server! Check your system notification banner/tray.'
+        message: msg
       });
     } else {
       // Fire local ServiceWorker notification so user immediately verifies their device display & sound
@@ -228,7 +255,7 @@ export function NotificationsDropdown() {
   // Generate smart notifications from real application state
   const notifications = useMemo(() => {
     const list: NotificationItem[] = [];
-    const now = Date.now();
+    const now = nowTick;
 
     // 1. Offline Queue alert
     if (queueSize > 0) {
@@ -260,13 +287,19 @@ export function NotificationsDropdown() {
       });
     }
 
-    // 3. Active Order Deadlines & Alerts
+    // 3. Active Order Deadlines & Alerts (Local + Remote Synced)
     const activeOrders = history.filter(h => 
       !h.state?.isDeleted && 
       !h.state?.isDelivered && 
       !deletedOrderIds.includes(h.id) &&
       (!h.state?.orderId || !deletedOrderIds.includes(h.state.orderId))
     );
+
+    const localKeySet = new Set<string>();
+    history.forEach(h => {
+      localKeySet.add(h.id);
+      if (h.state?.orderId) localKeySet.add(h.state.orderId);
+    });
 
     activeOrders.forEach(order => {
       const state = order.state || {};
@@ -322,8 +355,88 @@ export function NotificationsDropdown() {
       }
     });
 
+    // 4. Remote synced orders from other devices not yet in local history
+    remoteReminders.forEach(rem => {
+      if (rem.isDeleted || rem.isDelivered) return;
+      if (localKeySet.has(rem.id) || (rem.orderId && localKeySet.has(rem.orderId))) return;
+      if (deletedOrderIds.includes(rem.id) || (rem.orderId && deletedOrderIds.includes(rem.orderId))) return;
+
+      const orderName = rem.customerName || `${rem.mainType} ${rem.subType || ''}`.trim() || 'Tempahan';
+      const openRemoteOrder = () => {
+        const synthesized: OrderHistoryItem = {
+          id: rem.id,
+          timestamp: rem.createdAt ? Date.parse(rem.createdAt) || Date.now() : Date.now(),
+          state: {
+            ...INITIAL_STATE,
+            historyId: rem.id,
+            orderId: rem.orderId || rem.id,
+            customerName: rem.customerName,
+            mainType: rem.mainType,
+            subType: rem.subType || '',
+            dueTimestamp: rem.dueTimestamp,
+            isDelivered: rem.isDelivered,
+            isDeleted: rem.isDeleted,
+            googleSheetLink: rem.googleSheetLink || '',
+            orderLink: rem.googleSheetLink || '',
+            hasNotified: rem.hasNotified20Min,
+            hasDueAlerted: rem.hasDueAlerted,
+            hasThreeHourChecked: rem.hasThreeHourAlerted,
+            threeHourAlerted: rem.hasThreeHourAlerted,
+          },
+          messages: [],
+        };
+        loadOrder(synthesized);
+      };
+
+      if (rem.dueTimestamp) {
+        const diffMinutes = Math.round((rem.dueTimestamp - now) / 60000);
+        if (diffMinutes < 0) {
+          list.push({
+            id: `overdue_${rem.id}`,
+            type: 'overdue',
+            title: appLanguage === 'ms' ? 'Pesanan Melebihi Masa' : 'Order Overdue',
+            message: appLanguage === 'ms'
+              ? `Pesanan "${orderName}" telah melebihi tarikh siap (${Math.abs(diffMinutes)} minit lepas).`
+              : `Order "${orderName}" is overdue by ${Math.abs(diffMinutes)} minute(s).`,
+            severity: 'danger',
+            isFromOtherDevice: true,
+            actionText: appLanguage === 'ms' ? 'Buka Pesanan' : 'Open Order',
+            onAction: openRemoteOrder
+          });
+        } else if (diffMinutes <= 20) {
+          list.push({
+            id: `due_soon_${rem.id}`,
+            type: 'due_soon',
+            title: appLanguage === 'ms' ? 'Pesanan Bakal Siap' : 'Order Due Soon',
+            message: appLanguage === 'ms'
+              ? `Pesanan "${orderName}" perlu disiapkan dalam masa ${diffMinutes} minit!`
+              : `Order "${orderName}" is due in ${diffMinutes} minute(s)!`,
+            severity: 'warning',
+            isFromOtherDevice: true,
+            actionText: appLanguage === 'ms' ? 'Buka Pesanan' : 'Open Order',
+            onAction: openRemoteOrder
+          });
+        }
+      }
+
+      if (!rem.googleSheetLink || rem.googleSheetLink.trim() === '') {
+        list.push({
+          id: `missing_link_${rem.id}`,
+          type: 'missing_link',
+          title: appLanguage === 'ms' ? 'Pautan Canva/File Belum Diisi' : 'Missing Work Link',
+          message: appLanguage === 'ms'
+            ? `Pesanan "${orderName}" belum mempunyai pautan fail/Google Sheets.`
+            : `Order "${orderName}" has no work link attached yet.`,
+          severity: 'info',
+          isFromOtherDevice: true,
+          actionText: appLanguage === 'ms' ? 'Kemaskini' : 'Update',
+          onAction: openRemoteOrder
+        });
+      }
+    });
+
     return list;
-  }, [history, deletedOrderIds, queueSize, drafts, appLanguage]);
+  }, [history, remoteReminders, deletedOrderIds, queueSize, drafts, appLanguage, nowTick]);
 
   const unreadCount = useMemo(() => {
     return notifications.filter(n => !readIds.includes(n.id)).length;
@@ -331,12 +444,14 @@ export function NotificationsDropdown() {
 
   const handleMarkAllRead = () => {
     const allIds = notifications.map(n => n.id);
-    setReadIds(allIds);
+    if (allIds.length > 0) {
+      markNotificationsRead(allIds, 'read').catch(() => {});
+    }
   };
 
   const handleNotificationClick = (item: NotificationItem) => {
     if (!readIds.includes(item.id)) {
-      setReadIds(prev => [...prev, item.id]);
+      markNotificationsRead([item.id], 'read').catch(() => {});
     }
     if (item.onAction) {
       item.onAction();
@@ -393,7 +508,7 @@ export function NotificationsDropdown() {
       </button>
 
       {isOpen && (
-        <div className="absolute right-0 mt-2 w-80 sm:w-96 bg-white dark:bg-[#1C1C1E] border border-gray-100 dark:border-gray-800 rounded-2xl shadow-2xl overflow-hidden shrink-0 z-50 animate-fade-in-up">
+        <div className="fixed inset-x-3 top-[calc(4rem+env(safe-area-inset-top))] sm:absolute sm:inset-x-auto sm:right-0 sm:top-auto sm:mt-2 sm:w-96 bg-white dark:bg-[#1C1C1E] border border-gray-100 dark:border-gray-800 rounded-2xl shadow-2xl overflow-hidden shrink-0 z-50 animate-fade-in-up">
           {/* Header */}
           <div className="p-4 border-b border-gray-100 dark:border-zinc-800/80 flex items-center justify-between bg-gray-50/50 dark:bg-zinc-900/40">
             <div className="flex items-center space-x-2">
@@ -420,7 +535,7 @@ export function NotificationsDropdown() {
           </div>
 
           {/* Body */}
-          <div className="max-h-[24rem] overflow-y-auto divide-y divide-gray-100 dark:divide-zinc-800/50 p-2 space-y-2">
+          <div className="max-h-[70dvh] sm:max-h-[26rem] overflow-y-auto divide-y divide-gray-100 dark:divide-zinc-800/50 p-2 space-y-2">
             
             {/* FCM Status & Test Controller Panel */}
             <div className="p-3 bg-gray-50 dark:bg-zinc-900/70 border border-gray-200 dark:border-zinc-800 rounded-xl space-y-2 text-left">
@@ -433,19 +548,25 @@ export function NotificationsDropdown() {
                   "text-[10px] font-bold px-2 py-0.5 rounded-full border",
                   fcmStatus === 'enabled'
                     ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
-                    : fcmStatus === 'permission-denied'
+                    : fcmStatus === 'permission-denied' || fcmStatus === 'failed'
                       ? "bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20"
                       : fcmStatus === 'ios-requires-pwa' || (isAppleDevice && !isPWA)
                         ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20"
-                        : "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20"
+                        : fcmStatus === 'unsupported'
+                          ? "bg-gray-500/10 text-subtext border-gray-500/20"
+                          : "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20"
                 )}>
                   {fcmStatus === 'enabled' 
                     ? (appLanguage === 'ms' ? 'Aktif' : 'Active') 
                     : fcmStatus === 'permission-denied' 
                       ? (appLanguage === 'ms' ? 'Disekat' : 'Denied') 
-                      : fcmStatus === 'ios-requires-pwa' || (isAppleDevice && !isPWA)
-                        ? (appLanguage === 'ms' ? 'Perlu Skrin Utama' : 'PWA Required')
-                        : (appLanguage === 'ms' ? 'Sedia Diaktifkan' : 'Ready')}
+                      : fcmStatus === 'failed'
+                        ? (appLanguage === 'ms' ? 'Perlu Cuba Semula' : 'Retry Needed')
+                        : fcmStatus === 'unsupported'
+                          ? (inIframe ? (appLanguage === 'ms' ? 'Perlu Tab Penuh' : 'Open Full Tab') : (appLanguage === 'ms' ? 'Tidak Disokong' : 'Unsupported'))
+                          : fcmStatus === 'ios-requires-pwa' || (isAppleDevice && !isPWA)
+                            ? (appLanguage === 'ms' ? 'Perlu Skrin Utama' : 'PWA Required')
+                            : (appLanguage === 'ms' ? 'Sedia Diaktifkan' : 'Ready')}
                 </span>
               </div>
 
@@ -514,13 +635,17 @@ export function NotificationsDropdown() {
                         ? (appLanguage === 'ms'
                             ? 'Kebenaran notifikasi telah disekat pada pelayar. Sila buka tetapan URL di bar pelayar anda dan pilih "Allow Notifications".'
                             : 'Notification permission is blocked. Please open your browser address bar settings and allow notifications.')
-                        : (appLanguage === 'ms'
-                            ? 'Aktifkan notifikasi Firebase untuk menerima peringatan pesanan secara langsung di latar belakang.'
-                            : 'Enable Firebase Cloud Messaging to receive push notifications in the background.')}
+                        : fcmStatus === 'unsupported' && inIframe
+                          ? (appLanguage === 'ms'
+                              ? 'Pelayar menyekat notifikasi dalam tetingkap pratonton. Sila tekan "Tab Penuh" untuk mengaktifkan notifikasi.'
+                              : 'Browser blocks notifications inside preview frames. Tap "Full Tab" to enable notifications.')
+                          : (appLanguage === 'ms'
+                              ? 'Aktifkan notifikasi untuk menerima amaran pesanan siap dan hampir tamat secara automatik.'
+                              : 'Enable notifications to receive automatic order due-soon and deadline alerts.')}
                     </p>
                   )}
 
-                  {/* Activation Action Row (Shown for PWA, Android, Desktop, or if user wants to retry) */}
+                  {/* Activation Action Row */}
                   <div className="flex items-center space-x-2">
                     <button
                       onClick={handleEnableNotifications}
@@ -544,16 +669,18 @@ export function NotificationsDropdown() {
                       )}
                     </button>
 
-                    <a
-                      href={typeof window !== 'undefined' ? window.location.href : '#'}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center space-x-1 bg-white dark:bg-zinc-800 hover:bg-gray-100 dark:hover:bg-zinc-700 text-subtext border border-gray-200 dark:border-zinc-700 font-bold text-xs py-2 px-2.5 rounded-lg active:scale-95 transition-all cursor-pointer"
-                      title={appLanguage === 'ms' ? 'Buka di tab penuh' : 'Open in full tab'}
-                    >
-                      <span>{appLanguage === 'ms' ? 'Tab Penuh' : 'Full Tab'}</span>
-                      <ExternalLink className="w-3 h-3" />
-                    </a>
+                    {inIframe && (
+                      <a
+                        href={typeof window !== 'undefined' ? window.location.href : '#'}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center space-x-1 bg-white dark:bg-zinc-800 hover:bg-gray-100 dark:hover:bg-zinc-700 text-subtext border border-gray-200 dark:border-zinc-700 font-bold text-xs py-2 px-2.5 rounded-lg active:scale-95 transition-all cursor-pointer"
+                        title={appLanguage === 'ms' ? 'Buka di tab penuh' : 'Open in full tab'}
+                      >
+                        <span>{appLanguage === 'ms' ? 'Tab Penuh' : 'Full Tab'}</span>
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    )}
                   </div>
 
                   {regError && (
@@ -607,7 +734,11 @@ export function NotificationsDropdown() {
                     ) : (
                       <>
                         <Send className="w-3.5 h-3.5" />
-                        <span>{appLanguage === 'ms' ? 'Uji Hantar Notifikasi (FCM)' : 'Send Test Notification (FCM)'}</span>
+                        <span>
+                          {syncedDevicesCount > 1
+                            ? (appLanguage === 'ms' ? `Uji Hantar (${syncedDevicesCount} Peranti)` : `Send Test (${syncedDevicesCount} Devices)`)
+                            : (appLanguage === 'ms' ? 'Uji Hantar Notifikasi (FCM)' : 'Send Test Notification (FCM)')}
+                        </span>
                       </>
                     )}
                   </button>
@@ -622,6 +753,49 @@ export function NotificationsDropdown() {
                       {testResult.message}
                     </div>
                   )}
+
+                  {/* Synced Devices Row */}
+                  <div className="p-2 bg-white dark:bg-zinc-950/70 border border-gray-200 dark:border-zinc-800 rounded-lg space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-bold text-text flex items-center space-x-1.5">
+                        <MonitorSmartphone className="w-3.5 h-3.5 text-primary" />
+                        <span>
+                          {appLanguage === 'ms'
+                            ? `${Math.max(syncedDevicesCount, registeredFid ? 1 : 0)} peranti disegerakkan`
+                            : `${Math.max(syncedDevicesCount, registeredFid ? 1 : 0)} device(s) synced`}
+                        </span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => syncAllDevicesNotifications()}
+                        disabled={isSyncingNotifications}
+                        className="text-[10px] font-bold text-primary hover:underline flex items-center space-x-1 cursor-pointer disabled:opacity-50"
+                      >
+                        <RefreshCw className={cn("w-3 h-3", isSyncingNotifications && "animate-spin")} />
+                        <span>{appLanguage === 'ms' ? 'Segerak' : 'Sync'}</span>
+                      </button>
+                    </div>
+                    {syncedDevices.length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        {syncedDevices.map((dev) => (
+                          <span
+                            key={dev.id}
+                            className={cn(
+                              "text-[9px] px-1.5 py-0.5 rounded-md border font-semibold",
+                              registeredFid && registeredFid.endsWith(dev.fidSuffix)
+                                ? "bg-primary/10 text-primary border-primary/20"
+                                : "bg-gray-100 dark:bg-zinc-800 text-subtext border-gray-200 dark:border-zinc-700"
+                            )}
+                          >
+                            {dev.deviceLabel}
+                            {registeredFid && registeredFid.endsWith(dev.fidSuffix)
+                              ? (appLanguage === 'ms' ? ' (Ini)' : ' (This)')
+                              : ''}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
 
                   {/* Subtle, collapsible technical info tucked away */}
                   <details className="text-[9px] text-subtext pt-0.5 opacity-70 hover:opacity-100 transition-opacity">
@@ -691,10 +865,17 @@ export function NotificationsDropdown() {
                     </div>
 
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between">
-                        <h3 className="text-xs font-bold text-text truncate">
-                          {item.title}
-                        </h3>
+                      <div className="flex items-center justify-between gap-1.5">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <h3 className="text-xs font-bold text-text truncate">
+                            {item.title}
+                          </h3>
+                          {item.isFromOtherDevice && (
+                            <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-primary/10 text-primary border border-primary/20 shrink-0">
+                              {appLanguage === 'ms' ? 'Segerak' : 'Synced'}
+                            </span>
+                          )}
+                        </div>
                         {isUnread && (
                           <span className="w-2 h-2 rounded-full bg-primary shrink-0" />
                         )}

@@ -3,9 +3,8 @@ import { useAppContext } from '../AppContext';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LabelList, CartesianGrid } from 'recharts';
 import { RefreshCcw, AlertCircle, Clock, X, ChevronDown } from 'lucide-react';
 import { calculateDeadline, generateMessages, parseDateStringToTimestamp, extractPendapatanValue, smartFetchGoogleScript, isWhatsAppUsername, formatPhoneUniversal, parsePhoneAndUsername } from '../utils';
+import { getAnnualSheets, getGlobalScriptUrl, isValidAppsScriptUrl } from '../utils/cloudConfig';
 import { AppState } from '../types';
-
-const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbw5KpBvJyFpIXmsHueg4XPSRkZ0mg6kxHqjMGp3WEs8Hx_JodvKSoKEg6RMsdH54iCa/exec';
 
 const extractId = (input: string) => {
   if (input.includes('docs.google.com/spreadsheets/d/')) {
@@ -13,10 +12,6 @@ const extractId = (input: string) => {
     return match ? match[1] : input;
   }
   return input.trim();
-};
-
-const jsonpRequest = (url: URL, callbackName: string) => {
-  return smartFetchGoogleScript(url, callbackName);
 };
 
 interface SafeResponsiveContainerProps {
@@ -84,39 +79,11 @@ export function DashboardView() {
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
 
   const annualSheets = useMemo(() => {
-  try {
-    const saved = localStorage.getItem('db_annual_sheets');
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed;
-      }
-    }
-  } catch {
-    // ignore
-  }
-
-  return [
-    {
-      year: '2024',
-      spreadsheetId: '1B9zdWXVLnvj0jNNVnKxcb6cJnS1VLCIdB4j-RR3wOlg',
-      scriptUrl: ''
-    },
-    {
-      year: '2025',
-      spreadsheetId: '1myU9apnYWWtU3snnCw14qI6ZS05i4DY6oOswLz1sCwo',
-      scriptUrl: ''
-    },
-    {
-      year: '2026',
-      spreadsheetId: '1kUAJYUVhr9bPYErtpnohpvuGGyhBSvJyEOIyzEFivJo',
-      scriptUrl: ''
-    }
-  ];
-}, []);
+    return getAnnualSheets();
+  }, []);
 
   const globalScriptUrl = useMemo(() => {
-    return localStorage.getItem('db_global_script_url') || GOOGLE_SCRIPT_URL;
+    return getGlobalScriptUrl();
   }, []);
 
   const fetchDashboardOrders = async (year: string) => {
@@ -124,12 +91,17 @@ export function DashboardView() {
     setError(null);
 
     if (year === 'all') {
-      const activeConfigs = annualSheets.filter((s: any) => s.year && s.spreadsheetId?.trim() !== '');
+      const activeConfigs = annualSheets.filter(
+        (s: any) =>
+          s.year &&
+          s.spreadsheetId?.trim() !== '' &&
+          isValidAppsScriptUrl(s.scriptUrl?.trim() || globalScriptUrl)
+      );
       if (activeConfigs.length === 0) {
         setRemoteOrders([]);
         setError(appLanguage === 'ms' 
-          ? `Tiada Database Cloud dikonfigurasikan. Sila tetapkan di Sejarah > Tetapan.`
-          : `No Cloud Database configured. Please configure in History > Settings.`
+          ? `Tiada Database Cloud / URL Apps Script dikonfigurasikan. Sila tetapkan di Sejarah > Tetapan.`
+          : `No Cloud Database / Apps Script URL configured. Please configure in History > Settings.`
         );
         setIsLoading(false);
         return;
@@ -140,16 +112,13 @@ export function DashboardView() {
           try {
             const sId = extractId(sheetConfig.spreadsheetId);
             const sUrl = sheetConfig.scriptUrl?.trim() || globalScriptUrl;
-            const safeYear = String(sheetConfig.year).replace(/[^\w]/g, '_');
-            const callbackName = 'jsonp_callback_dashboard_' + Math.round(1000000 * Math.random()) + '_' + safeYear;
             const url = new URL(sUrl);
 
             url.searchParams.append('action', 'get_dashboard_orders');
             url.searchParams.append('spreadsheetId', sId);
             url.searchParams.append('year', sheetConfig.year);
-            url.searchParams.append('callback', callbackName);
 
-            const data = await jsonpRequest(url, callbackName);
+            const data = await smartFetchGoogleScript(url);
             if (data && data.status === 'success' && Array.isArray(data.orders)) {
               return data.orders.map((o: any) => ({ ...o, spreadsheetId: sId }));
             }
@@ -184,18 +153,26 @@ export function DashboardView() {
 
     const sId = extractId(sheetConfig.spreadsheetId);
     const sUrl = sheetConfig.scriptUrl?.trim() || globalScriptUrl;
+
+    if (!isValidAppsScriptUrl(sUrl)) {
+      setRemoteOrders([]);
+      setError(
+        appLanguage === 'ms'
+          ? `Pautan Web App Apps Script belum ditetapkan. Sila tetapkan di Sejarah > Tetapan.`
+          : `Apps Script Web App URL not configured. Please configure in History > Settings.`
+      );
+      setIsLoading(false);
+      return;
+    }
     
     try {
-      const safeYear = String(year).replace(/[^\w]/g, '_');
-      const callbackName = 'jsonp_callback_dashboard_' + Math.round(100000 * Math.random()) + '_' + safeYear;
       const url = new URL(sUrl);
 
       url.searchParams.append('action', 'get_dashboard_orders');
       url.searchParams.append('spreadsheetId', sId);
       url.searchParams.append('year', year);
-      url.searchParams.append('callback', callbackName);
 
-      const data = await jsonpRequest(url, callbackName);
+      const data = await smartFetchGoogleScript(url);
       
       if (data && data.status === 'success' && Array.isArray(data.orders)) {
         setRemoteOrders(data.orders.map((o: any) => ({ ...o, spreadsheetId: sId })));

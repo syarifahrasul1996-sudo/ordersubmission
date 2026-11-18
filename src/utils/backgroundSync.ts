@@ -2,27 +2,10 @@ import React, { useEffect, useRef } from 'react';
 import type { OrderHistoryItem, AppState } from '../types';
 import { parseDateStringToTimestamp, normalizeNameStr, normalizePhoneDigits, parseMainType, deduplicateHistoryList, extractPendapatanValue, smartFetchGoogleScript } from '../utils';
 
+import { getActiveScriptUrl, getAnnualSheets, extractSpreadsheetId as extractId, isValidAppsScriptUrl } from './cloudConfig';
+import { safeGetLocalStorage, safeSetLocalStorage } from './storage';
+
 export const BACKGROUND_SYNC_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
-
-/**
- * Performs resilient fetch/JSONP request specifically for background sync
- */
-export function jsonpSyncRequest<T = any>(url: URL, callbackName: string): Promise<T> {
-  return smartFetchGoogleScript<T>(url, callbackName, 50000);
-}
-
-const DEFAULT_SCRIPT_URL =
-  'https://script.google.com/macros/s/AKfycbw5KpBvJyFpIXmsHueg4XPSRkZ0mg6kxHqjMGp3WEs8Hx_JodvKSoKEg6RMsdH54iCa/exec';
-
-const extractId = (input: string) => {
-  if (!input) return '';
-  const trimmed = input.trim();
-  if (trimmed.includes('docs.google.com/spreadsheets/d/')) {
-    const matches = trimmed.match(/\/d\/([a-zA-Z0-9-_]+)/);
-    return matches ? matches[1] : trimmed;
-  }
-  return trimmed;
-};
 
 const parseDueTimestamp = (value: unknown): number => {
   if (typeof value === 'number' && Number.isFinite(value)) {
@@ -71,7 +54,7 @@ export async function silentBackgroundSync(
   }
 
   const syncStartTime = Date.now();
-  const prevLastSyncRaw = localStorage.getItem('db_last_sync_time');
+  const prevLastSyncRaw = safeGetLocalStorage('db_last_sync_time');
   const prevLastSyncMs = prevLastSyncRaw ? parseInt(prevLastSyncRaw, 10) : 0;
   const prevLastSyncISO = prevLastSyncMs ? new Date(prevLastSyncMs).toISOString() : 'None (First Sync)';
   const timeSinceLastSyncSec = prevLastSyncMs ? Math.round((syncStartTime - prevLastSyncMs) / 1000) : null;
@@ -82,54 +65,43 @@ export async function silentBackgroundSync(
   });
 
   try {
-    const globalScriptUrl = localStorage.getItem('db_global_script_url') || DEFAULT_SCRIPT_URL;
-    const savedSheetsStr = localStorage.getItem('db_annual_sheets');
-    let annualSheets: { year: string; spreadsheetId: string; scriptUrl: string }[] = [];
+    const annualSheets = getAnnualSheets();
 
-    if (savedSheetsStr) {
-      try {
-        annualSheets = JSON.parse(savedSheetsStr);
-      } catch (e) {}
-    }
-
-    if (!annualSheets || annualSheets.length === 0) {
-      const currentYear = new Date().getFullYear().toString();
-      annualSheets = [{ year: currentYear, spreadsheetId: '', scriptUrl: globalScriptUrl }];
-    }
-
-    const activeConfigs = annualSheets.filter(
-      s => s.spreadsheetId && s.spreadsheetId.trim() !== ''
-    );
+    const activeConfigs = annualSheets
+      .map(s => ({
+        ...s,
+        resolvedScriptUrl: (s.scriptUrl || '').trim() || getActiveScriptUrl(s.spreadsheetId),
+      }))
+      .filter(
+        s =>
+          s.spreadsheetId &&
+          s.spreadsheetId.trim() !== '' &&
+          isValidAppsScriptUrl(s.resolvedScriptUrl)
+      );
 
     if (activeConfigs.length === 0) {
-      console.warn('[Sync Debug] Background sync aborted: No active spreadsheet IDs configured');
+      console.debug('[Sync Debug] Background sync skipped: No configured spreadsheet ID + Apps Script URL');
       return false;
     }
 
     const fetchPromises = activeConfigs.map(async sheet => {
       const rawId = sheet.spreadsheetId.trim();
       const sId = extractId(rawId);
-      const sUrl = sheet.scriptUrl.trim() || globalScriptUrl;
+      const sUrl = sheet.resolvedScriptUrl;
 
-      const safeYear = String(sheet.year).replace(/[^\w]/g, '_');
-      const callbackName =
-        'jsonp_bg_sync_' + Math.round(100000 * Math.random()) + '_' + safeYear;
       const url = new URL(sUrl);
-
       url.searchParams.append('action', 'sync_recent');
       url.searchParams.append('spreadsheetId', sId);
-      url.searchParams.append('callback', callbackName);
 
       const reqStartTime = Date.now();
 
       try {
-        const data = await jsonpSyncRequest(url, callbackName);
+        const data = await smartFetchGoogleScript(url, 50000);
         const reqEndTime = Date.now();
         const durationMs = reqEndTime - reqStartTime;
 
         if (data && data.status === 'success' && Array.isArray(data.orders)) {
           const sheetUpdateTime = data.serverTime || data.lastUpdated || data.timestamp || new Date(reqEndTime).toISOString();
-          const sheetTimeMs = new Date(sheetUpdateTime).getTime() || reqEndTime;
           const syncLagMs = prevLastSyncMs ? Math.max(0, reqEndTime - prevLastSyncMs) : 0;
 
           console.log(`[Sync Debug] Google Sheet data fetched successfully for ${sheet.year} (${sId}):`, {
@@ -152,7 +124,7 @@ export async function silentBackgroundSync(
 
         return { year: sheet.year, orders: [], spreadsheetId: sId, success: false, sheetUpdateTime: new Date().toISOString() };
       } catch (e) {
-        console.error(`[Sync Debug] Google Sheet JSONP request failed/timed out for ${sheet.year} (${sId}):`, e);
+        console.error(`[Sync Debug] Google Sheet fetch request failed/timed out for ${sheet.year} (${sId}):`, e);
         return { year: sheet.year, orders: [], spreadsheetId: sId, success: false, sheetUpdateTime: new Date().toISOString() };
       }
     });
@@ -334,7 +306,7 @@ export async function silentBackgroundSync(
     });
 
     const now = Date.now();
-    localStorage.setItem('db_last_sync_time', String(now));
+    safeSetLocalStorage('db_last_sync_time', String(now));
 
     console.log(`[Sync Debug] Background sync completed at ${new Date(now).toISOString()}`, {
       totalDurationMs: now - syncStartTime,

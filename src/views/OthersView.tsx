@@ -164,7 +164,7 @@ export function OthersView() {
             <div className="flex justify-between items-center">
               <span className="text-subtext font-medium">{appLanguage === 'ms' ? 'Spreadsheet ID' : 'Spreadsheet ID'}:</span>
               <span className="font-mono font-bold text-text truncate max-w-[180px]" title={state.spreadsheetId}>
-                {state.spreadsheetId || '1kUAJYUV...'}
+                {state.spreadsheetId || (appLanguage === 'ms' ? 'Belum ditetapkan' : 'Not configured')}
               </span>
             </div>
             <div className="flex justify-between items-center">

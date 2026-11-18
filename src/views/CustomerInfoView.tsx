@@ -2,25 +2,17 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { RefreshCcw, Save, Check, ExternalLink, LogOut, AlertCircle, ChevronDown } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useAppContext } from '../AppContext';
-import { calculateDeadline, formatPhoneUniversal, parseDateStringToTimestamp, smartFetchGoogleScript, normalizeUrgencyForSheet } from '../utils';
+import { calculateDeadline, formatPhoneUniversal, parseDateStringToTimestamp, normalizeUrgencyForSheet } from '../utils';
+import { getActiveScriptUrl, resolveSpreadsheetIdForYear, isValidAppsScriptUrl, postToGoogleScript } from '../utils/cloudConfig';
 import { Toast } from '../components/Toast';
 import { SetupHelper } from '../components/SetupHelper';
 import { cn } from '../cn';
+import { safeGetLocalStorageJSON, safeSetLocalStorageJSON, safeRemoveLocalStorage } from '../utils/storage';
 
 function generateOrderId() {
   const now = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
   return `ORD-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
-}
-
-function jsonpRequest<T>(url: string, params: Record<string, string | number | boolean>): Promise<T> {
-  const queryParts: string[] = [];
-  Object.entries(params).forEach(([key, value]) => {
-    queryParts.push(`${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`);
-  });
-  const separator = url.includes('?') ? '&' : '?';
-  const fullUrl = url + (queryParts.length > 0 ? separator + queryParts.join('&') : '');
-  return smartFetchGoogleScript<T>(fullUrl);
 }
 
 export function CustomerInfoView() {
@@ -199,7 +191,6 @@ export function CustomerInfoView() {
   const addOnRef = useRef<HTMLDivElement>(null);
 
   const [spreadsheetId, setSpreadsheetId] = useState(state.spreadsheetId);
-  const webhookUrl = 'https://script.google.com/macros/s/AKfycbw5KpBvJyFpIXmsHueg4XPSRkZ0mg6kxHqjMGp3WEs8Hx_JodvKSoKEg6RMsdH54iCa/exec';
   const [isSaving, setIsSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
@@ -270,36 +261,29 @@ export function CustomerInfoView() {
       setSpreadsheetId(state.spreadsheetId);
 
       // Check if there is unsaved progress to restore
-      try {
-        const savedProgress = localStorage.getItem('customer_form_progress');
-        if (savedProgress) {
-          const data = JSON.parse(savedProgress);
-          // Has meaningful unsaved data?
-          const hasUnsavedData = (data.name && data.name.trim()) || 
-                                 (data.phone && data.phone.trim()) || 
-                                 (data.info && data.info.trim()) || 
-                                 (data.link && data.link.trim());
+      const data = safeGetLocalStorageJSON<Record<string, any> | null>('customer_form_progress', null);
+      if (data) {
+        const hasUnsavedData = (data.name && data.name.trim()) || 
+                               (data.phone && data.phone.trim()) || 
+                               (data.info && data.info.trim()) || 
+                               (data.link && data.link.trim());
+        
+        if (hasUnsavedData) {
+          const isDifferent = data.name !== initVals.initName ||
+                              data.phone !== initVals.initPhone ||
+                              data.info !== initVals.initInfo ||
+                              data.link !== initVals.initLink ||
+                              data.order !== initVals.initOrder ||
+                              data.template !== initVals.initTemplate ||
+                              data.bahasa !== initVals.initBahasa ||
+                              data.addOn !== initVals.initAddOn ||
+                              data.jenis !== initVals.initJenis ||
+                              data.due !== initVals.initDue;
           
-          if (hasUnsavedData) {
-            // Is it actually different from the computed active order details?
-            const isDifferent = data.name !== initVals.initName ||
-                                data.phone !== initVals.initPhone ||
-                                data.info !== initVals.initInfo ||
-                                data.link !== initVals.initLink ||
-                                data.order !== initVals.initOrder ||
-                                data.template !== initVals.initTemplate ||
-                                data.bahasa !== initVals.initBahasa ||
-                                data.addOn !== initVals.initAddOn ||
-                                data.jenis !== initVals.initJenis ||
-                                data.due !== initVals.initDue;
-            
-            if (isDifferent) {
-              setShowResumeBanner(true);
-            }
+          if (isDifferent) {
+            setShowResumeBanner(true);
           }
         }
-      } catch (e) {
-        console.warn('Error checking form progress recovery in localStorage:', e);
       }
 
       const timer = setTimeout(() => {
@@ -310,34 +294,29 @@ export function CustomerInfoView() {
   }, [isActive, state.historyId, state.timestamp]); // fetch when mounted or when switching orders
 
   const handleResumeProgress = () => {
-    try {
-      const savedProgress = localStorage.getItem('customer_form_progress');
-      if (savedProgress) {
-        const data = JSON.parse(savedProgress);
-        if (data.name !== undefined) setName(data.name);
-        if (data.phone !== undefined) setPhone(data.phone);
-        if (data.info !== undefined) setInfo(data.info);
-        if (data.link !== undefined) setLink(data.link);
-        if (data.order !== undefined) setOrder(data.order);
-        if (data.template !== undefined) setTemplate(data.template);
-        if (data.bahasa !== undefined) setBahasa(data.bahasa);
-        if (data.addOn !== undefined) setAddOn(data.addOn);
-        if (data.jenis !== undefined) setJenis(data.jenis);
-        if (data.due !== undefined) setDue(data.due);
-        if (data.dueTimestamp !== undefined) setDueTimestamp(data.dueTimestamp);
-        if (data.orderId !== undefined) setOrderId(data.orderId);
-        if (data.price !== undefined) setPrice(data.price);
-        
-        showToastMessage(appLanguage === 'ms' ? 'Kemajuan borang telah dipulihkan!' : 'Form progress restored!');
-      }
-    } catch (e) {
-      console.error("Failed to resume progress:", e);
+    const data = safeGetLocalStorageJSON<Record<string, any> | null>('customer_form_progress', null);
+    if (data) {
+      if (data.name !== undefined) setName(data.name);
+      if (data.phone !== undefined) setPhone(data.phone);
+      if (data.info !== undefined) setInfo(data.info);
+      if (data.link !== undefined) setLink(data.link);
+      if (data.order !== undefined) setOrder(data.order);
+      if (data.template !== undefined) setTemplate(data.template);
+      if (data.bahasa !== undefined) setBahasa(data.bahasa);
+      if (data.addOn !== undefined) setAddOn(data.addOn);
+      if (data.jenis !== undefined) setJenis(data.jenis);
+      if (data.due !== undefined) setDue(data.due);
+      if (data.dueTimestamp !== undefined) setDueTimestamp(data.dueTimestamp);
+      if (data.orderId !== undefined) setOrderId(data.orderId);
+      if (data.price !== undefined) setPrice(data.price);
+      
+      showToastMessage(appLanguage === 'ms' ? 'Kemajuan borang telah dipulihkan!' : 'Form progress restored!');
     }
     setShowResumeBanner(false);
   };
 
   const handleDismissProgress = () => {
-    localStorage.removeItem('customer_form_progress');
+    safeRemoveLocalStorage('customer_form_progress');
     setShowResumeBanner(false);
   };
 
@@ -405,7 +384,7 @@ export function CustomerInfoView() {
           price,
           savedAt: Date.now()
         };
-        localStorage.setItem('customer_form_progress', JSON.stringify(data));
+        safeSetLocalStorageJSON('customer_form_progress', data);
       }, 1000); // 1s debounce to align updates nicely
       return () => clearTimeout(timer);
     }
@@ -427,45 +406,11 @@ export function CustomerInfoView() {
     const targetDate = parsedObj.date;
 
     const orderYear = String(targetDate.getFullYear());
-    let resolvedSpreadsheetId = spreadsheetId || state.spreadsheetId || '1kUAJYUVhr9bPYErtpnohpvuGGyhBSvJyEOIyzEFivJo';
-    let resolvedWebhookUrl = webhookUrl.trim();
-
-    try {
-      const savedSheets = localStorage.getItem('db_annual_sheets');
-      if (savedSheets) {
-        const parsed = JSON.parse(savedSheets);
-        if (Array.isArray(parsed)) {
-          const matches = parsed.find(s => s.year === orderYear);
-          if (matches) {
-            if (matches.spreadsheetId && matches.spreadsheetId.trim()) {
-              const rawInput = matches.spreadsheetId.trim();
-              if (rawInput.includes('docs.google.com/spreadsheets/d/')) {
-                const matchedId = rawInput.match(/\/d\/([a-zA-Z0-9-_]+)/);
-                resolvedSpreadsheetId = matchedId ? matchedId[1] : rawInput;
-              } else {
-                resolvedSpreadsheetId = rawInput;
-              }
-            }
-            if (matches.scriptUrl && matches.scriptUrl.trim()) {
-              resolvedWebhookUrl = matches.scriptUrl.trim();
-            }
-          }
-        }
-      }
-    } catch (err) {
-      console.error("Error reading db_annual_sheets:", err);
-    }
-
-    // Default fallbacks for each year if not customized
-    if (resolvedSpreadsheetId === '1kUAJYUVhr9bPYErtpnohpvuGGyhBSvJyEOIyzEFivJo' || !resolvedSpreadsheetId) {
-      if (orderYear === '2024') {
-        resolvedSpreadsheetId = '1B9zdWXVLnvj0jNNVnKxcb6cJnS1VLCIdB4j-RR3wOlg';
-      } else if (orderYear === '2025') {
-        resolvedSpreadsheetId = '1myU9apnYWWtU3snnCw14qI6ZS05i4DY6oOswLz1sCwo';
-      } else if (orderYear === '2026') {
-        resolvedSpreadsheetId = '1kUAJYUVhr9bPYErtpnohpvuGGyhBSvJyEOIyzEFivJo';
-      }
-    }
+    const resolvedSpreadsheetId = resolveSpreadsheetIdForYear(
+      orderYear,
+      spreadsheetId || state.spreadsheetId || ''
+    );
+    const resolvedWebhookUrl = getActiveScriptUrl(resolvedSpreadsheetId);
 // Format phone first using our universal helper
 const formattedPhone = formatPhoneUniversal(phone);
 setPhone(formattedPhone);
@@ -570,15 +515,35 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
       const targetSheetEn = `${monthNamesEn[targetDate.getMonth()]} ${targetDate.getFullYear()}`;
       const targetSheetMs = `${monthNamesMs[targetDate.getMonth()]} ${targetDate.getFullYear()}`;
 
+      const hasCloudConfig = Boolean(resolvedSpreadsheetId && isValidAppsScriptUrl(resolvedWebhookUrl));
+
+      if (!hasCloudConfig) {
+        updateSpecificHistoryItem(finalOrderId, {
+          syncStatus: 'saved_locally',
+          lastModifiedLocally: Date.now()
+        });
+        isSubmittedRef.current = true;
+        clearAllFields();
+        setSaved(true);
+        showToastMessage(
+          appLanguage === 'ms'
+            ? 'Disimpan secara lokal! Tetapkan Sheet ID & Apps Script URL di Sejarah > Tetapan Database untuk sync awan.'
+            : 'Saved locally! Configure Sheet ID & Apps Script URL in History > Database Settings for cloud sync.'
+        );
+        setIsSaving(false);
+        setTimeout(() => goHome(), 1800);
+        return;
+      }
+
       const payload = {
+        action: 'update_order',
+        oldOrderId: oldIdToSend || "",
         rowData: orderRow,
         sheetName: targetSheetEn, // Fallback for older script version
         sheetNameEn: targetSheetEn,
         sheetNameMs: targetSheetMs,
         spreadsheetId: resolvedSpreadsheetId
       };
-      
-      console.log("Submitting payload to Google Apps Script:", JSON.stringify(payload, null, 2));
 
       // Offline check & queue
       if (!navigator.onLine) {
@@ -603,62 +568,16 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
       setIsSaving(false);
       setTimeout(() => goHome(), 1500);
 
-      // Perform background update_order via JSONP
-      const jsonpParams = {
-        action: 'update_order',
-        spreadsheetId: resolvedSpreadsheetId,
-        orderId: finalOrderId,
-        oldOrderId: oldIdToSend || "",
-        isDelivered: state.isDelivered || false,
-        name: finalFormattedName,
-        phone: formattedPhone,
-        order: order,
-        template: finalFormattedTemplate || "",
-        bahasa: bahasa || "",
-        addon: addOn || "",
-        jenis: finalJenis,
-        due: due,
-        link: link || "",
-        price: price ? price.toString() : ""
-      };
-
-      const triggerPostFallback = () => {
-        console.log("Executing no-cors POST update_order fallback...");
-        fetch(resolvedWebhookUrl, {
-          method: 'POST',
-          mode: 'no-cors',
-          headers: {
-            'Content-Type': 'text/plain;charset=utf-8'
-          },
-          body: JSON.stringify(payload)
-        }).then(() => {
-          console.log("no-cors POST fallback succeeded!");
-          resetOrderForm();
-          updateSpecificHistoryItem(finalOrderId, {
-            syncStatus: 'synced',
-            syncLastSuccess: Date.now(),
-            lastModifiedLocally: Date.now()
-          });
-        }).catch(postErr => {
-          console.error("POST fallback failed, adding to offline queue:", postErr);
-          addToOfflineQueue(payload, resolvedWebhookUrl, finalOrderId);
-          updateSpecificHistoryItem(finalOrderId, {
-            syncStatus: 'failed',
-            syncLastAttempt: Date.now()
-          });
-        });
-      };
-
-      jsonpRequest<{status: string; message?: string; orderId?: string; isUpgraded?: boolean}>(resolvedWebhookUrl, jsonpParams)
+      // Perform background POST-only update_order mutation
+      postToGoogleScript<{ status: string; message?: string; orderId?: string; isUpgraded?: boolean }>(
+        resolvedWebhookUrl,
+        payload
+      )
         .then((resp) => {
           if (resp && resp.status === 'success') {
-            console.log("JSONP update_order successful:", resp);
             resetOrderForm();
             const returnedId = resp.orderId || finalOrderId;
             if (returnedId && returnedId !== finalOrderId) {
-              console.log("Upgraded orderId from", finalOrderId, "to", returnedId);
-              
-              // Update matching history item's ID & internal state
               setHistory(prev => {
                 return prev.map(item => {
                   if (item.id === finalOrderId || (item.state && item.state.orderId === finalOrderId)) {
@@ -685,14 +604,29 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
                 lastModifiedLocally: Date.now()
               });
             }
+          } else if (resp && resp.status === 'sent_unverified') {
+            resetOrderForm();
+            updateSpecificHistoryItem(finalOrderId, {
+              syncStatus: 'sent_unverified',
+              syncLastAttempt: Date.now(),
+              lastModifiedLocally: Date.now()
+            });
           } else {
-            console.error("JSONP update_order returned error response:", resp);
-            triggerPostFallback();
+            console.error("POST update_order returned error response:", resp);
+            addToOfflineQueue(payload, resolvedWebhookUrl, finalOrderId);
+            updateSpecificHistoryItem(finalOrderId, {
+              syncStatus: 'failed',
+              syncLastAttempt: Date.now()
+            });
           }
         })
-        .catch(err => {
-          console.error("JSONP update_order failed, running fallback:", err);
-          triggerPostFallback();
+        .catch(postErr => {
+          console.error("POST update_order failed, adding to offline queue:", postErr);
+          addToOfflineQueue(payload, resolvedWebhookUrl, finalOrderId);
+          updateSpecificHistoryItem(finalOrderId, {
+            syncStatus: 'failed',
+            syncLastAttempt: Date.now()
+          });
         });
       return;
       

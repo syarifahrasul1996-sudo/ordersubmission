@@ -1,26 +1,143 @@
+function safeStringCompare(a, b) {
+  var strA = String(a || "");
+  var strB = String(b || "");
+  if (!strA || !strB || strA.length !== strB.length) return false;
+  var mismatch = 0;
+  for (var i = 0; i < strA.length; i++) {
+    mismatch |= strA.charCodeAt(i) ^ strB.charCodeAt(i);
+  }
+  return mismatch === 0;
+}
+
+function getAllowedEmailSet(props) {
+  var raw = String(props.getProperty("ALLOWED_EMAILS") || "");
+  var emails = [];
+  if (raw) {
+    raw.split(",").forEach(function(item) {
+      var trimmed = item.trim().toLowerCase();
+      if (trimmed) emails.push(trimmed);
+    });
+  }
+  try {
+    var ownerEmail = Session.getEffectiveUser().getEmail();
+    if (ownerEmail && emails.length > 0 && emails.indexOf(ownerEmail.toLowerCase()) === -1) {
+      emails.push(ownerEmail.toLowerCase());
+    }
+  } catch (err) {}
+  return emails;
+}
+
+function verifyGoogleIdToken(idToken, allowedEmails) {
+  if (!idToken || allowedEmails.length === 0) return false;
+  try {
+    var resp = UrlFetchApp.fetch(
+      "https://oauth2.googleapis.com/tokeninfo?id_token=" + encodeURIComponent(idToken),
+      { muteHttpExceptions: true }
+    );
+    if (resp.getResponseCode() !== 200) return false;
+    var payload = JSON.parse(resp.getContentText() || "{}");
+    var verified = payload.email_verified === true || payload.email_verified === "true";
+    var email = String(payload.email || "").trim().toLowerCase();
+    return Boolean(verified && email && allowedEmails.indexOf(email) !== -1);
+  } catch (err) {
+    return false;
+  }
+}
+
+function verifyRequestAuth(params, bodyData) {
+  var props = PropertiesService.getScriptProperties();
+  var configuredSecret = String(props.getProperty("APPS_SCRIPT_SECRET") || "").trim();
+  var allowedEmails = getAllowedEmailSet(props);
+
+  if (!configuredSecret && allowedEmails.length === 0) {
+    return {
+      ok: false,
+      message: "Unauthorized: Script Properties must define APPS_SCRIPT_SECRET or ALLOWED_EMAILS."
+    };
+  }
+
+  var providedSecret = String((bodyData && bodyData.secret) || (params && params.secret) || "").trim();
+  if (configuredSecret && providedSecret && safeStringCompare(configuredSecret, providedSecret)) {
+    return { ok: true };
+  }
+
+  var providedIdToken = String((bodyData && bodyData.idToken) || (params && params.idToken) || "").trim();
+  if (providedIdToken && verifyGoogleIdToken(providedIdToken, allowedEmails)) {
+    return { ok: true };
+  }
+
+  return {
+    ok: false,
+    message: "Unauthorized: Invalid or missing credentials."
+  };
+}
+
+function getAllowedSpreadsheetIds() {
+  var props = PropertiesService.getScriptProperties();
+  var raw = String(props.getProperty("ALLOWED_SPREADSHEET_IDS") || "");
+  var ids = [];
+  if (raw) {
+    raw.split(",").forEach(function(item) {
+      var trimmed = item.trim();
+      if (trimmed) ids.push(trimmed);
+    });
+  }
+  try {
+    var active = SpreadsheetApp.getActiveSpreadsheet();
+    if (active) {
+      var activeId = active.getId();
+      if (activeId && ids.indexOf(activeId) === -1) {
+        ids.push(activeId);
+      }
+    }
+  } catch (err) {}
+  return ids;
+}
+
+function validateAllowedSpreadsheet(spreadsheetId) {
+  var cleanId = String(spreadsheetId || "").trim();
+  if (!cleanId) {
+    return { ok: false, message: "Missing spreadsheetId" };
+  }
+  var allowedIds = getAllowedSpreadsheetIds();
+  if (allowedIds.length === 0 || allowedIds.indexOf(cleanId) === -1) {
+    return {
+      ok: false,
+      message: "Forbidden: spreadsheetId is not in ALLOWED_SPREADSHEET_IDS."
+    };
+  }
+  return { ok: true, spreadsheetId: cleanId };
+}
+
 function doPost(e) {
   var lock = LockService.getScriptLock();
 
   try {
     lock.waitLock(10000);
 
-    if (!e.postData || !e.postData.contents) {
+    if (!e || !e.postData || !e.postData.contents) {
       return jsonResponse("error", "Missing POST body");
     }
 
     var data = JSON.parse(e.postData.contents);
+    var authResult = verifyRequestAuth(e.parameter || {}, data);
+    if (!authResult.ok) {
+      return jsonResponse("error", authResult.message, { code: 401 });
+    }
+
     var action = data.action || "update_order";
     var spreadsheetId = data.spreadsheetId;
 
-    if (data.rowData && data.rowData[0] === "test_diagnostic_connection") {
+    if (action === "test_diagnostic_connection" || (data.rowData && data.rowData[0] === "test_diagnostic_connection")) {
       return jsonResponse("success", "Diagnostic connection successful");
     }
 
-    if (!spreadsheetId) {
-      return jsonResponse("error", "Missing spreadsheetId");
+    var sheetCheck = validateAllowedSpreadsheet(spreadsheetId);
+    if (!sheetCheck.ok) {
+      return jsonResponse("error", sheetCheck.message, { code: 403 });
     }
 
-    var ss = SpreadsheetApp.openById(spreadsheetId);
+    var ss = SpreadsheetApp.openById(sheetCheck.spreadsheetId);
     var sheets = ss.getSheets();
 
     if (action === "delete_order") {
@@ -202,7 +319,17 @@ function doPost(e) {
 }
 
 function doGet(e) {
-  var action = e.parameter.action;
+  var params = (e && e.parameter) || {};
+  var action = params.action;
+
+  var authResult = verifyRequestAuth(params, null);
+  if (!authResult.ok) {
+    return jsonResponse("error", authResult.message, { code: 401 });
+  }
+
+  if (action === "update_delivered" || action === "delete_order" || action === "update_order") {
+    return jsonResponse("error", "Method Not Allowed: Mutations must use HTTP POST.", { code: 405 });
+  }
 
   if (action === "sync_recent") {
     return syncRecentOrders(e);
@@ -210,10 +337,6 @@ function doGet(e) {
 
   if (action === "get_link") {
     return getOrderLink(e);
-  }
-
-  if (action === "update_delivered") {
-    return updateDeliveredStatus(e);
   }
 
   if (action === "search_database") {
@@ -224,79 +347,19 @@ function doGet(e) {
     return getDashboardOrders(e);
   }
 
-  if (action === "delete_order") {
-    return deleteOrder(e);
-  }
-
-  if (action === "update_order") {
-    return updateOrder(e);
-  }
-
-  return ContentService
-    .createTextOutput("OK")
-    .setMimeType(ContentService.MimeType.TEXT);
-}
-
-function deleteOrder(e) {
-  var spreadsheetId = e.parameter.spreadsheetId;
-  var orderId = e.parameter.orderId;
-  var callback = e.parameter.callback;
-
-  try {
-    if (!spreadsheetId) {
-      return jsonOrJsonp(callback, {
-        status: "error",
-        message: "Missing spreadsheetId"
-      });
-    }
-
-    if (!orderId) {
-      return jsonOrJsonp(callback, {
-        status: "error",
-        message: "Missing orderId"
-      });
-    }
-
-    var ss = SpreadsheetApp.openById(spreadsheetId);
-    var sheets = ss.getSheets();
-    var deleted = false;
-
-    for (var s = 0; s < sheets.length; s++) {
-      var sheet = sheets[s];
-      var row = findRowByOrderId(sheet, orderId);
-      if (row) {
-        sheet.deleteRow(row);
-        deleted = true;
-        break;
-      }
-    }
-
-    return jsonOrJsonp(callback, {
-      status: "success",
-      deleted: deleted
-    });
-
-  } catch (error) {
-    return jsonOrJsonp(callback, {
-      status: "error",
-      message: error.toString()
-    });
-  }
+  return jsonResponse("error", "Unknown or missing action", { code: 400 });
 }
 
 function getDashboardOrders(e) {
   var spreadsheetId = e.parameter.spreadsheetId;
-  var callback = e.parameter.callback;
 
   try {
-    if (!spreadsheetId) {
-      return jsonOrJsonp(callback, {
-        status: "error",
-        message: "Missing spreadsheetId"
-      });
+    var sheetCheck = validateAllowedSpreadsheet(spreadsheetId);
+    if (!sheetCheck.ok) {
+      return jsonResponse("error", sheetCheck.message, { code: 403 });
     }
 
-    var ss = SpreadsheetApp.openById(spreadsheetId);
+    var ss = SpreadsheetApp.openById(sheetCheck.spreadsheetId);
     var sheets = ss.getSheets();
     var orders = [];
 
@@ -344,32 +407,23 @@ function getDashboardOrders(e) {
       });
     });
 
-    return jsonOrJsonp(callback, {
-      status: "success",
-      orders: orders
-    });
+    return jsonResponse("success", "Dashboard orders fetched", { orders: orders });
 
   } catch (error) {
-    return jsonOrJsonp(callback, {
-      status: "error",
-      message: error.toString()
-    });
+    return jsonResponse("error", error.toString());
   }
 }
 
 function syncRecentOrders(e) {
   var spreadsheetId = e.parameter.spreadsheetId;
-  var callback = e.parameter.callback;
 
   try {
-    if (!spreadsheetId) {
-      return jsonOrJsonp(callback, {
-        status: "error",
-        message: "Missing spreadsheetId"
-      });
+    var sheetCheck = validateAllowedSpreadsheet(spreadsheetId);
+    if (!sheetCheck.ok) {
+      return jsonResponse("error", sheetCheck.message, { code: 403 });
     }
 
-    var ss = SpreadsheetApp.openById(spreadsheetId);
+    var ss = SpreadsheetApp.openById(sheetCheck.spreadsheetId);
     var sheets = ss.getSheets();
 
     var targetSheets = getCurrentAndNextMonthSheetNames();
@@ -439,40 +493,28 @@ if (!currentOrderId || currentOrderId.indexOf("SYNC-") === 0) {
       });
     });
 
-    return jsonOrJsonp(callback, {
-      status: "success",
-      orders: recentOrders
-    });
+    return jsonResponse("success", "Recent orders fetched", { orders: recentOrders });
 
   } catch (error) {
-    return jsonOrJsonp(callback, {
-      status: "error",
-      message: error.toString()
-    });
+    return jsonResponse("error", error.toString());
   }
 }
 
 function getOrderLink(e) {
   var spreadsheetId = e.parameter.spreadsheetId;
   var orderId = e.parameter.orderId;
-  var callback = e.parameter.callback;
 
   try {
-    if (!spreadsheetId) {
-      return jsonOrJsonp(callback, {
-        status: "error",
-        message: "Missing spreadsheetId"
-      });
+    var sheetCheck = validateAllowedSpreadsheet(spreadsheetId);
+    if (!sheetCheck.ok) {
+      return jsonResponse("error", sheetCheck.message, { code: 403 });
     }
 
     if (!orderId) {
-      return jsonOrJsonp(callback, {
-        status: "error",
-        message: "Missing orderId"
-      });
+      return jsonResponse("error", "Missing orderId");
     }
 
-    var ss = SpreadsheetApp.openById(spreadsheetId);
+    var ss = SpreadsheetApp.openById(sheetCheck.spreadsheetId);
     var sheets = ss.getSheets();
 
     var foundLink = "";
@@ -486,16 +528,10 @@ function getOrderLink(e) {
       }
     }
 
-    return jsonOrJsonp(callback, {
-      status: "success",
-      link: foundLink
-    });
+    return jsonResponse("success", "Order link fetched", { link: foundLink });
 
   } catch (error) {
-    return jsonOrJsonp(callback, {
-      status: "error",
-      message: error.toString()
-    });
+    return jsonResponse("error", error.toString());
   }
 }
 
@@ -723,20 +759,6 @@ function jsonResponse(status, message, extra) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
-function jsonOrJsonp(callback, obj) {
-  var output = JSON.stringify(obj);
-
-  if (callback) {
-    return ContentService
-      .createTextOutput(callback + "(" + output + ")")
-      .setMimeType(ContentService.MimeType.JAVASCRIPT);
-  }
-
-  return ContentService
-    .createTextOutput(output)
-    .setMimeType(ContentService.MimeType.JSON);
-}
-
 function parseDueDate(value) {
   if (Object.prototype.toString.call(value) === "[object Date]") {
     return value;
@@ -766,86 +788,26 @@ function parseDueDate(value) {
   return new Date(year, month, day, hour, minute);
 }
 
-function updateDeliveredStatus(e) {
-  var spreadsheetId = e.parameter.spreadsheetId;
-  var orderId = e.parameter.orderId;
-  var isDelivered = e.parameter.isDelivered === "true";
-  var callback = e.parameter.callback;
-
-  try {
-    if (!spreadsheetId) {
-      return jsonOrJsonp(callback, {
-        status: "error",
-        message: "Missing spreadsheetId"
-      });
-    }
-
-    if (!orderId) {
-      return jsonOrJsonp(callback, {
-        status: "error",
-        message: "Missing orderId"
-      });
-    }
-
-    var ss = SpreadsheetApp.openById(spreadsheetId);
-    var sheets = ss.getSheets();
-
-    for (var i = 0; i < sheets.length; i++) {
-      var row = findRowByOrderId(sheets[i], orderId);
-
-      if (row) {
-        sheets[i].getRange(row, 1).setValue(isDelivered);
-
-        return jsonOrJsonp(callback, {
-          status: "success",
-          orderId: orderId,
-          isDelivered: isDelivered
-        });
-      }
-    }
-
-    return jsonOrJsonp(callback, {
-      status: "error",
-      message: "Order ID not found"
-    });
-
-  } catch (error) {
-    return jsonOrJsonp(callback, {
-      status: "error",
-      message: error.toString()
-    });
-  }
-}
-
 function searchDatabase(e) {
   var spreadsheetId = e.parameter.spreadsheetId;
   var query = e.parameter.query;
-  var callback = e.parameter.callback;
 
   try {
-    if (!spreadsheetId) {
-      return jsonOrJsonp(callback, {
-        status: "error",
-        message: "Missing spreadsheetId"
-      });
+    var sheetCheck = validateAllowedSpreadsheet(spreadsheetId);
+    if (!sheetCheck.ok) {
+      return jsonResponse("error", sheetCheck.message, { code: 403 });
     }
 
     if (!query) {
-      return jsonOrJsonp(callback, {
-        status: "success",
-        orders: []
-      });
+      return jsonResponse("success", "Empty query", { orders: [] });
     }
 
     var cleanQuery = String(query).toLowerCase().trim();
     if (!cleanQuery) {
-      return jsonOrJsonp(callback, {
-        status: "success",
-        orders: []
-      });
+      return jsonResponse("success", "Empty query", { orders: [] });
     }
 
-    var ss = SpreadsheetApp.openById(spreadsheetId);
+    var ss = SpreadsheetApp.openById(sheetCheck.spreadsheetId);
     var sheets = ss.getSheets();
     var matchingOrders = [];
 
@@ -888,195 +850,10 @@ function searchDatabase(e) {
       });
     });
 
-    return jsonOrJsonp(callback, {
-      status: "success",
-      orders: matchingOrders
-    });
+    return jsonResponse("success", "Search complete", { orders: matchingOrders });
 
   } catch (error) {
-    return jsonOrJsonp(callback, {
-      status: "error",
-      message: error.toString()
-    });
-  }
-}
-
-function updateOrder(e) {
-  var spreadsheetId = e.parameter.spreadsheetId;
-  var orderId = e.parameter.orderId;
-  var callback = e.parameter.callback;
-
-  try {
-    if (!spreadsheetId) {
-      return jsonOrJsonp(callback, {
-        status: "error",
-        message: "Missing spreadsheetId"
-      });
-    }
-
-    var ss = SpreadsheetApp.openById(spreadsheetId);
-    var sheets = ss.getSheets();
-    var updated = false;
-
-    var isDelivered = e.parameter.isDelivered === "true" || e.parameter.done === "true" || e.parameter.isDelivered === true || e.parameter.isDelivered === "1";
-    var name = e.parameter.name || e.parameter.customerName || "";
-    var phone = e.parameter.phone || e.parameter.customerPhone || "";
-    var order = e.parameter.order || e.parameter.customerOrder || "";
-    var template = e.parameter.template || e.parameter.customerTemplate || "";
-    var bahasa = e.parameter.bahasa || e.parameter.customerBahasa || "";
-    var addon = e.parameter.addon || e.parameter.customerAddOn || "";
-    var jenis = e.parameter.jenis || e.parameter.customerJenis || "";
-    var due = e.parameter.due || e.parameter.customerDue || "";
-    var link = e.parameter.link || e.parameter.googleSheetLink || e.parameter.orderLink || "";
-    var bayaran = e.parameter.bayaran || e.parameter.price || e.parameter.harga || e.parameter.itemPrice || "";
-
-    var foundRow = null;
-    var foundSheet = null;
-
-    // A. Match by exact orderId first (if real, non-empty, and not a SYNC- placeholder)
-    var isRealOrderId = orderId && String(orderId).trim() !== "" && String(orderId).indexOf("SYNC-") !== 0;
-    if (isRealOrderId) {
-      for (var s = 0; s < sheets.length; s++) {
-        var sheet = sheets[s];
-        var row = findRowByOrderId(sheet, orderId);
-        if (row) {
-          foundRow = row;
-          foundSheet = sheet;
-          break;
-        }
-      }
-    }
-
-    // A2. Match by oldOrderId if provided
-    var oldOrderId = e.parameter.oldOrderId || "";
-    if (!foundRow && oldOrderId && String(oldOrderId).trim() !== "") {
-      for (var s = 0; s < sheets.length; s++) {
-        var sheet = sheets[s];
-        var row = findRowByOrderId(sheet, oldOrderId);
-        if (row) {
-          foundRow = row;
-          foundSheet = sheet;
-          break;
-        }
-      }
-    }
-
-    // B. If not found, try fallback key: customer name + phone + due date + order type
-    if (!foundRow) {
-      for (var s = 0; s < sheets.length; s++) {
-        var sheet = sheets[s];
-        var row = findRowByFallbackKey(sheet, name, phone, due, order);
-        if (row) {
-          foundRow = row;
-          foundSheet = sheet;
-          break;
-        }
-      }
-    }
-
-    // C. Also if ID is SYNC-... try the specialized SYNC ID finder on findRowByOrderId
-    if (!foundRow && orderId && String(orderId).indexOf("SYNC-") === 0) {
-      for (var s = 0; s < sheets.length; s++) {
-        var sheet = sheets[s];
-        var row = findRowByOrderId(sheet, orderId);
-        if (row) {
-          foundRow = row;
-          foundSheet = sheet;
-          break;
-        }
-      }
-    }
-
-    // D. Assign/upgrade permanent Order ID
-    var finalOrderId = orderId;
-    var isUpgraded = false;
-
-    if (foundRow && foundSheet) {
-      var currentCellId = String(foundSheet.getRange(foundRow, 11).getValue() || "").trim();
-      if (!currentCellId || currentCellId.indexOf("SYNC-") === 0) {
-        // Upgrade to a permanent order ID! If incoming orderId is already a real permanent ID, use it. Otherwise, generate a new one.
-        if (orderId && String(orderId).trim() !== "" && String(orderId).indexOf("SYNC-") !== 0) {
-          finalOrderId = orderId;
-        } else {
-          finalOrderId = generateAppsScriptOrderId();
-        }
-        isUpgraded = true;
-      } else {
-        finalOrderId = currentCellId;
-      }
-    } else {
-      if (!finalOrderId || String(finalOrderId).trim() === "" || String(finalOrderId).indexOf("SYNC-") === 0) {
-        finalOrderId = generateAppsScriptOrderId();
-        isUpgraded = true;
-      }
-    }
-
-    var rowData = [
-      isDelivered,
-      name,
-      formatPhoneForSheet(phone),
-      order,
-      template,
-      bahasa,
-      addon,
-      jenis,
-      due,
-      link,
-      finalOrderId,
-      bayaran
-    ];
-
-    var targetDate = new Date();
-    if (due) {
-      var parsedDObj = parseDueDate(due);
-      if (parsedDObj) {
-        targetDate = parsedDObj;
-      }
-    }
-    var monthNamesEn = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-    var targetSheetEn = monthNamesEn[targetDate.getMonth()] + " " + targetDate.getFullYear();
-    
-    var targetSheet = ss.getSheetByName(targetSheetEn);
-    if (!targetSheet) {
-      var monthNamesMs = ["Januari", "Februari", "Mac", "April", "Mei", "Jun", "Julai", "Ogos", "September", "Oktober", "November", "Disember"];
-      var targetSheetMs = monthNamesMs[targetDate.getMonth()] + " " + targetDate.getFullYear();
-      targetSheet = ss.getSheetByName(targetSheetMs);
-    }
-    if (!targetSheet) {
-      targetSheet = ss.insertSheet(targetSheetEn);
-    }
-    ensureSheetSetup(targetSheet);
-
-    if (foundRow && foundSheet) {
-      if (foundSheet.getName() !== targetSheet.getName()) {
-        foundSheet.deleteRow(foundRow);
-        targetSheet.appendRow(rowData);
-        var newRow = targetSheet.getLastRow();
-        applyRowTemplate(targetSheet, newRow);
-      } else {
-        foundSheet.getRange(foundRow, 1, 1, rowData.length).setValues([rowData]);
-        applyRowTemplate(foundSheet, foundRow);
-      }
-      updated = true;
-    } else {
-      targetSheet.appendRow(rowData);
-      var newRow = targetSheet.getLastRow();
-      applyRowTemplate(targetSheet, newRow);
-      updated = true;
-    }
-
-    return jsonOrJsonp(callback, {
-      status: "success",
-      updated: updated,
-      orderId: finalOrderId,
-      isUpgraded: isUpgraded
-    });
-
-  } catch (error) {
-    return jsonOrJsonp(callback, {
-      status: "error",
-      message: error.toString()
-    });
+    return jsonResponse("error", error.toString());
   }
 }
 

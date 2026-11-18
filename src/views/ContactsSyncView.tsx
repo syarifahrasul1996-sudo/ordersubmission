@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { parseDateStringToTimestamp, smartFetchGoogleScript, isWhatsAppUsername, formatPhoneUniversal, parsePhoneAndUsername } from '../utils';
+import { getAnnualSheets, getGlobalScriptUrl, isValidAppsScriptUrl } from '../utils/cloudConfig';
 import { 
   Users, 
   RefreshCw, 
@@ -84,62 +85,30 @@ export function ContactsSyncView() {
   const [cloudFetchProgress, setCloudFetchProgress] = useState('');
   const [hasLoadedCloud, setHasLoadedCloud] = useState(false);
 
-  // Initialize annualSheets identical to HistoryView
-  const [annualSheets] = useState(() => {
-    try {
-      const saved = localStorage.getItem('db_annual_sheets');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed.map((s: any) => ({
-            year: String(s.year || ''),
-            spreadsheetId: String(s.spreadsheetId || ''),
-            scriptUrl: String(s.scriptUrl || '')
-          }));
-        }
-      }
-    } catch (e) {
-      console.error(e);
-    }
-    return [
-      {
-        year: '2024',
-        spreadsheetId: '1B9zdWXVLnvj0jNNVnKxcb6cJnS1VLCIdB4j-RR3wOlg',
-        scriptUrl: ''
-      },
-      {
-        year: '2025',
-        spreadsheetId: '1myU9apnYWWtU3snnCw14qI6ZS05i4DY6oOswLz1sCwo',
-        scriptUrl: ''
-      },
-      {
-        year: '2026',
-        spreadsheetId: state.spreadsheetId || '1kUAJYUVhr9bPYErtpnohpvuGGyhBSvJyEOIyzEFivJo',
-        scriptUrl: ''
-      }
-    ];
-  });
+  const [annualSheets] = useState(() => getAnnualSheets());
 
-  // 2. Fetch past 3 years database function
+  // 2. Fetch past annual database function
   const fetchThreeYearCloudDatabase = async () => {
+    const globalScriptUrl = getGlobalScriptUrl();
     const activeConfigs = annualSheets.filter(
-      sheet => sheet.spreadsheetId && sheet.spreadsheetId.trim() !== ''
+      sheet =>
+        sheet.spreadsheetId &&
+        sheet.spreadsheetId.trim() !== '' &&
+        isValidAppsScriptUrl(sheet.scriptUrl.trim() || globalScriptUrl)
     );
 
     if (activeConfigs.length === 0) {
       setSyncLogs(prev => [
         ...prev, 
         appLanguage === 'ms' 
-          ? 'Ralat: Tiada Database Cloud dikonfigurasikan di bahagian Sejarah > Tetapan.' 
-          : 'Error: No Cloud Database configured in History > Settings.'
+          ? 'Ralat: Tiada Database Cloud atau URL Apps Script dikonfigurasikan di bahagian Sejarah > Tetapan.' 
+          : 'Error: No Cloud Database or Apps Script URL configured in History > Settings.'
       ]);
       return;
     }
 
     setFetchingCloud(true);
     setCloudFetchProgress(appLanguage === 'ms' ? 'Menyambung dengan pelayan...' : 'Connecting with server...');
-
-    const globalScriptUrl = localStorage.getItem('db_global_script_url') || 'https://script.google.com/macros/s/AKfycbw5KpBvJyFpIXmsHueg4XPSRkZ0mg6kxHqjMGp3WEs8Hx_JodvKSoKEg6RMsdH54iCa/exec';
 
     const allYearOrders: any[] = [];
     const errors: string[] = [];
@@ -153,33 +122,25 @@ export function ContactsSyncView() {
       return trimmed;
     };
 
-    // Helper JSONP request
-    const jsonpRequestLocal = (url: URL, callbackName: string) => {
-      return smartFetchGoogleScript(url, callbackName);
-    };
-
     try {
       await Promise.all(
         activeConfigs.map(async (sheet) => {
           const sId = extractIdLocal(sheet.spreadsheetId);
           const sUrl = sheet.scriptUrl.trim() || globalScriptUrl;
-          const safeYear = String(sheet.year).replace(/[^\w]/g, '_');
-          const callbackName = 'jsonp_contacts_' + Math.round(100000 * Math.random()) + '_' + safeYear;
           const url = new URL(sUrl);
 
           url.searchParams.append('action', 'get_dashboard_orders');
           url.searchParams.append('spreadsheetId', sId);
           url.searchParams.append('year', sheet.year);
-          url.searchParams.append('callback', callbackName);
 
-          setCloudFetchProgress(prev => 
+          setCloudFetchProgress(
             appLanguage === 'ms' 
               ? `Memuat turun data tahun ${sheet.year}...` 
               : `Downloading data for year ${sheet.year}...`
           );
 
           try {
-            const data = await jsonpRequestLocal(url, callbackName);
+            const data = await smartFetchGoogleScript(url);
             if (data && data.status === 'success' && Array.isArray(data.orders)) {
               allYearOrders.push(...data.orders);
               setSyncLogs(prev => [

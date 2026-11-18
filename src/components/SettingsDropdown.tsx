@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Wifi, WifiOff, Cloud, RefreshCw, Settings, Sun, Moon, Languages, Check, History, FileDown } from 'lucide-react';
+import { Wifi, WifiOff, Cloud, RefreshCw, Settings, Sun, Moon, Languages, Check, History, FileDown, LogIn, LogOut, UserCheck } from 'lucide-react';
 import { useAppContext } from '../AppContext';
 import { cn } from '../cn';
+import { getCurrentFirebaseUser, signInWithFirebaseGoogle, signOutFirebase, subscribeToFirebaseAuth } from '../firebaseClient';
 
 export function SettingsDropdown() {
   const { 
@@ -19,7 +20,13 @@ export function SettingsDropdown() {
   } = useAppContext();
 
   const [isOpen, setIsOpen] = useState(false);
+  const [firebaseUser, setFirebaseUser] = useState(() => getCurrentFirebaseUser());
+  const [authLoading, setAuthLoading] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    return subscribeToFirebaseAuth((u) => setFirebaseUser(u));
+  }, []);
 
   const getRelativeTime = (time: number | null) => {
     if (!time) return appLanguage === 'ms' ? 'Tiada Aktiviti' : 'Never';
@@ -98,6 +105,55 @@ export function SettingsDropdown() {
           </div>
 
           <div className="space-y-3 pt-3">
+            {/* Google / Firebase Account row */}
+            <div className="flex items-center justify-between gap-2 pb-2 border-b border-gray-100 dark:border-gray-800">
+              <div className="min-w-0 flex items-center gap-1.5">
+                <UserCheck className={cn("w-3.5 h-3.5 shrink-0", firebaseUser ? "text-emerald-500" : "text-subtext opacity-70")} />
+                <span className="truncate font-medium text-text">
+                  {firebaseUser
+                    ? (firebaseUser.email || firebaseUser.displayName || (appLanguage === 'ms' ? 'Dilayar masuk' : 'Signed in'))
+                    : (appLanguage === 'ms' ? 'Akaun Awan' : 'Cloud Account')}
+                </span>
+              </div>
+              {firebaseUser ? (
+                <button
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    setAuthLoading(true);
+                    try {
+                      await signOutFirebase();
+                    } finally {
+                      setAuthLoading(false);
+                    }
+                  }}
+                  disabled={authLoading}
+                  className="flex items-center gap-1 px-2 py-1 rounded-md bg-surface hover:bg-red-50 dark:hover:bg-red-950/30 text-red-600 dark:text-red-400 font-bold text-[10px] shrink-0 transition-all cursor-pointer"
+                >
+                  <LogOut className="w-3 h-3" />
+                  <span>{appLanguage === 'ms' ? 'Keluar' : 'Sign Out'}</span>
+                </button>
+              ) : (
+                <button
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    setAuthLoading(true);
+                    try {
+                      await signInWithFirebaseGoogle();
+                    } catch (err) {
+                      console.warn('Google sign-in cancelled or failed:', err);
+                    } finally {
+                      setAuthLoading(false);
+                    }
+                  }}
+                  disabled={authLoading}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-primary text-white font-bold text-[10px] shrink-0 active:scale-95 transition-all cursor-pointer disabled:opacity-50"
+                >
+                  <LogIn className="w-3 h-3" />
+                  <span>{authLoading ? '...' : (appLanguage === 'ms' ? 'Log Masuk' : 'Sign In')}</span>
+                </button>
+              )}
+            </div>
+
             {/* Language Selection row */}
             <div className="flex items-center justify-between">
               <span className="text-subtext flex items-center gap-1.5 font-medium">
