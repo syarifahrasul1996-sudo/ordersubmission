@@ -374,7 +374,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       setHistory((prev) => {
         let changed = false;
-        const next = prev.map((item) => {
+        const updated = [...prev];
+        const existingKeys = new Set<string>();
+        for (const item of prev) {
+          if (item.id) existingKeys.add(item.id);
+          if (item.state?.orderId) existingKeys.add(item.state.orderId);
+        }
+
+        // 1. Update existing local items
+        const mapped = updated.map((item) => {
           if (!item?.state) return item;
           const remote = byId.get(item.id) || (item.state.orderId ? byId.get(item.state.orderId) : undefined);
           if (!remote) return item;
@@ -418,7 +426,43 @@ export function AppProvider({ children }: { children: ReactNode }) {
           }
           return item;
         });
-        return changed ? next : prev;
+
+        // 2. Automatically add any remote reminders not yet present in local history
+        for (const rem of filteredRemote) {
+          if (existingKeys.has(rem.id) || (rem.orderId && existingKeys.has(rem.orderId))) continue;
+          if (rem.isDeleted) continue;
+
+          const synthesized: OrderHistoryItem = {
+            id: rem.id,
+            timestamp: rem.createdAt ? Date.parse(rem.createdAt) || now : now,
+            state: {
+              ...INITIAL_STATE,
+              historyId: rem.id,
+              orderId: rem.orderId || rem.id,
+              customerName: rem.customerName || 'Pelanggan',
+              mainType: rem.mainType || 'Pesanan',
+              subType: rem.subType || '',
+              dueTimestamp: rem.dueTimestamp || 0,
+              isDelivered: Boolean(rem.isDelivered),
+              isDeleted: Boolean(rem.isDeleted),
+              googleSheetLink: rem.googleSheetLink || '',
+              orderLink: rem.googleSheetLink || '',
+              hasNotified: rem.hasNotified20Min,
+              hasDueAlerted: rem.hasDueAlerted,
+              hasThreeHourChecked: rem.hasThreeHourAlerted,
+              threeHourAlerted: rem.hasThreeHourAlerted,
+              syncStatus: 'synced',
+              syncLastSuccess: now,
+            },
+            messages: [],
+          };
+          mapped.unshift(synthesized);
+          existingKeys.add(rem.id);
+          if (rem.orderId) existingKeys.add(rem.orderId);
+          changed = true;
+        }
+
+        return changed ? mapped : prev;
       });
     }
 
