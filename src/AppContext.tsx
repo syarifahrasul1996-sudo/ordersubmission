@@ -7,16 +7,20 @@ import {
   playAlertChime,
   getCurrentFid,
   refreshDeviceRegistrationHeartbeat,
+  sendDevicePresenceHeartbeat,
+  getOrCreateSyncDeviceId,
   fetchCrossDeviceNotificationState,
   syncReadNotificationsToBackend,
   subscribeToNotificationStream,
   SyncedDeviceInfo,
+  SyncedAlertEvent,
   ServerOrderReminder,
   CrossDeviceNotificationState,
 } from './lib/fcm';
 import { useBackgroundSync } from './utils/backgroundSync';
 import { deduplicateHistoryList, smartFetchGoogleScript, normalizeUrgencyForSheet } from './utils';
 import { getOrderDueTimestamp } from './utils/orderWindow';
+import { DEFAULT_SPREADSHEET_ID, mergeRemoteSheetConfigs, resolveSpreadsheetIdForYear } from './utils/cloudConfig';
 
 
 interface AppContextType {
@@ -62,6 +66,9 @@ interface AppContextType {
   historyPendingTimeFilter: 'all' | 'today' | 'tomorrow' | '2days' | '3days';
   setHistoryPendingTimeFilter: (val: 'all' | 'today' | 'tomorrow' | '2days' | '3days') => void;
   remoteReminders: ServerOrderReminder[];
+  recentSyncedAlerts: SyncedAlertEvent[];
+  incomingAlertToast: SyncedAlertEvent | null;
+  dismissIncomingAlertToast: () => void;
   syncedDevicesCount: number;
   syncedDevices: SyncedDeviceInfo[];
   sharedReadNotificationIds: string[];
@@ -97,17 +104,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AppState>(() => {
     try {
       const saved = localStorage.getItem('appState');
+      const currentYear = String(new Date().getFullYear());
+      const defaultSheetId = resolveSpreadsheetIdForYear(currentYear, DEFAULT_SPREADSHEET_ID);
       if (saved) {
         const parsed = JSON.parse(saved);
         return {
           ...INITIAL_STATE,
           ...parsed,
+          spreadsheetId: (parsed.spreadsheetId && String(parsed.spreadsheetId).trim()) || defaultSheetId,
           addons: Array.isArray(parsed.addons) ? parsed.addons : INITIAL_STATE.addons,
           clLangs: Array.isArray(parsed.clLangs) ? parsed.clLangs : INITIAL_STATE.clLangs,
           resumeLangs: Array.isArray(parsed.resumeLangs) ? parsed.resumeLangs : INITIAL_STATE.resumeLangs
         };
       }
-      return INITIAL_STATE;
+      return { ...INITIAL_STATE, spreadsheetId: defaultSheetId };
     } catch {
       return INITIAL_STATE;
     }
@@ -223,6 +233,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const isCheckingAlertsRef = useRef(false);
 
   const [remoteReminders, setRemoteReminders] = useState<ServerOrderReminder[]>([]);
+  const [recentSyncedAlerts, setRecentSyncedAlerts] = useState<SyncedAlertEvent[]>([]);
+  const [incomingAlertToast, setIncomingAlertToast] = useState<SyncedAlertEvent | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const deliveredAlertIdsRef = useRef<string[]>((() => {
+    try {
+      const saved = localStorage.getItem('app_delivered_alert_ids');
+      const parsed = saved ? JSON.parse(saved) : [];
+      return Array.isArray(parsed) ? parsed.slice(-100) : [];
+    } catch {
+      return [];
+    }
+  })());
   const [syncedDevicesCount, setSyncedDevicesCount] = useState<number>(0);
   const [syncedDevices, setSyncedDevices] = useState<SyncedDeviceInfo[]>([]);
   const [sharedReadNotificationIds, setSharedReadNotificationIds] = useState<string[]>(() => {
@@ -243,6 +265,77 @@ export function AppProvider({ children }: { children: ReactNode }) {
     } catch {}
   }, [sharedReadNotificationIds]);
 
+  const dismissIncomingAlertToast = useCallback(() => {
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current);
+      toastTimerRef.current = null;
+    }
+    setIncomingAlertToast(null);
+  }, []);
+
+  const processIncomingAlerts = useCallback((alerts: SyncedAlertEvent[]) => {
+    if (!Array.isArray(alerts) || alerts.length === 0) return;
+
+    const myDeviceId = getOrCreateSyncDeviceId();
+    const myFidSuffix = getCurrentFid()?.slice(-8);
+    const now = Date.now();
+    const FRESH_WINDOW_MS = 5 * 60 * 1000;
+
+    setRecentSyncedAlerts((prev) => {
+      const map = new Map<string, SyncedAlertEvent>();
+      for (const a of [...prev, ...alerts]) {
+        if (a && a.id && now - (a.createdAt || now) < 24 * 60 * 60 * 1000) {
+          map.set(a.id, a);
+        }
+      }
+      return Array.from(map.values())
+        .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+        .slice(0, 20);
+    });
+
+    let deliveredModified = false;
+    const deliveredSet = new Set(deliveredAlertIdsRef.current);
+
+    for (const alert of alerts) {
+      if (!alert || !alert.id) continue;
+      if (deliveredSet.has(alert.id)) continue;
+
+      deliveredSet.add(alert.id);
+      deliveredModified = true;
+
+      const isFromSelf =
+        (alert.senderDeviceId && alert.senderDeviceId === myDeviceId) ||
+        (alert.senderFidSuffix && myFidSuffix && alert.senderFidSuffix === myFidSuffix);
+
+      if (isFromSelf) continue;
+
+      const isFresh = now - (alert.createdAt || now) <= FRESH_WINDOW_MS;
+      if (!isFresh) continue;
+
+      playAlertChime();
+      showServiceWorkerNotification(alert.title || '🔥 Notifikasi Disegerakkan', {
+        body: alert.body || '',
+        tag: alert.id,
+        data: { url: '/', orderId: alert.orderId },
+      }).catch(() => {});
+
+      setIncomingAlertToast(alert);
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+      toastTimerRef.current = setTimeout(() => {
+        setIncomingAlertToast(null);
+        toastTimerRef.current = null;
+      }, 7000);
+    }
+
+    if (deliveredModified) {
+      const trimmed = Array.from(deliveredSet).slice(-100);
+      deliveredAlertIdsRef.current = trimmed;
+      try {
+        localStorage.setItem('app_delivered_alert_ids', JSON.stringify(trimmed));
+      } catch {}
+    }
+  }, []);
+
   const applyCrossDeviceState = useCallback((data: Partial<CrossDeviceNotificationState>) => {
     if (!data) return;
 
@@ -251,6 +344,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
     if (Array.isArray(data.devices)) {
       setSyncedDevices(data.devices);
+    }
+
+    if (Array.isArray(data.recentAlerts)) {
+      processIncomingAlerts(data.recentAlerts);
     }
 
     if (Array.isArray(data.readNotificationIds)) {
@@ -325,19 +422,35 @@ export function AppProvider({ children }: { children: ReactNode }) {
       });
     }
 
+    if (data.sheetConfigs) {
+      mergeRemoteSheetConfigs(data.sheetConfigs);
+      setState((prev) => {
+        if (prev.spreadsheetId && prev.spreadsheetId.trim()) return prev;
+        const resolved = resolveSpreadsheetIdForYear(String(new Date().getFullYear()), DEFAULT_SPREADSHEET_ID);
+        return resolved ? { ...prev, spreadsheetId: resolved } : prev;
+      });
+    }
+
     setLastNotificationSyncAt(Date.now());
-  }, []);
+  }, [processIncomingAlerts]);
 
   const syncAllDevicesNotifications = useCallback(async (): Promise<boolean> => {
     setIsSyncingNotifications(true);
     try {
-      await refreshDeviceRegistrationHeartbeat();
+      const [heartbeat] = await Promise.all([
+        sendDevicePresenceHeartbeat().catch(() => null),
+        refreshDeviceRegistrationHeartbeat().catch(() => {}),
+      ]);
+      if (heartbeat) {
+        setSyncedDevicesCount(heartbeat.activeDevicesCount);
+        setSyncedDevices(heartbeat.devices);
+      }
       const stateData = await fetchCrossDeviceNotificationState();
       if (stateData) {
         applyCrossDeviceState(stateData);
         return true;
       }
-      return false;
+      return Boolean(heartbeat);
     } finally {
       setIsSyncingNotifications(false);
     }
@@ -368,7 +481,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       cleanupFCM = cleanup;
     }).catch(console.warn);
 
-    // Initial cross-device notification state pull
+    // Initial universal device heartbeat + cross-device notification state pull
     syncAllDevicesNotifications().catch(() => {});
 
     let syncDebounce: ReturnType<typeof setTimeout> | null = null;
@@ -378,31 +491,35 @@ export function AppProvider({ children }: { children: ReactNode }) {
         fetchCrossDeviceNotificationState().then((d) => {
           if (d) applyCrossDeviceState(d);
         }).catch(() => {});
-      }, 250);
+      }, 200);
     };
 
     const cleanupSSE = subscribeToNotificationStream((evt) => {
       if (evt.reason === 'test_alert') {
-        const mySuffix = getCurrentFid()?.slice(-8);
-        if (evt.senderFidSuffix && mySuffix && evt.senderFidSuffix === mySuffix) {
-          return;
-        }
-        playAlertChime();
-        showServiceWorkerNotification(evt.title || '🔥 Ujian Notifikasi', {
+        const incoming: SyncedAlertEvent = evt.alert || {
+          id: evt.id || `sse_test_${evt.timestamp || Date.now()}`,
+          type: 'test_alert',
+          title: evt.title || '🔥 Ujian Notifikasi',
           body: evt.body || 'Ujian notifikasi disegerakkan dari peranti lain.',
-          tag: 'fcm_test_sync',
-          data: { url: '/' },
-        }).catch(() => {});
+          senderDeviceId: evt.senderDeviceId,
+          senderDeviceLabel: evt.senderDeviceLabel,
+          senderFidSuffix: evt.senderFidSuffix,
+          createdAt: evt.timestamp || evt.createdAt || Date.now(),
+        };
+        processIncomingAlerts([incoming]);
         return;
       }
 
       if (evt.reason === 'order_alert') {
-        playAlertChime();
-        showServiceWorkerNotification(evt.title || 'Peringatan Tempahan', {
+        const incoming: SyncedAlertEvent = evt.alert || {
+          id: evt.id || `sse_order_${evt.orderId || Date.now()}`,
+          type: 'order_alert',
+          title: evt.title || 'Peringatan Tempahan',
           body: evt.body || '',
-          tag: `${evt.alertType || 'order'}_${evt.orderId || Date.now()}`,
-          data: { orderId: evt.orderId, url: '/' },
-        }).catch(() => {});
+          orderId: evt.orderId,
+          createdAt: evt.timestamp || Date.now(),
+        };
+        processIncomingAlerts([incoming]);
       }
 
       if (Array.isArray(evt.readNotificationIds)) {
@@ -412,8 +529,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setSyncedDevicesCount(evt.activeDevicesCount);
       }
 
+      if (evt.reason === 'connected') {
+        sendDevicePresenceHeartbeat().then((hb) => {
+          if (hb) {
+            setSyncedDevicesCount(hb.activeDevicesCount);
+            setSyncedDevices(hb.devices);
+          }
+        }).catch(() => {});
+        triggerDebouncedPull();
+        return;
+      }
+
+      if (evt.reason === 'sheets_updated') {
+        if (evt.sheetConfigs) {
+          mergeRemoteSheetConfigs(evt.sheetConfigs);
+        } else {
+          triggerDebouncedPull();
+        }
+        return;
+      }
+
       if (
-        evt.reason === 'connected' ||
         evt.reason === 'reminders_updated' ||
         evt.reason === 'devices_updated' ||
         evt.reason === 'read_updated' ||
@@ -432,11 +568,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
     window.addEventListener('focus', handleVisibilityOrFocus);
     document.addEventListener('visibilitychange', handleVisibilityOrFocus);
 
+    let tickCount = 0;
     const periodicSync = setInterval(() => {
+      tickCount++;
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible' && tickCount % 2 !== 0) {
+        return;
+      }
+      if (tickCount % 2 === 0) {
+        sendDevicePresenceHeartbeat().catch(() => {});
+      }
       fetchCrossDeviceNotificationState().then((d) => {
         if (d) applyCrossDeviceState(d);
       }).catch(() => {});
-    }, 30000);
+    }, 15000);
 
     const handleServiceWorkerMessage = (event: MessageEvent) => {
       if (event.data?.type === 'NOTIFICATION_CLICKED' && event.data.orderId) {
@@ -463,6 +607,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
       cleanupSSE();
       if (syncDebounce) clearTimeout(syncDebounce);
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
       clearInterval(periodicSync);
       window.removeEventListener('focus', handleVisibilityOrFocus);
       document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
@@ -470,7 +615,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         navigator.serviceWorker.removeEventListener('message', handleServiceWorkerMessage);
       }
     };
-  }, [applyCrossDeviceState, syncAllDevicesNotifications]);
+  }, [applyCrossDeviceState, processIncomingAlerts, syncAllDevicesNotifications]);
 
   // Client-side foreground reminders loop (30s interval + triggered when orders update)
   useEffect(() => {
@@ -744,9 +889,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
             return changed ? updated : prev;
           });
         }
-        if (res?.allReminders || res?.readNotificationIds || typeof res?.activeDevicesCount === 'number') {
+        if (res?.allReminders || res?.recentAlerts || res?.readNotificationIds || typeof res?.activeDevicesCount === 'number') {
           applyCrossDeviceState({
             reminders: res.allReminders,
+            recentAlerts: res.recentAlerts,
             readNotificationIds: res.readNotificationIds,
             activeDevicesCount: res.activeDevicesCount,
           });
@@ -1241,7 +1387,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useBackgroundSync(setHistory, deletedOrderIds);
 
   return (
-    <AppContext.Provider value={{ state, setState, viewStack, pushView, changeTab, startNewOrder, popView, goHome, reset, resetOrderForm, generatedMessages, setGeneratedMessages, history, setHistory, saveOrderToHistory, updateOrderHistoryState, updateSpecificHistoryItem, deleteOrderFromHistory, restoreOrderFromHistory, permanentlyDeleteOrderFromHistory, clearHistory, loadOrder, drafts, saveAsDraft, deleteDraft, loadDraft, theme, toggleTheme, appLanguage, toggleLanguage, isOnline, isSyncing, queueSize, lastSyncTime, syncOfflineQueue, addToOfflineQueue, deletedOrderIds, historyDeliveryFilter, setHistoryDeliveryFilter, historyPendingTimeFilter, setHistoryPendingTimeFilter, remoteReminders, syncedDevicesCount, syncedDevices, sharedReadNotificationIds, isSyncingNotifications, lastNotificationSyncAt, markNotificationsRead, syncAllDevicesNotifications }}>
+    <AppContext.Provider value={{ state, setState, viewStack, pushView, changeTab, startNewOrder, popView, goHome, reset, resetOrderForm, generatedMessages, setGeneratedMessages, history, setHistory, saveOrderToHistory, updateOrderHistoryState, updateSpecificHistoryItem, deleteOrderFromHistory, restoreOrderFromHistory, permanentlyDeleteOrderFromHistory, clearHistory, loadOrder, drafts, saveAsDraft, deleteDraft, loadDraft, theme, toggleTheme, appLanguage, toggleLanguage, isOnline, isSyncing, queueSize, lastSyncTime, syncOfflineQueue, addToOfflineQueue, deletedOrderIds, historyDeliveryFilter, setHistoryDeliveryFilter, historyPendingTimeFilter, setHistoryPendingTimeFilter, remoteReminders, recentSyncedAlerts, incomingAlertToast, dismissIncomingAlertToast, syncedDevicesCount, syncedDevices, sharedReadNotificationIds, isSyncingNotifications, lastNotificationSyncAt, markNotificationsRead, syncAllDevicesNotifications }}>
       {children}
     </AppContext.Provider>
   );

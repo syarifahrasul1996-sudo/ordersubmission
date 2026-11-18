@@ -1,5 +1,6 @@
-// Register custom notificationclick listener BEFORE importing Firebase Messaging scripts
-// to ensure FCM does not overwrite custom click handling
+// Service Worker v2 - Direct W3C Web Push (closed-app Android/iOS PWA) + FCM compatibility
+
+// 1. Handle notification click BEFORE importing Firebase scripts
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
 
@@ -32,6 +33,60 @@ self.addEventListener('notificationclick', (event) => {
   );
 });
 
+// 2. Handle direct W3C Web Push payloads (works even when app & browser are closed)
+self.addEventListener('push', (event) => {
+  if (!event.data) return;
+
+  let payload = null;
+  try {
+    payload = event.data.json();
+  } catch {
+    try {
+      const text = event.data.text();
+      payload = text ? { webPush: true, title: 'Peringatan Tempahan', body: text } : null;
+    } catch {
+      payload = null;
+    }
+  }
+
+  if (!payload) return;
+
+  // Yield to Firebase Messaging SDK handler if this is a Firebase FCM payload
+  if (payload.FCM_MSG || payload.notification) {
+    return;
+  }
+
+  if (payload.webPush || payload.title) {
+    const title = payload.title || 'Pesanan & Notifikasi';
+    const options = {
+      body: payload.body || '',
+      icon: payload.icon || 'https://i.imgur.com/49kNDoe.png',
+      badge: payload.badge || 'https://i.imgur.com/49kNDoe.png',
+      tag: payload.tag || payload.alertId || undefined,
+      renotify: Boolean(payload.tag || payload.alertId),
+      data: {
+        url: payload.url || '/',
+        orderId: payload.orderId,
+        alertId: payload.alertId,
+      },
+    };
+
+    event.waitUntil(
+      Promise.all([
+        self.registration.showNotification(title, options),
+        self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+          clients.forEach((client) => {
+            client.postMessage({
+              type: 'WEB_PUSH_RECEIVED',
+              payload,
+            });
+          });
+        }).catch(() => {}),
+      ])
+    );
+  }
+});
+
 self.addEventListener('install', () => {
   self.skipWaiting();
 });
@@ -40,7 +95,7 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(self.clients.claim());
 });
 
-// Import Firebase 12.14.0 compat scripts aligned with package.json
+// Import Firebase 12.14.0 compat scripts for legacy FCM background message compatibility
 importScripts('https://www.gstatic.com/firebasejs/12.14.0/firebase-app-compat.js');
 importScripts('https://www.gstatic.com/firebasejs/12.14.0/firebase-messaging-compat.js');
 
@@ -58,9 +113,6 @@ const messaging = firebase.messaging();
 messaging.onBackgroundMessage((payload) => {
   console.log('[firebase-messaging-sw.js] Background message received:', payload);
 
-  // Prevent duplicate background notifications:
-  // When payload contains a `notification` property, Firebase Messaging automatically displays it.
-  // Only manually display a notification for data-only messages (when payload.notification is absent).
   if (!payload.notification && payload.data) {
     const title = payload.data.title || 'Pesanan & Notifikasi';
     const body = payload.data.body || '';

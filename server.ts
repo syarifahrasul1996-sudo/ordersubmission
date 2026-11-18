@@ -2,6 +2,7 @@ import express from "express";
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
+import * as webpush from "web-push";
 import { createServer as createViteServer } from "vite";
 import { initializeApp, getApps, App } from "firebase-admin/app";
 import { getFirestore, FieldValue, Firestore } from "firebase-admin/firestore";
@@ -48,10 +49,67 @@ interface OrderReminderRecord {
   lastThreeHourAlertedAt?: string;
 }
 
+interface SyncedDevicePresence {
+  deviceId: string;
+  deviceLabel: string;
+  platform: string;
+  fidSuffix?: string;
+  fcmEnabled: boolean;
+  lastSeenAt: string;
+}
+
+interface SyncedAlertEvent {
+  id: string;
+  type: 'test_alert' | 'order_alert';
+  title: string;
+  body: string;
+  orderId?: string;
+  senderDeviceId?: string;
+  senderDeviceLabel?: string;
+  senderFidSuffix?: string;
+  createdAt: number;
+}
+
+interface StoredWebPushSubscription {
+  id: string;
+  deviceId?: string;
+  deviceLabel?: string;
+  platform?: string;
+  subscription: {
+    endpoint: string;
+    keys: {
+      p256dh: string;
+      auth: string;
+    };
+    expirationTime?: number | null;
+  };
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+  lastSeenAt?: string;
+}
+
+interface SyncedSheetConfigItem {
+  year: string;
+  spreadsheetId: string;
+  scriptUrl: string;
+}
+
+interface SyncedSheetConfigsState {
+  annualSheets: SyncedSheetConfigItem[];
+  globalScriptUrl: string;
+  updatedAt: number;
+}
+
 interface PersistedPushStore {
   installations: Record<string, PushInstallationRecord>;
   reminders: Record<string, OrderReminderRecord>;
   readNotificationIds: Record<string, number>;
+  presenceDevices?: Record<string, SyncedDevicePresence>;
+  recentAlerts?: SyncedAlertEvent[];
+  vapidKeys?: { publicKey: string; privateKey: string };
+  webPushSubscriptions?: Record<string, StoredWebPushSubscription>;
+  sheetConfigs?: SyncedSheetConfigsState;
 }
 
 async function startServer() {
@@ -134,6 +192,30 @@ async function startServer() {
   const memoryInstallationStore = new Map<string, PushInstallationRecord>();
   const memoryRemindersStore = new Map<string, OrderReminderRecord>();
   const readNotificationMap = new Map<string, number>();
+  const presenceDevicesStore = new Map<string, SyncedDevicePresence>();
+  const webPushSubscriptionsStore = new Map<string, StoredWebPushSubscription>();
+  let recentAlertsStore: SyncedAlertEvent[] = [];
+  let vapidKeysState: { publicKey: string; privateKey: string } | null = null;
+  const DEFAULT_SERVER_SPREADSHEET_ID = "1kUAJYUVhr9bPYErtpnohpvuGGyhBSvJyEOIyzEFivJo";
+  const DEFAULT_SERVER_SCRIPT_URL =
+    "https://script.google.com/macros/s/AKfycbw5KpBvJyFpIXmsHueg4XPSRkZ0mg6kxHqjMGp3WEs8Hx_JodvKSoKEg6RMsdH54iCa/exec";
+  let sheetConfigsState: SyncedSheetConfigsState = {
+    annualSheets: [
+      { year: "2026", spreadsheetId: DEFAULT_SERVER_SPREADSHEET_ID, scriptUrl: "" },
+      { year: "2025", spreadsheetId: DEFAULT_SERVER_SPREADSHEET_ID, scriptUrl: "" },
+      { year: "2024", spreadsheetId: DEFAULT_SERVER_SPREADSHEET_ID, scriptUrl: "" },
+    ],
+    globalScriptUrl: DEFAULT_SERVER_SCRIPT_URL,
+    updatedAt: 0,
+  };
+
+  function appendSyncedAlert(alert: SyncedAlertEvent) {
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    recentAlertsStore = [
+      alert,
+      ...recentAlertsStore.filter((a) => a.id !== alert.id && a.createdAt >= cutoff),
+    ].slice(0, 30);
+  }
 
   // Load persisted store from disk on startup
   function loadPersistedStoreFromDisk() {
@@ -163,8 +245,53 @@ async function startServer() {
           }
         }
       }
+      if (parsed.presenceDevices && typeof parsed.presenceDevices === "object") {
+        const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+        for (const [k, dev] of Object.entries(parsed.presenceDevices)) {
+          if (dev && dev.deviceId && Date.parse(dev.lastSeenAt || "") >= weekAgo) {
+            presenceDevicesStore.set(k, dev);
+          }
+        }
+      }
+      if (Array.isArray(parsed.recentAlerts)) {
+        const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+        recentAlertsStore = parsed.recentAlerts.filter((a) => a && a.id && a.createdAt >= cutoff).slice(0, 30);
+      }
+      if (parsed.vapidKeys?.publicKey && parsed.vapidKeys?.privateKey) {
+        vapidKeysState = {
+          publicKey: parsed.vapidKeys.publicKey,
+          privateKey: parsed.vapidKeys.privateKey,
+        };
+      }
+      if (parsed.webPushSubscriptions && typeof parsed.webPushSubscriptions === "object") {
+        for (const [k, sub] of Object.entries(parsed.webPushSubscriptions)) {
+          if (sub && sub.subscription?.endpoint && sub.subscription?.keys?.p256dh && sub.subscription?.keys?.auth) {
+            webPushSubscriptionsStore.set(k, sub);
+          }
+        }
+      }
+      if (parsed.sheetConfigs && Array.isArray(parsed.sheetConfigs.annualSheets)) {
+        const loadedSheets = parsed.sheetConfigs.annualSheets
+          .filter((s) => s && typeof s.year === "string")
+          .map((s) => {
+            const yr = String(s.year).trim();
+            const rawId = String(s.spreadsheetId || "").trim();
+            return {
+              year: yr,
+              spreadsheetId: rawId || (yr === "2026" || yr === "2025" || yr === "2024" ? DEFAULT_SERVER_SPREADSHEET_ID : ""),
+              scriptUrl: String(s.scriptUrl || "").trim(),
+            };
+          });
+        if (loadedSheets.length > 0) {
+          sheetConfigsState = {
+            annualSheets: loadedSheets,
+            globalScriptUrl: String(parsed.sheetConfigs.globalScriptUrl || "").trim() || DEFAULT_SERVER_SCRIPT_URL,
+            updatedAt: Number(parsed.sheetConfigs.updatedAt || 0),
+          };
+        }
+      }
       console.log(
-        `[Push Store] Loaded ${memoryInstallationStore.size} installations, ${memoryRemindersStore.size} reminders, ${readNotificationMap.size} read states from disk`
+        `[Push Store] Loaded ${memoryInstallationStore.size} installations, ${webPushSubscriptionsStore.size} webPush subs, ${presenceDevicesStore.size} devices, ${memoryRemindersStore.size} reminders from disk`
       );
     } catch (err: any) {
       console.warn("[Push Store] Failed to load persisted store:", err?.message || err);
@@ -181,6 +308,11 @@ async function startServer() {
         installations: Object.fromEntries(memoryInstallationStore.entries()),
         reminders: Object.fromEntries(memoryRemindersStore.entries()),
         readNotificationIds: Object.fromEntries(readNotificationMap.entries()),
+        presenceDevices: Object.fromEntries(presenceDevicesStore.entries()),
+        recentAlerts: recentAlertsStore,
+        ...(vapidKeysState ? { vapidKeys: vapidKeysState } : {}),
+        webPushSubscriptions: Object.fromEntries(webPushSubscriptionsStore.entries()),
+        sheetConfigs: sheetConfigsState,
       };
       const tmpPath = `${PUSH_STORE_PATH}.tmp.${process.pid}`;
       fs.writeFileSync(tmpPath, JSON.stringify(payload, null, 2), "utf8");
@@ -207,6 +339,20 @@ async function startServer() {
   }
 
   loadPersistedStoreFromDisk();
+
+  // Initialize or reuse persistent VAPID keys for direct W3C Web Push (works on Android & iOS PWA when closed)
+  if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+    vapidKeysState = {
+      publicKey: process.env.VAPID_PUBLIC_KEY.trim(),
+      privateKey: process.env.VAPID_PRIVATE_KEY.trim(),
+    };
+  } else if (!vapidKeysState) {
+    vapidKeysState = webpush.generateVAPIDKeys();
+    writeStoreSyncAtomic();
+    console.log("[WebPush] Generated and persisted new VAPID keypair.");
+  }
+  webpush.setVapidDetails("mailto:notifications@ordersub.app", vapidKeysState.publicKey, vapidKeysState.privateKey);
+  console.log("[WebPush] Direct W3C Web Push initialized.");
 
   // =========================================================================
   // Real-time Cross-Device SSE Broadcaster
@@ -376,18 +522,299 @@ async function startServer() {
   // FCM Push Notification Endpoints
   // =========================================================================
 
+  async function getMergedSyncedDevices() {
+    const activeInstallations = await getAllActiveInstallations();
+    const byKey = new Map<string, {
+      id: string;
+      deviceId?: string;
+      fidSuffix?: string;
+      deviceLabel: string;
+      platform: string;
+      fcmEnabled: boolean;
+      lastSeenAt: string;
+    }>();
+
+    const matchedPresenceFids = new Set<string>();
+    const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+
+    for (const dev of presenceDevicesStore.values()) {
+      if (Date.parse(dev.lastSeenAt || "") < weekAgo) continue;
+      if (dev.fidSuffix) matchedPresenceFids.add(dev.fidSuffix);
+      byKey.set(`dev_${dev.deviceId}`, {
+        id: dev.deviceId.slice(0, 12),
+        deviceId: dev.deviceId,
+        fidSuffix: dev.fidSuffix,
+        deviceLabel: dev.deviceLabel || "Peranti Web",
+        platform: dev.platform || "web",
+        fcmEnabled: Boolean(dev.fcmEnabled),
+        lastSeenAt: dev.lastSeenAt,
+      });
+    }
+
+    for (const sub of webPushSubscriptionsStore.values()) {
+      if (!sub.enabled) continue;
+      if (sub.deviceId && byKey.has(`dev_${sub.deviceId}`)) {
+        const existing = byKey.get(`dev_${sub.deviceId}`)!;
+        existing.fcmEnabled = true;
+        if (sub.lastSeenAt && Date.parse(sub.lastSeenAt) > Date.parse(existing.lastSeenAt || "")) {
+          existing.lastSeenAt = sub.lastSeenAt;
+        }
+        continue;
+      }
+      byKey.set(`wp_${sub.id}`, {
+        id: sub.id.slice(0, 12),
+        deviceId: sub.deviceId,
+        deviceLabel: sub.deviceLabel || "Peranti Web Push",
+        platform: sub.platform || "web",
+        fcmEnabled: true,
+        lastSeenAt: sub.lastSeenAt || sub.updatedAt,
+      });
+    }
+
+    for (const inst of activeInstallations) {
+      const fidSuffix = inst.fid.slice(-6);
+      if (matchedPresenceFids.has(fidSuffix)) {
+        for (const existing of byKey.values()) {
+          if (existing.fidSuffix === fidSuffix) {
+            existing.fcmEnabled = true;
+            if (inst.lastSeenAt && Date.parse(inst.lastSeenAt) > Date.parse(existing.lastSeenAt || "")) {
+              existing.lastSeenAt = inst.lastSeenAt;
+            }
+          }
+        }
+        continue;
+      }
+      const hashId = crypto.createHash("sha256").update(inst.fid).digest("hex").slice(0, 12);
+      byKey.set(`fcm_${hashId}`, {
+        id: hashId,
+        fidSuffix,
+        deviceLabel: inst.deviceLabel || "Peranti Berdaftar",
+        platform: inst.platform || "web",
+        fcmEnabled: true,
+        lastSeenAt: inst.lastSeenAt || inst.updatedAt,
+      });
+    }
+
+    return Array.from(byKey.values()).sort(
+      (a, b) => (Date.parse(b.lastSeenAt || "") || 0) - (Date.parse(a.lastSeenAt || "") || 0)
+    );
+  }
+
+  async function sendWebPushToAllSubscribers(
+    payload: {
+      title: string;
+      body: string;
+      url?: string;
+      orderId?: string;
+      tag?: string;
+      icon?: string;
+      alertId?: string;
+      senderDeviceId?: string;
+      senderDeviceLabel?: string;
+    },
+    excludeDeviceId?: string
+  ): Promise<{ sentCount: number; failedCount: number }> {
+    const activeSubs = Array.from(webPushSubscriptionsStore.values()).filter(
+      (s) => s.enabled && (!excludeDeviceId || s.deviceId !== excludeDeviceId)
+    );
+    if (activeSubs.length === 0) {
+      return { sentCount: 0, failedCount: 0 };
+    }
+
+    const message = JSON.stringify({
+      webPush: true,
+      title: payload.title,
+      body: payload.body,
+      url: payload.url || "/",
+      orderId: payload.orderId,
+      tag: payload.tag || payload.alertId,
+      alertId: payload.alertId,
+      icon: payload.icon || "https://i.imgur.com/49kNDoe.png",
+      badge: "https://i.imgur.com/49kNDoe.png",
+      senderDeviceId: payload.senderDeviceId,
+      senderDeviceLabel: payload.senderDeviceLabel,
+      timestamp: Date.now(),
+    });
+
+    let sentCount = 0;
+    let failedCount = 0;
+    let storeChanged = false;
+
+    await Promise.allSettled(
+      activeSubs.map(async (sub) => {
+        try {
+          await webpush.sendNotification(sub.subscription, message, {
+            TTL: 86400,
+            urgency: "high",
+          });
+          sentCount++;
+          sub.lastSeenAt = new Date().toISOString();
+          storeChanged = true;
+        } catch (err: any) {
+          failedCount++;
+          const status = err?.statusCode;
+          if (status === 404 || status === 410) {
+            sub.enabled = false;
+            sub.updatedAt = new Date().toISOString();
+            storeChanged = true;
+            console.log(`[WebPush] Deactivated expired subscription ${sub.id}`);
+          } else {
+            console.warn(`[WebPush] Delivery notice (${status || err?.code || "ERR"}):`, err?.message || err);
+          }
+        }
+      })
+    );
+
+    if (storeChanged) {
+      schedulePersistToDisk();
+    }
+
+    return { sentCount, failedCount };
+  }
+
   // 0. Diagnostic status endpoint
   app.get(["/api/push/status", "/api/push/status/"], async (_req, res) => {
-    const active = await getAllActiveInstallations();
+    const [active, mergedDevices] = await Promise.all([
+      getAllActiveInstallations(),
+      getMergedSyncedDevices(),
+    ]);
+    const activeWebPushCount = Array.from(webPushSubscriptionsStore.values()).filter((s) => s.enabled).length;
     return res.json({
       status: "ok",
       activeInstallationsCount: active.length,
+      webPushSubscriptionsCount: activeWebPushCount,
+      webPushReady: Boolean(vapidKeysState?.publicKey),
+      syncedDevicesCount: mergedDevices.length,
       remindersCount: memoryRemindersStore.size,
+      recentAlertsCount: recentAlertsStore.length,
       sseClientsCount: sseClients.size,
       firestoreAvailable,
       fcmMessagingAvailable,
       serverTime: new Date().toISOString()
     });
+  });
+
+  // 0a. Direct W3C Web Push VAPID public key + subscription endpoints
+  app.get(["/api/push/vapid-public-key", "/api/push/vapid-public-key/"], (_req, res) => {
+    if (!vapidKeysState?.publicKey) {
+      return res.status(503).json({ success: false, error: "VAPID keypair not initialized" });
+    }
+    return res.json({ success: true, publicKey: vapidKeysState.publicKey });
+  });
+
+  app.post(["/api/push/webpush-subscribe", "/api/push/webpush-subscribe/"], async (req, res) => {
+    try {
+      const { subscription, deviceId, deviceLabel, platform } = req.body || {};
+      const endpoint = subscription?.endpoint;
+      const p256dh = subscription?.keys?.p256dh;
+      const auth = subscription?.keys?.auth;
+
+      if (
+        typeof endpoint !== "string" || !endpoint.startsWith("https://") ||
+        typeof p256dh !== "string" || !p256dh ||
+        typeof auth !== "string" || !auth
+      ) {
+        return res.status(400).json({ success: false, error: "Invalid Web Push subscription payload" });
+      }
+
+      const subId = crypto.createHash("sha256").update(endpoint).digest("hex").slice(0, 24);
+      const cleanDeviceId = typeof deviceId === "string" && deviceId.trim() ? deviceId.trim().slice(0, 64) : undefined;
+      const cleanLabel = typeof deviceLabel === "string" && deviceLabel.trim() ? deviceLabel.trim().slice(0, 60) : "Peranti Web Push";
+      const cleanPlatform = typeof platform === "string" && platform.trim() ? platform.trim().slice(0, 40) : "web";
+      const now = new Date().toISOString();
+
+      // Disable older endpoints belonging to the exact same deviceId so device doesn't get duplicate pushes
+      if (cleanDeviceId) {
+        for (const existing of webPushSubscriptionsStore.values()) {
+          if (existing.deviceId === cleanDeviceId && existing.id !== subId && existing.enabled) {
+            existing.enabled = false;
+            existing.updatedAt = now;
+          }
+        }
+      }
+
+      const prev = webPushSubscriptionsStore.get(subId);
+      const isNew = !prev || !prev.enabled;
+
+      webPushSubscriptionsStore.set(subId, {
+        id: subId,
+        deviceId: cleanDeviceId,
+        deviceLabel: cleanLabel,
+        platform: cleanPlatform,
+        subscription: {
+          endpoint,
+          keys: { p256dh, auth },
+          expirationTime: subscription.expirationTime ?? null,
+        },
+        enabled: true,
+        createdAt: prev?.createdAt || now,
+        updatedAt: now,
+        lastSeenAt: now,
+      });
+
+      if (cleanDeviceId) {
+        const existingPresence = presenceDevicesStore.get(cleanDeviceId);
+        presenceDevicesStore.set(cleanDeviceId, {
+          deviceId: cleanDeviceId,
+          deviceLabel: cleanLabel,
+          platform: cleanPlatform,
+          fidSuffix: existingPresence?.fidSuffix,
+          fcmEnabled: true,
+          lastSeenAt: now,
+        });
+      }
+
+      schedulePersistToDisk(true);
+      const mergedDevices = await getMergedSyncedDevices();
+      if (isNew) {
+        broadcastNotificationSync("devices_updated", { activeDevicesCount: mergedDevices.length });
+      }
+
+      console.log(`[WebPush] Subscribed device ${cleanLabel} (${subId.slice(0, 8)})`);
+      return res.json({
+        success: true,
+        id: subId,
+        activeDevicesCount: mergedDevices.length,
+        webPushEnabled: true,
+      });
+    } catch (err: any) {
+      console.error("[WebPush] Subscribe error:", err);
+      return res.status(500).json({ success: false, error: err?.message || "Failed to save Web Push subscription" });
+    }
+  });
+
+  app.post(["/api/push/webpush-unsubscribe", "/api/push/webpush-unsubscribe/"], async (req, res) => {
+    try {
+      const { endpoint, deviceId } = req.body || {};
+      let modified = false;
+      const now = new Date().toISOString();
+
+      if (typeof endpoint === "string" && endpoint) {
+        const subId = crypto.createHash("sha256").update(endpoint).digest("hex").slice(0, 24);
+        const rec = webPushSubscriptionsStore.get(subId);
+        if (rec) {
+          rec.enabled = false;
+          rec.updatedAt = now;
+          modified = true;
+        }
+      }
+      if (typeof deviceId === "string" && deviceId.trim()) {
+        for (const rec of webPushSubscriptionsStore.values()) {
+          if (rec.deviceId === deviceId.trim()) {
+            rec.enabled = false;
+            rec.updatedAt = now;
+            modified = true;
+          }
+        }
+      }
+
+      if (modified) {
+        schedulePersistToDisk(true);
+      }
+      return res.json({ success: true });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err?.message || "Failed to unsubscribe" });
+    }
   });
 
   // 0b. Real-time Server-Sent Events (SSE) stream for multi-device instant sync
@@ -400,11 +827,11 @@ async function startServer() {
 
     sseClients.add(res);
 
-    const active = await getAllActiveInstallations();
+    const mergedDevices = await getMergedSyncedDevices();
     res.write(
       `event: sync\ndata: ${JSON.stringify({
         reason: "connected",
-        activeDevicesCount: active.length,
+        activeDevicesCount: mergedDevices.length,
         serverTime: new Date().toISOString(),
       })}\n\n`
     );
@@ -424,32 +851,120 @@ async function startServer() {
     });
   });
 
-  // 0c. Unified cross-device notification state endpoint
-  app.get(["/api/notifications/state", "/api/notifications/state/"], async (_req, res) => {
+  // 0b-2. Universal device presence heartbeat (tracks every device running the app even without FCM)
+  app.post(["/api/notifications/heartbeat", "/api/notifications/heartbeat/"], async (req, res) => {
     try {
-      const [activeInstallations, reminders] = await Promise.all([
-        getAllActiveInstallations(),
-        getAllNonDeletedReminders(),
-      ]);
+      const { deviceId, deviceLabel, platform, fcmEnabled, fidSuffix } = req.body || {};
+      if (!deviceId || typeof deviceId !== "string" || !deviceId.trim()) {
+        return res.status(400).json({ success: false, error: "Missing 'deviceId'" });
+      }
+      const cleanId = deviceId.trim().slice(0, 64);
+      const isNew = !presenceDevicesStore.has(cleanId);
+      const now = new Date().toISOString();
+
+      presenceDevicesStore.set(cleanId, {
+        deviceId: cleanId,
+        deviceLabel: typeof deviceLabel === "string" && deviceLabel.trim() ? deviceLabel.trim().slice(0, 60) : "Peranti Web",
+        platform: typeof platform === "string" && platform.trim() ? platform.trim().slice(0, 40) : "web",
+        fidSuffix: typeof fidSuffix === "string" && fidSuffix.trim() ? fidSuffix.trim().slice(-6) : undefined,
+        fcmEnabled: Boolean(fcmEnabled),
+        lastSeenAt: now,
+      });
+
+      schedulePersistToDisk();
+      const mergedDevices = await getMergedSyncedDevices();
+      if (isNew) {
+        broadcastNotificationSync("devices_updated", { activeDevicesCount: mergedDevices.length });
+      }
 
       return res.json({
         success: true,
-        activeDevicesCount: activeInstallations.length,
-        devices: activeInstallations.map((inst) => ({
-          id: crypto.createHash("sha256").update(inst.fid).digest("hex").slice(0, 12),
-          fidSuffix: inst.fid.slice(-6),
-          deviceLabel: inst.deviceLabel || "Peranti Berdaftar",
-          platform: inst.platform || "web",
-          lastSeenAt: inst.lastSeenAt || inst.updatedAt,
-        })),
+        activeDevicesCount: mergedDevices.length,
+        devices: mergedDevices,
+      });
+    } catch (err: any) {
+      console.error("[Sync Server] Heartbeat error:", err);
+      return res.status(500).json({ success: false, error: "Failed to record device heartbeat" });
+    }
+  });
+
+  // 0c. Unified cross-device notification state endpoint
+  app.get(["/api/notifications/state", "/api/notifications/state/"], async (_req, res) => {
+    try {
+      const [mergedDevices, reminders] = await Promise.all([
+        getMergedSyncedDevices(),
+        getAllNonDeletedReminders(),
+      ]);
+
+      const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+      const validAlerts = recentAlertsStore.filter((a) => a.createdAt >= cutoff);
+
+      return res.json({
+        success: true,
+        activeDevicesCount: mergedDevices.length,
+        devices: mergedDevices,
         reminders,
+        recentAlerts: validAlerts,
         readNotificationIds: Array.from(readNotificationMap.keys()),
+        sheetConfigs: sheetConfigsState,
         fcmMessagingAvailable,
         serverTime: new Date().toISOString(),
       });
     } catch (err: any) {
       console.error("[Sync Server] Error fetching notification state:", err);
       return res.status(500).json({ success: false, error: err?.message || "Failed to fetch notification state" });
+    }
+  });
+
+  // 0c-2. Cross-device Google Sheet links & Apps Script config sync
+  app.get(["/api/settings/sheets", "/api/settings/sheets/"], (_req, res) => {
+    return res.json({
+      success: true,
+      sheetConfigs: sheetConfigsState,
+    });
+  });
+
+  app.post(["/api/settings/sheets", "/api/settings/sheets/"], (req, res) => {
+    try {
+      const { annualSheets, globalScriptUrl } = req.body || {};
+      if (!Array.isArray(annualSheets)) {
+        return res.status(400).json({ success: false, error: "Expected 'annualSheets' array" });
+      }
+
+      const sanitizedSheets: SyncedSheetConfigItem[] = annualSheets
+        .filter((s) => s && typeof s.year === "string" && s.year.trim())
+        .slice(0, 20)
+        .map((s) => {
+          const yr = String(s.year).trim().slice(0, 20);
+          const rawId = String(s.spreadsheetId || "").trim().slice(0, 300);
+          return {
+            year: yr,
+            spreadsheetId: rawId || (yr === "2026" || yr === "2025" || yr === "2024" ? DEFAULT_SERVER_SPREADSHEET_ID : ""),
+            scriptUrl: String(s.scriptUrl || "").trim().slice(0, 400),
+          };
+        });
+
+      const cleanGlobalUrl =
+        typeof globalScriptUrl === "string" && globalScriptUrl.trim()
+          ? globalScriptUrl.trim().slice(0, 400)
+          : DEFAULT_SERVER_SCRIPT_URL;
+
+      sheetConfigsState = {
+        annualSheets: sanitizedSheets.length > 0 ? sanitizedSheets : sheetConfigsState.annualSheets,
+        globalScriptUrl: cleanGlobalUrl,
+        updatedAt: Date.now(),
+      };
+
+      schedulePersistToDisk(true);
+      broadcastNotificationSync("sheets_updated", { sheetConfigs: sheetConfigsState });
+
+      return res.json({
+        success: true,
+        sheetConfigs: sheetConfigsState,
+      });
+    } catch (err: any) {
+      console.error("[Sync Server] Error updating sheet configs:", err);
+      return res.status(500).json({ success: false, error: err?.message || "Failed to save sheet configs" });
     }
   });
 
@@ -632,10 +1147,10 @@ async function startServer() {
     }
   });
 
-  // 3. Send Test Notification across ALL synced devices (FCM + real-time SSE broadcast)
+  // 3. Send Test Notification across ALL synced devices (FCM + real-time SSE + persisted alert queue)
   app.post(["/api/push/send-test", "/api/push/send-test/"], async (req, res) => {
     try {
-      const { fid, secret, title, body, broadcastAll = true } = req.body;
+      const { fid, secret, title, body, broadcastAll = true, senderDeviceId, senderDeviceLabel } = req.body;
 
       if (!fid || typeof fid !== "string" || fid.trim() === "") {
         return res.status(400).json({ success: false, error: "Missing or invalid 'fid' parameter", code: "INVALID_FID" });
@@ -650,7 +1165,7 @@ async function startServer() {
       }
 
       const targetFid = fid.trim();
-      const isLocalPlaceholder = targetFid === "local_device";
+      const isLocalPlaceholder = targetFid === "local_device" || targetFid.startsWith("webpush_");
 
       if (!isLocalPlaceholder) {
         const safeDocId = crypto.createHash("sha256").update(targetFid).digest("hex");
@@ -689,23 +1204,62 @@ async function startServer() {
       const notificationTitle = (title && typeof title === "string") ? title.slice(0, 100) : "🔥 Ujian Notifikasi";
       const notificationBody = (body && typeof body === "string") ? body.slice(0, 300) : "Peringatan pesanan disegerakkan merentasi semua peranti!";
 
-      const allInstallations = broadcastAll
-        ? await getAllActiveInstallations()
-        : (isLocalPlaceholder ? [] : [{ fid: targetFid } as PushInstallationRecord]);
+      const [allInstallations, mergedDevices] = await Promise.all([
+        broadcastAll
+          ? getAllActiveInstallations()
+          : Promise.resolve(isLocalPlaceholder ? [] : [{ fid: targetFid } as PushInstallationRecord]),
+        getMergedSyncedDevices(),
+      ]);
 
-      // Always broadcast real-time SSE alert so open browsers/PWA tabs across all devices receive the chime + SW alert immediately
-      broadcastNotificationSync("test_alert", {
+      // Persist test alert into recentAlerts so devices polling or waking up from background also receive it
+      const alertEvent: SyncedAlertEvent = {
+        id: `test_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`,
+        type: "test_alert",
         title: notificationTitle,
         body: notificationBody,
-        senderFidSuffix: targetFid.slice(-8),
-        timestamp: Date.now(),
+        senderDeviceId: typeof senderDeviceId === "string" && senderDeviceId.trim() ? senderDeviceId.trim().slice(0, 64) : undefined,
+        senderDeviceLabel: typeof senderDeviceLabel === "string" && senderDeviceLabel.trim() ? senderDeviceLabel.trim().slice(0, 60) : undefined,
+        senderFidSuffix: isLocalPlaceholder ? undefined : targetFid.slice(-8),
+        createdAt: Date.now(),
+      };
+      appendSyncedAlert(alertEvent);
+      schedulePersistToDisk(true);
+
+      // Broadcast real-time SSE alert immediately to all connected devices/tabs
+      broadcastNotificationSync("test_alert", {
+        alert: alertEvent,
+        id: alertEvent.id,
+        title: alertEvent.title,
+        body: alertEvent.body,
+        senderDeviceId: alertEvent.senderDeviceId,
+        senderDeviceLabel: alertEvent.senderDeviceLabel,
+        senderFidSuffix: alertEvent.senderFidSuffix,
+        timestamp: alertEvent.createdAt,
       });
 
       let sentCount = 0;
+      let webPushSentCount = 0;
       let firstMessageId: string | undefined;
       let lastFcmError: string | undefined;
 
-      if (messaging && fcmMessagingAvailable && allInstallations.length > 0) {
+      // 1. Direct W3C Web Push (works on Android Chrome & iOS 16.4+ PWA even when completely closed)
+      const webPushResult = await sendWebPushToAllSubscribers(
+        {
+          title: notificationTitle,
+          body: notificationBody,
+          url: "/",
+          tag: alertEvent.id,
+          alertId: alertEvent.id,
+          senderDeviceId: alertEvent.senderDeviceId,
+          senderDeviceLabel: alertEvent.senderDeviceLabel,
+        },
+        broadcastAll ? alertEvent.senderDeviceId : undefined
+      );
+      webPushSentCount = webPushResult.sentCount;
+      sentCount += webPushSentCount;
+
+      // 2. Legacy Firebase Admin fallback (if IAM permissions are available)
+      if (messaging && fcmMessagingAvailable && allInstallations.length > 0 && webPushSentCount === 0) {
         await Promise.allSettled(
           allInstallations.map(async (inst) => {
             const messagePayload = buildTargetPayload(inst.fid, {
@@ -717,7 +1271,7 @@ async function startServer() {
                 notification: {
                   icon: "https://i.imgur.com/49kNDoe.png",
                   badge: "https://i.imgur.com/49kNDoe.png",
-                  tag: "test_notification",
+                  tag: alertEvent.id,
                 },
                 fcmOptions: {
                   link: "/",
@@ -725,7 +1279,8 @@ async function startServer() {
                 data: {
                   url: "/",
                   source: "fcm_test",
-                  timestamp: String(Date.now()),
+                  alertId: alertEvent.id,
+                  timestamp: String(alertEvent.createdAt),
                 },
               },
             });
@@ -766,11 +1321,15 @@ async function startServer() {
 
       return res.json({
         success: true,
-        messageId: firstMessageId || (sseClients.size > 0 ? "sse_broadcast" : "local_ready"),
+        alertId: alertEvent.id,
+        messageId: firstMessageId || (webPushSentCount > 0 ? "webpush_sent" : sseClients.size > 0 ? "sse_broadcast" : "synced_queue"),
         sentCount,
-        totalDevices: allInstallations.length,
+        webPushSentCount,
+        totalDevices: mergedDevices.length,
+        pushDevicesCount: allInstallations.length,
         sseDelivered: sseClients.size > 0,
         fcmAvailable: fcmMessagingAvailable,
+        webPushAvailable: Boolean(vapidKeysState?.publicKey),
         ...(lastFcmError ? { fcmNotice: lastFcmError } : {}),
       });
     } catch (err: any) {
@@ -876,17 +1435,18 @@ async function startServer() {
         broadcastNotificationSync("reminders_updated", { count: orders.length });
       }
 
-      const [allReminders, activeInstallations] = await Promise.all([
+      const [allReminders, mergedDevices] = await Promise.all([
         getAllNonDeletedReminders(),
-        getAllActiveInstallations(),
+        getMergedSyncedDevices(),
       ]);
 
       return res.json({
         success: true,
         reminderStates,
         allReminders,
+        recentAlerts: recentAlertsStore,
         readNotificationIds: Array.from(readNotificationMap.keys()),
-        activeDevicesCount: activeInstallations.length,
+        activeDevicesCount: mergedDevices.length,
       });
     } catch (err: any) {
       console.error("[FCM Server] Error syncing reminders:", err);
@@ -919,16 +1479,35 @@ async function startServer() {
             ? `Order for ${order.customerName} (${order.mainType} ${order.subType}) is due in less than 20 minutes!`
             : `Pesanan untuk ${order.customerName} (${order.mainType} ${order.subType}) berbaki kurang dari 20 minit!`;
 
-          let sentSuccessfully = false;
-          if (sseClients.size > 0) {
-            broadcastNotificationSync("order_alert", {
-              orderId: order.orderId || order.id,
-              alertType: "due_soon",
-              title,
-              body,
-            });
-            sentSuccessfully = true;
-          }
+          const alertObj: SyncedAlertEvent = {
+            id: `order_due_soon_${order.id}`,
+            type: "order_alert",
+            title,
+            body,
+            orderId: order.orderId || order.id,
+            createdAt: now,
+          };
+          appendSyncedAlert(alertObj);
+
+          let sentSuccessfully = true;
+          broadcastNotificationSync("order_alert", {
+            alert: alertObj,
+            id: alertObj.id,
+            orderId: order.orderId || order.id,
+            alertType: "due_soon",
+            title,
+            body,
+            timestamp: now,
+          });
+
+          await sendWebPushToAllSubscribers({
+            title,
+            body,
+            url: "/",
+            orderId: order.orderId || order.id,
+            tag: `due_soon_${order.id}`,
+            alertId: alertObj.id,
+          }).catch(() => {});
 
           if (messaging && fcmMessagingAvailable && installations.length > 0) {
             for (const inst of installations) {
@@ -988,16 +1567,35 @@ async function startServer() {
             ? `Order for ${order.customerName} (${order.mainType} ${order.subType}) is due now!`
             : `Tempahan untuk ${order.customerName} (${order.mainType} ${order.subType}) sudah sampai tempoh sekarang!`;
 
-          let sentSuccessfully = false;
-          if (sseClients.size > 0) {
-            broadcastNotificationSync("order_alert", {
-              orderId: order.orderId || order.id,
-              alertType: "due_now",
-              title,
-              body,
-            });
-            sentSuccessfully = true;
-          }
+          const alertObj: SyncedAlertEvent = {
+            id: `order_due_now_${order.id}`,
+            type: "order_alert",
+            title,
+            body,
+            orderId: order.orderId || order.id,
+            createdAt: now,
+          };
+          appendSyncedAlert(alertObj);
+
+          let sentSuccessfully = true;
+          broadcastNotificationSync("order_alert", {
+            alert: alertObj,
+            id: alertObj.id,
+            orderId: order.orderId || order.id,
+            alertType: "due_now",
+            title,
+            body,
+            timestamp: now,
+          });
+
+          await sendWebPushToAllSubscribers({
+            title,
+            body,
+            url: "/",
+            orderId: order.orderId || order.id,
+            tag: `due_now_${order.id}`,
+            alertId: alertObj.id,
+          }).catch(() => {});
 
           if (messaging && fcmMessagingAvailable && installations.length > 0) {
             for (const inst of installations) {
@@ -1056,16 +1654,35 @@ async function startServer() {
           const title = lang === 'en' ? 'Order Status Check' : 'Status Tempahan';
           const body = `${order.customerName} (${order.mainType}) - Dah siap ke belum? Sila semak status pesanan.`;
 
-          let sentSuccessfully = false;
-          if (sseClients.size > 0) {
-            broadcastNotificationSync("order_alert", {
-              orderId: order.orderId || order.id,
-              alertType: "three_hour_check",
-              title,
-              body,
-            });
-            sentSuccessfully = true;
-          }
+          const alertObj: SyncedAlertEvent = {
+            id: `order_three_hour_${order.id}`,
+            type: "order_alert",
+            title,
+            body,
+            orderId: order.orderId || order.id,
+            createdAt: now,
+          };
+          appendSyncedAlert(alertObj);
+
+          let sentSuccessfully = true;
+          broadcastNotificationSync("order_alert", {
+            alert: alertObj,
+            id: alertObj.id,
+            orderId: order.orderId || order.id,
+            alertType: "three_hour_check",
+            title,
+            body,
+            timestamp: now,
+          });
+
+          await sendWebPushToAllSubscribers({
+            title,
+            body,
+            url: "/",
+            orderId: order.orderId || order.id,
+            tag: `three_hour_${order.id}`,
+            alertId: alertObj.id,
+          }).catch(() => {});
 
           if (messaging && fcmMessagingAvailable && installations.length > 0) {
             for (const inst of installations) {

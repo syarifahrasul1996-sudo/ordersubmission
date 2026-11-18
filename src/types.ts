@@ -76,7 +76,7 @@ export const INITIAL_STATE: AppState = {
   isEditMode: false,
   extraHours: 0,
   customDoc: '',
-  spreadsheetId: '',
+  spreadsheetId: '1kUAJYUVhr9bPYErtpnohpvuGGyhBSvJyEOIyzEFivJo',
   customerName: '',
   customerPhone: '',
   customerOrder: '',

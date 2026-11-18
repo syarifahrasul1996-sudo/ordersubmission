@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { AppState, INITIAL_STATE } from '../types';
 import { cn } from '../cn';
-import { Clock, Trash2, Calendar, AlertCircle, RefreshCcw, Save, Bell, Check, Search, Database, Phone, Settings, ChevronDown, ChevronUp, Link, X, ArrowRight, Zap, Code } from 'lucide-react';
+import { Clock, Trash2, Calendar, AlertCircle, RefreshCcw, Save, Bell, Check, Search, Database, Phone, Settings, ChevronDown, ChevronUp, Link, X, ArrowRight, Zap, Code, ExternalLink } from 'lucide-react';
 import { useAppContext } from '../AppContext';
 import { formatPhoneUniversal, getWhatsAppLink, isWhatsAppUsername, parsePhoneAndUsername, parseDateStringToTimestamp, normalizeNameStr, normalizePhoneDigits, parseMainType, deduplicateHistoryList, reconcileOrdersByUniqueId, extractPendapatanValue, smartFetchGoogleScript } from '../utils';
 import { getOrderDueTimestamp } from '../utils/orderWindow';
@@ -16,6 +16,8 @@ import {
   isValidAppsScriptUrl,
   postToGoogleScript,
   extractSpreadsheetId as extractSheetIdUtil,
+  getSpreadsheetUrl,
+  syncSheetConfigsToServer,
 } from '../utils/cloudConfig';
 import {
   getCurrentFirebaseUser,
@@ -192,6 +194,15 @@ export function HistoryView() {
   const [annualSheets, setAnnualSheets] = useState<{ year: string; spreadsheetId: string; scriptUrl: string }[]>(() =>
     getAnnualSheets()
   );
+
+  useEffect(() => {
+    const handleSheetConfigRefresh = () => {
+      setAnnualSheets(getAnnualSheets());
+      setGlobalScriptUrl(getGlobalScriptUrl());
+    };
+    window.addEventListener('sheet-configs-updated', handleSheetConfigRefresh);
+    return () => window.removeEventListener('sheet-configs-updated', handleSheetConfigRefresh);
+  }, []);
 
   const localizedHistoryItems = useMemo(() => {
     const reconciled = reconcileOrdersByUniqueId(history);
@@ -2081,11 +2092,22 @@ export function HistoryView() {
                           className="w-full text-xs bg-gray-50 font-mono rounded px-2.5 py-1.5 border border-gray-200 outline-none text-text focus:bg-white"
                         />
                         {sheet.spreadsheetId && (
-                          <span className="text-[10px] text-green-600 block mt-1 font-semibold">
-                            ✓ ID: {sheet.spreadsheetId.includes('docs.google.com/spreadsheets/d/') 
-                              ? (sheet.spreadsheetId.match(/\/d\/([a-zA-Z0-9-_]+)/)?.[1] || 'URL valid') 
-                              : 'Raw ID'}
-                          </span>
+                          <div className="flex items-center justify-between gap-2 mt-1">
+                            <span className="text-[10px] text-green-600 font-semibold truncate">
+                              ✓ ID: {extractSheetIdUtil(sheet.spreadsheetId) || 'URL valid'}
+                            </span>
+                            {getSpreadsheetUrl(sheet.spreadsheetId) && (
+                              <a
+                                href={getSpreadsheetUrl(sheet.spreadsheetId)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 text-[10px] font-bold text-primary hover:underline shrink-0"
+                              >
+                                <span>{appLanguage === 'ms' ? 'Buka Google Sheet' : 'Open Google Sheet'}</span>
+                                <ExternalLink className="w-3 h-3" />
+                              </a>
+                            )}
+                          </div>
                         )}
                       </div>
                     </div>
@@ -2139,6 +2161,7 @@ export function HistoryView() {
                   safeSetLocalStorageJSON('db_annual_sheets', annualSheets);
                   persistGlobalScriptUrl(globalScriptUrl);
                   persistScriptSecret(scriptSecret);
+                  syncSheetConfigsToServer(annualSheets, globalScriptUrl);
                   // Save and sync with context state
                   const firstActive = annualSheets.find(s => s.spreadsheetId !== '');
                   if (firstActive) {

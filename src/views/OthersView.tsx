@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Languages, 
   Sun, 
@@ -18,6 +18,12 @@ import {
 } from 'lucide-react';
 import { useAppContext } from '../AppContext';
 import { cn } from '../cn';
+import {
+  DEFAULT_SPREADSHEET_ID,
+  getAnnualSheets,
+  getSpreadsheetUrl,
+  resolveSpreadsheetIdForYear,
+} from '../utils/cloudConfig';
 
 export function OthersView() {
   const { 
@@ -30,6 +36,20 @@ export function OthersView() {
     pushView, 
     state 
   } = useAppContext();
+
+  const [annualSheets, setAnnualSheets] = useState(() => getAnnualSheets());
+
+  useEffect(() => {
+    const refresh = () => setAnnualSheets(getAnnualSheets());
+    window.addEventListener('sheet-configs-updated', refresh);
+    return () => window.removeEventListener('sheet-configs-updated', refresh);
+  }, []);
+
+  const activeSpreadsheetId =
+    (state.spreadsheetId && state.spreadsheetId.trim()) ||
+    resolveSpreadsheetIdForYear(String(new Date().getFullYear()), DEFAULT_SPREADSHEET_ID);
+  const activeSheetUrl = getSpreadsheetUrl(activeSpreadsheetId);
+  const configuredAnnualSheets = annualSheets.filter((s) => s.spreadsheetId && s.spreadsheetId.trim() !== '');
 
   const handleExportContacts = () => {
     pushView('contacts-sync');
@@ -160,18 +180,18 @@ export function OthersView() {
             </h5>
           </div>
 
-          <div className="bg-gray-50/50 dark:bg-zinc-900/40 p-3 rounded-xl border border-gray-100/30 text-[11px] space-y-1.5">
-            <div className="flex justify-between items-center">
-              <span className="text-subtext font-medium">{appLanguage === 'ms' ? 'Spreadsheet ID' : 'Spreadsheet ID'}:</span>
-              <span className="font-mono font-bold text-text truncate max-w-[180px]" title={state.spreadsheetId}>
-                {state.spreadsheetId || (appLanguage === 'ms' ? 'Belum ditetapkan' : 'Not configured')}
+          <div className="bg-gray-50/50 dark:bg-zinc-900/40 p-3 rounded-xl border border-gray-100/30 text-[11px] space-y-2">
+            <div className="flex justify-between items-center gap-2">
+              <span className="text-subtext font-medium shrink-0">{appLanguage === 'ms' ? 'Spreadsheet ID' : 'Spreadsheet ID'}:</span>
+              <span className="font-mono font-bold text-text truncate max-w-[180px]" title={activeSpreadsheetId}>
+                {activeSpreadsheetId || (appLanguage === 'ms' ? 'Belum ditetapkan' : 'Not configured')}
               </span>
             </div>
-            <div className="flex justify-between items-center">
-              <span className="text-subtext font-medium">{appLanguage === 'ms' ? 'Pautan Terus' : 'Direct Link'}:</span>
-              {state.spreadsheetId ? (
+            <div className="flex justify-between items-center gap-2">
+              <span className="text-subtext font-medium shrink-0">{appLanguage === 'ms' ? 'Pautan Terus' : 'Direct Link'}:</span>
+              {activeSheetUrl ? (
                 <a 
-                  href={`https://docs.google.com/spreadsheets/d/${state.spreadsheetId}`} 
+                  href={activeSheetUrl} 
                   target="_blank" 
                   rel="noopener noreferrer"
                   className="text-primary hover:underline font-bold flex items-center gap-1.5"
@@ -183,6 +203,26 @@ export function OthersView() {
                 <span className="text-subtext italic">N/A</span>
               )}
             </div>
+            {configuredAnnualSheets.length > 0 && (
+              <div className="pt-2 border-t border-gray-200/50 dark:border-zinc-800/70 flex flex-wrap gap-1.5">
+                {configuredAnnualSheets.map((s) => {
+                  const href = getSpreadsheetUrl(s.spreadsheetId);
+                  if (!href) return null;
+                  return (
+                    <a
+                      key={s.year}
+                      href={href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white dark:bg-zinc-800 border border-gray-200/70 dark:border-zinc-700 text-[10px] font-bold text-primary hover:bg-primary/5 transition-colors"
+                    >
+                      <span>Google Sheet {s.year}</span>
+                      <ExternalLink className="w-2.5 h-2.5" />
+                    </a>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
       </div>

@@ -112,8 +112,10 @@ body.dark-theme-active {
   --safe-bottom: env(safe-area-inset-bottom);
 }
 
-main::-webkit-scrollbar { display: none; }
-main { -ms-overflow-style: none; scrollbar-width: none; }
+@media (max-width: 767px) {
+  main::-webkit-scrollbar { display: none; }
+  main { -ms-overflow-style: none; scrollbar-width: none; }
+}
 
 @layer utilities {
   .animate-fade-in-up {

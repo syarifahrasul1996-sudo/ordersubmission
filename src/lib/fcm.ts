@@ -27,10 +27,24 @@ export type FCMStatus =
 
 export interface SyncedDeviceInfo {
   id: string;
-  fidSuffix: string;
+  deviceId?: string;
+  fidSuffix?: string;
   deviceLabel: string;
   platform: string;
+  fcmEnabled?: boolean;
   lastSeenAt: string;
+}
+
+export interface SyncedAlertEvent {
+  id: string;
+  type: 'test_alert' | 'order_alert';
+  title: string;
+  body: string;
+  orderId?: string;
+  senderDeviceId?: string;
+  senderDeviceLabel?: string;
+  senderFidSuffix?: string;
+  createdAt: number;
 }
 
 export interface ServerOrderReminder {
@@ -56,9 +70,34 @@ export interface CrossDeviceNotificationState {
   activeDevicesCount: number;
   devices: SyncedDeviceInfo[];
   reminders: ServerOrderReminder[];
+  recentAlerts?: SyncedAlertEvent[];
   readNotificationIds: string[];
+  sheetConfigs?: {
+    annualSheets: Array<{ year: string; spreadsheetId: string; scriptUrl: string }>;
+    globalScriptUrl?: string;
+    updatedAt?: number;
+  };
   fcmMessagingAvailable?: boolean;
   serverTime?: string;
+}
+
+/**
+ * Get or create a persistent device identifier for cross-device notification & presence sync.
+ */
+export function getOrCreateSyncDeviceId(): string {
+  if (typeof window === 'undefined') return 'server_ssr';
+  try {
+    const existing = localStorage.getItem('app_sync_device_id');
+    if (existing && existing.trim()) return existing.trim();
+    const generated =
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : `dev_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+    localStorage.setItem('app_sync_device_id', generated);
+    return generated;
+  } catch {
+    return `dev_mem_${Math.random().toString(36).slice(2, 10)}`;
+  }
 }
 
 /**
@@ -319,12 +358,132 @@ export function getRegistrationSecret(): string | null {
   return null;
 }
 
+let cachedVapidPublicKey: string | null = null;
+
+function urlBase64ToUint8Array(base64String: string): Uint8Array<ArrayBuffer> {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = window.atob(base64);
+  const buffer = new ArrayBuffer(rawData.length);
+  const outputArray = new Uint8Array(buffer);
+  for (let i = 0; i < rawData.length; ++i) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
+}
+
+function arrayBufferToBase64Url(buf: ArrayBuffer | null): string {
+  if (!buf) return '';
+  const bytes = new Uint8Array(buf);
+  let binary = '';
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return window.btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+async function getServerVapidPublicKey(): Promise<string | null> {
+  if (cachedVapidPublicKey) return cachedVapidPublicKey;
+  try {
+    const base = window.location?.origin || '';
+    const res = await fetch(`${base}/api/push/vapid-public-key`, { cache: 'no-store' });
+    if (!res.ok) return null;
+    const data = await res.json().catch(() => null);
+    if (data?.success && typeof data.publicKey === 'string' && data.publicKey.trim()) {
+      cachedVapidPublicKey = data.publicKey.trim();
+      return cachedVapidPublicKey;
+    }
+  } catch {}
+  return null;
+}
+
+async function ensureWebPushSubscription(
+  swRegistration: ServiceWorkerRegistration
+): Promise<{ success: boolean; subId?: string; error?: string }> {
+  if (!('PushManager' in window) || !swRegistration?.pushManager) {
+    return { success: false, error: 'PushManager not supported' };
+  }
+
+  try {
+    const publicKey = await getServerVapidPublicKey();
+    if (!publicKey) {
+      return { success: false, error: 'Failed to retrieve server Web Push public key' };
+    }
+
+    let sub = await swRegistration.pushManager.getSubscription();
+    if (sub) {
+      const existingKey = arrayBufferToBase64Url(sub.options?.applicationServerKey || null);
+      if (existingKey && existingKey !== publicKey) {
+        await sub.unsubscribe().catch(() => {});
+        sub = null;
+      }
+    }
+
+    if (!sub) {
+      try {
+        sub = await swRegistration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(publicKey),
+        });
+      } catch (subErr: any) {
+        // Retry once after clearing any stale subscription
+        const existing = await swRegistration.pushManager.getSubscription().catch(() => null);
+        if (existing) {
+          await existing.unsubscribe().catch(() => {});
+        }
+        sub = await swRegistration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(publicKey),
+        });
+      }
+    }
+
+    const base = window.location?.origin || '';
+    const deviceId = getOrCreateSyncDeviceId();
+    const { deviceLabel, platform } = getDeviceMetadata();
+
+    const res = await fetch(`${base}/api/push/webpush-subscribe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        subscription: sub.toJSON(),
+        deviceId,
+        deviceLabel,
+        platform,
+      }),
+    });
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      return { success: false, error: errData?.error || `HTTP ${res.status}` };
+    }
+
+    const data = await res.json().catch(() => ({}));
+    if (data?.success) {
+      try {
+        localStorage.setItem('webpush_subscription_active', '1');
+        if (!getCurrentFid()) {
+          const wpFid = `webpush_${deviceId}`;
+          currentRegisteredFid = wpFid;
+          localStorage.setItem('fcm_registered_fid', wpFid);
+        }
+        if (!getRegistrationSecret()) {
+          const wpSec = `wp_${deviceId}`;
+          currentRegistrationSecret = wpSec;
+          localStorage.setItem('fcm_registration_secret', wpSec);
+        }
+      } catch {}
+      return { success: true, subId: data.id || `webpush_${deviceId}` };
+    }
+
+    return { success: false, error: data?.error || 'Subscription failed' };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Web Push subscription failed' };
+  }
+}
+
 /**
- * Get current FCM status.
- * Enabled requires:
- * - Notification.permission === "granted"
- * - fcm_registered_fid exists
- * - fcm_registration_secret exists
+ * Get current push notification status.
  */
 export async function getFCMStatus(): Promise<FCMStatus> {
   if (typeof window === 'undefined') return 'unsupported';
@@ -334,8 +493,9 @@ export async function getFCMStatus(): Promise<FCMStatus> {
     return 'ios-requires-pwa';
   }
 
-  const supported = await isSupported().catch(() => false);
-  if (!supported || !('Notification' in window) || !('serviceWorker' in navigator)) {
+  const hasWebPush = 'Notification' in window && 'serviceWorker' in navigator && 'PushManager' in window;
+  const fcmSupported = hasWebPush || await isSupported().catch(() => false);
+  if (!fcmSupported || !('Notification' in window) || !('serviceWorker' in navigator)) {
     if (isIOS()) {
       return 'ios-requires-pwa';
     }
@@ -346,24 +506,29 @@ export async function getFCMStatus(): Promise<FCMStatus> {
   if (permission === 'denied') return 'permission-denied';
   if (permission === 'default') return 'permission-default';
 
+  const hasWebPushFlag = (() => {
+    try {
+      return localStorage.getItem('webpush_subscription_active') === '1';
+    } catch {
+      return false;
+    }
+  })();
+
   const storedFid = getCurrentFid();
   const storedSecret = getRegistrationSecret();
 
-  if (storedFid && storedSecret) {
+  if (hasWebPushFlag || (storedFid && storedSecret)) {
     return 'enabled';
   }
 
-  // If only one exists, clean up stale/incomplete credentials
-  if (storedFid || storedSecret) {
-    currentRegisteredFid = null;
-    currentRegistrationSecret = null;
-    try {
-      localStorage.removeItem('fcm_registered_fid');
-      localStorage.removeItem('fcm_registration_secret');
-    } catch (e) {
-      console.warn(e);
+  // Also detect an active PushManager subscription if already granted
+  try {
+    const reg = await navigator.serviceWorker.getRegistration('/');
+    const existingSub = await reg?.pushManager?.getSubscription();
+    if (existingSub) {
+      return 'enabled';
     }
-  }
+  } catch {}
 
   return 'permission-granted';
 }
@@ -587,7 +752,7 @@ function attachSharedFCMListeners(
 }
 
 /**
- * Explicit user-triggered registration for Firebase Cloud Messaging using FID
+ * Explicit user-triggered registration for direct W3C Web Push (works on Android & iOS PWA even when closed).
  */
 export async function enableFCMNotifications(onFidReceived?: (fid: string) => void): Promise<{ 
   success: boolean; 
@@ -599,9 +764,8 @@ export async function enableFCMNotifications(onFidReceived?: (fid: string) => vo
     return { success: false, fid: null, error: 'Window not defined' };
   }
 
-  // Prerequisite check for iOS devices (iPhone / iPad)
   if (isIOS() && !isStandaloneMode()) {
-    console.info('[FCM] iOS Safari browser detected without standalone PWA mode');
+    console.info('[Push] iOS Safari browser detected without standalone PWA mode');
     return {
       success: false,
       fid: null,
@@ -619,9 +783,8 @@ export async function enableFCMNotifications(onFidReceived?: (fid: string) => vo
       }
     })();
 
-    const supported = await isSupported().catch(() => false);
-    if (!supported || !('Notification' in window) || !('serviceWorker' in navigator)) {
-      console.warn('[FCM] Browser does not support Firebase Cloud Messaging');
+    const hasWebPush = 'Notification' in window && 'serviceWorker' in navigator && 'PushManager' in window;
+    if (!hasWebPush) {
       if (isIOS()) {
         return {
           success: false,
@@ -640,10 +803,9 @@ export async function enableFCMNotifications(onFidReceived?: (fid: string) => vo
       return { success: false, fid: null, error: 'Pelayar ini tidak menyokong Web Push / Notifications.' };
     }
 
-    // 1. Permission check & prompt (explicit user-triggered flow)
+    // 1. Permission check & prompt
     let permission = Notification.permission;
     if (permission === 'denied') {
-      console.warn('[FCM] Notification permission is denied');
       return { success: false, fid: null, error: 'Kebenaran notifikasi disekat. Sila benarkan dalam tetapan pelayar.' };
     }
 
@@ -661,33 +823,46 @@ export async function enableFCMNotifications(onFidReceived?: (fid: string) => vo
       }
     }
 
-    // 2. Clean legacy service workers & register /firebase-messaging-sw.js
+    // 2. Clean legacy service workers & register/update /firebase-messaging-sw.js
     await cleanLegacyServiceWorkers();
 
     const rawRegistration = await navigator.serviceWorker.register('/firebase-messaging-sw.js', {
       scope: '/'
     });
+    rawRegistration.update().catch(() => {});
     const swRegistration = await waitForActiveServiceWorker(rawRegistration, 8000);
 
-    // 3. Initialize messaging instance
+    // 3. Subscribe directly via W3C Web Push (VAPID)
+    const webPushRes = await ensureWebPushSubscription(swRegistration);
+    if (webPushRes.success) {
+      const assignedId = getCurrentFid() || webPushRes.subId || `webpush_${getOrCreateSyncDeviceId()}`;
+      if (onFidReceived) onFidReceived(assignedId);
+      console.log('[WebPush] Closed-app Web Push activated:', assignedId);
+      return { success: true, fid: assignedId };
+    }
+
+    // 4. Fallback to Firebase Messaging FID registration if direct WebPush endpoint failed
+    const supported = await isSupported().catch(() => false);
+    if (!supported) {
+      return { success: false, fid: null, error: webPushRes.error || 'Pendaftaran push gagal.' };
+    }
+
     const messaging = getMessaging(app);
     messagingInstance = messaging;
 
-    // 4. Asynchronous FID registration handling with 20-second timeout & stale subscription recovery
     return await new Promise<{ success: boolean; fid: string | null; error?: string }>(async (resolve) => {
       let isSettled = false;
 
       const timeoutId = setTimeout(() => {
         if (!isSettled) {
           isSettled = true;
-          console.warn('[FCM] Timeout waiting for onRegistered() FID');
           resolve({
             success: false,
             fid: null,
-            error: 'Masa tamat menunggu pendaftaran notifikasi. Sila pastikan sambungan internet stabil dan cuba lagi.'
+            error: webPushRes.error || 'Masa tamat menunggu pendaftaran notifikasi. Sila cuba lagi.'
           });
         }
-      }, 20000);
+      }, 15000);
 
       attachSharedFCMListeners(messaging, {
         onFidReceived,
@@ -700,58 +875,31 @@ export async function enableFCMNotifications(onFidReceived?: (fid: string) => vo
         }
       });
 
-      console.log('[FCM] Calling register() on Firebase Messaging SDK');
       try {
         await register(messaging, {
           vapidKey: FCM_VAPID_KEY,
           serviceWorkerRegistration: swRegistration
         });
       } catch (regErr: any) {
-        // Recover from stale PushSubscription with mismatched VAPID key (very common on mobile PWAs)
-        const errMsg = String(regErr?.message || '');
-        const isSubConflict =
-          errMsg.includes('applicationServerKey') ||
-          errMsg.includes('InvalidAccessError') ||
-          errMsg.includes('Subscription failed') ||
-          regErr?.name === 'InvalidAccessError';
-
-        if (isSubConflict) {
-          try {
-            console.warn('[FCM] Detected stale push subscription conflict, resetting PushSubscription and retrying...');
-            const existingSub = await swRegistration.pushManager.getSubscription();
-            if (existingSub) {
-              await existingSub.unsubscribe();
-            }
-            await register(messaging, {
-              vapidKey: FCM_VAPID_KEY,
-              serviceWorkerRegistration: swRegistration
-            });
-            return;
-          } catch (retryErr: any) {
-            regErr = retryErr;
-          }
-        }
-
         if (!isSettled) {
           isSettled = true;
           clearTimeout(timeoutId);
-          console.error('[FCM] register() error:', regErr);
           resolve({
             success: false,
             fid: null,
-            error: regErr?.message || 'Pendaftaran Firebase gagal.'
+            error: regErr?.message || webPushRes.error || 'Pendaftaran push gagal.'
           });
         }
       }
     });
   } catch (err: any) {
-    console.error('[FCM] Registration error:', err);
+    console.error('[Push] Registration error:', err);
     return { success: false, fid: null, error: err?.message || 'Pendaftaran gagal.' };
   }
 }
 
 /**
- * Startup FCM lifecycle reconciliation.
+ * Startup lifecycle reconciliation: silently ensures Service Worker v2 + Web Push subscription are active when permitted.
  */
 export async function initFCMStartupReconciliation(onPayloadReceived?: (payload: MessagePayload) => void): Promise<() => void> {
   if (typeof window === 'undefined') return () => {};
@@ -761,12 +909,7 @@ export async function initFCMStartupReconciliation(onPayloadReceived?: (payload:
       return () => {};
     }
 
-    const supported = await isSupported().catch(() => false);
-    if (!supported || !('Notification' in window) || !('serviceWorker' in navigator)) {
-      return () => {};
-    }
-
-    if (Notification.permission !== 'granted') {
+    if (!('Notification' in window) || !('serviceWorker' in navigator) || Notification.permission !== 'granted') {
       return () => {};
     }
 
@@ -775,32 +918,26 @@ export async function initFCMStartupReconciliation(onPayloadReceived?: (payload:
     const rawRegistration = await navigator.serviceWorker.register('/firebase-messaging-sw.js', {
       scope: '/'
     });
+    rawRegistration.update().catch(() => {});
     const swRegistration = await waitForActiveServiceWorker(rawRegistration, 8000);
 
-    const messaging = getMessaging(app);
-    messagingInstance = messaging;
-
-    attachSharedFCMListeners(messaging, {
-      onPayloadReceived
-    });
-
-    console.log('[FCM] Performing startup FCM registration reconciliation');
-    await register(messaging, {
-      vapidKey: FCM_VAPID_KEY,
-      serviceWorkerRegistration: swRegistration
-    }).catch(async (err) => {
-      const msg = String(err?.message || '');
-      if (msg.includes('applicationServerKey') || msg.includes('InvalidAccessError')) {
-        const sub = await swRegistration.pushManager.getSubscription().catch(() => null);
-        if (sub) {
-          await sub.unsubscribe().catch(() => {});
-          await register(messaging, {
-            vapidKey: FCM_VAPID_KEY,
-            serviceWorkerRegistration: swRegistration
-          }).catch(() => {});
-        }
+    // Upgrade or sync W3C Web Push subscription automatically
+    const webPushRes = await ensureWebPushSubscription(swRegistration);
+    if (webPushRes.success) {
+      console.log('[WebPush] Startup closed-app push subscription verified.');
+    } else {
+      // Fallback reconciliation for legacy FCM environments
+      const supported = await isSupported().catch(() => false);
+      if (supported) {
+        const messaging = getMessaging(app);
+        messagingInstance = messaging;
+        attachSharedFCMListeners(messaging, { onPayloadReceived });
+        await register(messaging, {
+          vapidKey: FCM_VAPID_KEY,
+          serviceWorkerRegistration: swRegistration
+        }).catch(() => {});
       }
-    });
+    }
 
     return () => {
       if (foregroundUnsubscribe) {
@@ -817,7 +954,7 @@ export async function initFCMStartupReconciliation(onPayloadReceived?: (payload:
       }
     };
   } catch (err) {
-    console.warn('[FCM] Error during startup FCM reconciliation:', err);
+    console.warn('[Push] Error during startup reconciliation:', err);
     return () => {};
   }
 }
@@ -835,11 +972,13 @@ export async function sendTestFCMNotification(
   broadcastAll = true
 ): Promise<{
   success: boolean;
+  alertId?: string;
   messageId?: string;
   sentCount?: number;
   totalDevices?: number;
   sseDelivered?: boolean;
   fcmAvailable?: boolean;
+  localPermissionGranted?: boolean;
   error?: string;
   code?: string;
 }> {
@@ -854,47 +993,34 @@ export async function sendTestFCMNotification(
     // 1. Instant audio chime feedback
     playAlertChime();
 
-    // 2. Check if running on iOS Safari without PWA
-    if (isIOS() && !isStandaloneMode()) {
-      return {
-        success: false,
-        error: 'Pada iPhone/iPad, Apple memerlukan aplikasi ini ditambah ke Skrin Utama (Add to Home Screen) dahulu untuk memaparkan notifikasi.',
-        code: 'IOS_PWA_REQUIRED'
-      };
-    }
-
-    // 3. Permission checks
-    if (!('Notification' in window)) {
-      return {
-        success: false,
-        error: 'Pelayar ini tidak menyokong notifikasi sistem. Bunyi amaran audio telah diaktifkan.',
-        code: 'NOT_SUPPORTED',
-      };
-    }
-
-    if (Notification.permission === 'denied') {
-      return {
-        success: false,
-        error: 'Kebenaran notifikasi disekat oleh pelayar. Sila benarkan dalam tetapan pelayar anda.',
-        code: 'PERMISSION_DENIED',
-      };
-    }
-
-    if (Notification.permission !== 'granted') {
-      return {
-        success: false,
-        error: 'Kebenaran notifikasi belum diberikan. Sila tekan butang "Aktifkan Notifikasi" dahulu.',
-        code: 'NOT_GRANTED',
-      };
-    }
-
-    // 4. Try backend push send across all devices
+    // 2. Always broadcast to same-origin open tabs and backend synced devices first
     let serverSuccess = false;
+    let serverAlertId: string | undefined;
     let serverMessageId: string | undefined;
     let sentCount = 0;
     let totalDevices = 0;
     let sseDelivered = false;
     let fcmAvailable: boolean | undefined;
+
+    const senderDeviceId = getOrCreateSyncDeviceId();
+    const { deviceLabel: senderDeviceLabel } = getDeviceMetadata();
+
+    // Notify same-origin open tabs immediately via BroadcastChannel
+    try {
+      if (typeof BroadcastChannel !== 'undefined') {
+        const bc = new BroadcastChannel('order_sync_notifications');
+        bc.postMessage({
+          reason: 'test_alert',
+          id: `bc_test_${Date.now()}`,
+          title: testTitle,
+          body: testBody,
+          senderDeviceId,
+          senderDeviceLabel,
+          createdAt: Date.now(),
+        });
+        bc.close();
+      }
+    } catch {}
 
     const callSendTest = async (secretToUse: string) => {
       const base = typeof window !== 'undefined' && window.location?.origin ? window.location.origin : '';
@@ -909,6 +1035,8 @@ export async function sendTestFCMNotification(
           title: testTitle,
           body: testBody,
           broadcastAll,
+          senderDeviceId,
+          senderDeviceLabel,
         }),
       });
     };
@@ -930,6 +1058,7 @@ export async function sendTestFCMNotification(
         const data = await res.json().catch(() => ({}));
         if (data.success || data.messageId || data.status === 'ok') {
           serverSuccess = true;
+          serverAlertId = typeof data.alertId === 'string' ? data.alertId : undefined;
           serverMessageId = data.messageId;
           sentCount = typeof data.sentCount === 'number' ? data.sentCount : 0;
           totalDevices = typeof data.totalDevices === 'number' ? data.totalDevices : 0;
@@ -941,44 +1070,83 @@ export async function sendTestFCMNotification(
       // Backend unavailable or 404 on static hosting - continue seamlessly to direct device notification
     }
 
-    // 5. Always ensure this calling device also displays the notification visibly via Service Worker if FCM isn't dispatching
-    if (!serverSuccess || !fcmAvailable || sentCount === 0) {
-      await showServiceWorkerNotification(testTitle, {
+    // 3. Check local OS/browser Notification permission to display native notification on THIS device too
+    const hasNotificationApi = 'Notification' in window;
+    const isIosBrowserTab = isIOS() && !isStandaloneMode();
+    const localPermissionGranted = hasNotificationApi && !isIosBrowserTab && Notification.permission === 'granted';
+
+    if (localPermissionGranted && (!serverSuccess || !fcmAvailable || sentCount === 0)) {
+      const swShown = await showServiceWorkerNotification(testTitle, {
         body: testBody,
         icon: 'https://i.imgur.com/49kNDoe.png',
         tag: 'fcm_test_sw_direct',
       });
+      if (!swShown) {
+        try {
+          if (typeof Notification === 'function') {
+            new Notification(testTitle, {
+              body: testBody,
+              icon: 'https://i.imgur.com/49kNDoe.png',
+            });
+          }
+        } catch (e) {
+          console.warn('[FCM] Local notification constructor fallback notice:', e);
+        }
+      }
     }
 
     if (serverSuccess) {
       return {
         success: true,
+        alertId: serverAlertId,
         messageId: serverMessageId,
         sentCount,
         totalDevices,
         sseDelivered,
         fcmAvailable,
+        localPermissionGranted,
       };
     }
 
-    // 6. Direct Notification constructor fallback
-    try {
-      if (typeof Notification === 'function') {
-        new Notification(testTitle, {
-          body: testBody,
-          icon: 'https://i.imgur.com/49kNDoe.png',
-        });
-        return { success: true, messageId: 'local_notification_api', sentCount: 1, totalDevices: 1 };
+    if (!localPermissionGranted) {
+      if (isIosBrowserTab) {
+        return {
+          success: false,
+          localPermissionGranted: false,
+          error: 'Pada iPhone/iPad, Apple memerlukan aplikasi ini ditambah ke Skrin Utama (Add to Home Screen) dahulu untuk memaparkan notifikasi.',
+          code: 'IOS_PWA_REQUIRED'
+        };
       }
-    } catch (e) {
-      console.warn('[FCM] Local notification constructor fallback notice:', e);
+      if (!hasNotificationApi) {
+        return {
+          success: false,
+          localPermissionGranted: false,
+          error: 'Pelayar ini tidak menyokong notifikasi sistem. Bunyi amaran audio telah diaktifkan.',
+          code: 'NOT_SUPPORTED',
+        };
+      }
+      if (Notification.permission === 'denied') {
+        return {
+          success: false,
+          localPermissionGranted: false,
+          error: 'Kebenaran notifikasi disekat oleh pelayar. Sila benarkan dalam tetapan pelayar anda.',
+          code: 'PERMISSION_DENIED',
+        };
+      }
+      return {
+        success: false,
+        localPermissionGranted: false,
+        error: 'Kebenaran notifikasi belum diberikan. Sila tekan butang "Aktifkan Notifikasi" dahulu.',
+        code: 'NOT_GRANTED',
+      };
     }
 
     return {
       success: true,
-      messageId: 'device_audio_chime',
+      messageId: 'local_notification_api',
       sentCount: 1,
       totalDevices: 1,
+      localPermissionGranted: true,
     };
   } catch (err: any) {
     console.warn('[FCM] Notice during test notification:', err);
@@ -991,7 +1159,54 @@ export async function sendTestFCMNotification(
 }
 
 /**
- * Fetch unified cross-device notification state (synced devices, shared reminders, read notification IDs).
+ * Send universal device presence heartbeat so all open devices appear & receive synced alerts.
+ */
+export async function sendDevicePresenceHeartbeat(): Promise<{ activeDevicesCount: number; devices: SyncedDeviceInfo[] } | null> {
+  if (typeof window === 'undefined') return null;
+  try {
+    const base = window.location?.origin || '';
+    const deviceId = getOrCreateSyncDeviceId();
+    const { deviceLabel, platform } = getDeviceMetadata();
+    const fid = getCurrentFid();
+    const secret = getRegistrationSecret();
+    const hasWebPushFlag = (() => {
+      try {
+        return localStorage.getItem('webpush_subscription_active') === '1';
+      } catch {
+        return false;
+      }
+    })();
+    const fcmEnabled = Boolean(
+      typeof Notification !== 'undefined' &&
+      Notification.permission === 'granted' &&
+      (hasWebPushFlag || (fid && secret))
+    );
+
+    const res = await fetch(`${base}/api/notifications/heartbeat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        deviceId,
+        deviceLabel,
+        platform,
+        fcmEnabled,
+        fidSuffix: fid ? fid.slice(-6) : undefined,
+      }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json().catch(() => null);
+    if (!data?.success) return null;
+    return {
+      activeDevicesCount: typeof data.activeDevicesCount === 'number' ? data.activeDevicesCount : 1,
+      devices: Array.isArray(data.devices) ? data.devices : [],
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetch unified cross-device notification state (synced devices, shared reminders, recent alerts, read notification IDs).
  */
 export async function fetchCrossDeviceNotificationState(): Promise<CrossDeviceNotificationState | null> {
   if (typeof window === 'undefined') return null;
@@ -1037,12 +1252,13 @@ export async function syncReadNotificationsToBackend(
 }
 
 /**
- * Subscribe to real-time cross-device notification updates via Server-Sent Events (SSE).
+ * Subscribe to real-time cross-device notification updates via Server-Sent Events (SSE) + BroadcastChannel.
+ * Automatically recovers after mobile backgrounding/sleep without permanently stopping.
  */
 export function subscribeToNotificationStream(
   onEvent: (event: { reason: string; [key: string]: any }) => void
 ): () => void {
-  if (typeof window === 'undefined' || typeof EventSource === 'undefined') {
+  if (typeof window === 'undefined') {
     return () => {};
   }
 
@@ -1051,8 +1267,24 @@ export function subscribeToNotificationStream(
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let consecutiveFailures = 0;
 
+  let channel: BroadcastChannel | null = null;
+  try {
+    if (typeof BroadcastChannel !== 'undefined') {
+      channel = new BroadcastChannel('order_sync_notifications');
+      channel.onmessage = (msg) => {
+        if (msg?.data?.reason) {
+          onEvent(msg.data);
+        }
+      };
+    }
+  } catch {}
+
   const connect = () => {
-    if (closed) return;
+    if (closed || typeof EventSource === 'undefined') return;
+    if (source) {
+      source.close();
+      source = null;
+    }
     try {
       const base = window.location?.origin || '';
       source = new EventSource(`${base}/api/notifications/stream`);
@@ -1076,12 +1308,10 @@ export function subscribeToNotificationStream(
           source.close();
           source = null;
         }
+        if (closed) return;
         consecutiveFailures++;
-        if (closed || consecutiveFailures > 6) {
-          // Stop reconnecting if endpoint is unavailable (e.g. static host)
-          return;
-        }
-        const backoff = Math.min(3000 * consecutiveFailures, 20000);
+        const backoff = Math.min(3000 * consecutiveFailures, 30000);
+        if (reconnectTimer) clearTimeout(reconnectTimer);
         reconnectTimer = setTimeout(connect, backoff);
       };
     } catch {
@@ -1089,10 +1319,25 @@ export function subscribeToNotificationStream(
     }
   };
 
+  const handleWakeup = () => {
+    if (closed) return;
+    if (typeof document === 'undefined' || document.visibilityState === 'visible') {
+      if (!source || source.readyState === EventSource.CLOSED) {
+        consecutiveFailures = 0;
+        connect();
+      }
+    }
+  };
+
+  window.addEventListener('online', handleWakeup);
+  document.addEventListener('visibilitychange', handleWakeup);
+
   connect();
 
   return () => {
     closed = true;
+    window.removeEventListener('online', handleWakeup);
+    document.removeEventListener('visibilitychange', handleWakeup);
     if (reconnectTimer) {
       clearTimeout(reconnectTimer);
       reconnectTimer = null;
@@ -1100,6 +1345,10 @@ export function subscribeToNotificationStream(
     if (source) {
       source.close();
       source = null;
+    }
+    if (channel) {
+      channel.close();
+      channel = null;
     }
   };
 }
@@ -1127,6 +1376,7 @@ export async function syncOrderRemindersToBackend(
   success: boolean;
   reminderStates?: Record<string, { hasNotified20Min: boolean; hasDueAlerted: boolean; hasThreeHourAlerted: boolean }>;
   allReminders?: ServerOrderReminder[];
+  recentAlerts?: SyncedAlertEvent[];
   readNotificationIds?: string[];
   activeDevicesCount?: number;
 }> {
@@ -1153,6 +1403,7 @@ export async function syncOrderRemindersToBackend(
       success: Boolean(data.success),
       reminderStates: data.reminderStates,
       allReminders: Array.isArray(data.allReminders) ? data.allReminders : undefined,
+      recentAlerts: Array.isArray(data.recentAlerts) ? data.recentAlerts : undefined,
       readNotificationIds: Array.isArray(data.readNotificationIds) ? data.readNotificationIds : undefined,
       activeDevicesCount: typeof data.activeDevicesCount === 'number' ? data.activeDevicesCount : undefined,
     };

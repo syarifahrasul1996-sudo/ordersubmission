@@ -78,12 +78,16 @@ export function DashboardView() {
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
 
-  const annualSheets = useMemo(() => {
-    return getAnnualSheets();
-  }, []);
+  const [annualSheets, setAnnualSheets] = useState(() => getAnnualSheets());
+  const [globalScriptUrl, setGlobalScriptUrl] = useState(() => getGlobalScriptUrl());
 
-  const globalScriptUrl = useMemo(() => {
-    return getGlobalScriptUrl();
+  useEffect(() => {
+    const refreshConfigs = () => {
+      setAnnualSheets(getAnnualSheets());
+      setGlobalScriptUrl(getGlobalScriptUrl());
+    };
+    window.addEventListener('sheet-configs-updated', refreshConfigs);
+    return () => window.removeEventListener('sheet-configs-updated', refreshConfigs);
   }, []);
 
   const fetchDashboardOrders = async (year: string) => {
