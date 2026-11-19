@@ -152,24 +152,26 @@ export function CustomerInfoView() {
       initDue = state.customerDue ? String(state.customerDue) : `${formattedDate} at ${formattedTime}`;
     }
 
+    const isBrandNewOrder = !state.historyId && !state.isEditMode;
+
     return { 
-      initName: isCompletedHistoryOrder ? '' : (state.customerName || (state as any).name || ''),
-      initPhone: isCompletedHistoryOrder ? '' : (state.customerPhone || (state as any).phone || ''),
-      initOrder: isCompletedHistoryOrder ? (initOrder || 'Resume') : (state.customerOrder ? String(state.customerOrder) : initOrder), 
-      initBahasa: isCompletedHistoryOrder ? initBahasa : (state.customerBahasa ? String(state.customerBahasa) : initBahasa), 
+      initName: isCompletedHistoryOrder || isBrandNewOrder ? '' : (state.customerName || (state as any).name || ''),
+      initPhone: isCompletedHistoryOrder || isBrandNewOrder ? '' : (state.customerPhone || (state as any).phone || ''),
+      initOrder: isCompletedHistoryOrder || isBrandNewOrder ? initOrder : (state.customerOrder ? String(state.customerOrder) : initOrder), 
+      initBahasa: isCompletedHistoryOrder || isBrandNewOrder ? initBahasa : (state.customerBahasa ? String(state.customerBahasa) : initBahasa), 
       initType: state.mainType || 'Resume',
       initSubType: state.subType || '',
       initUrgency: state.urgency || 'normal',
-      initJenis: isCompletedHistoryOrder ? initJenis : (state.customerJenis ? String(state.customerJenis) : initJenis), 
+      initJenis: isCompletedHistoryOrder || isBrandNewOrder ? initJenis : (state.customerJenis ? String(state.customerJenis) : initJenis), 
       initDue: isCompletedHistoryOrder ? `${formattedDate} at ${formattedTime}` : initDue, 
       initDueTimestamp: state.dueTimestamp || dl.getTime(),
-      initTemplate: isCompletedHistoryOrder ? initTemplate : (state.customerTemplate || initTemplate), 
-      initAddOn: isCompletedHistoryOrder ? initAddOn : (state.customerAddOn || initAddOn),
+      initTemplate: isCompletedHistoryOrder || isBrandNewOrder ? initTemplate : (state.customerTemplate || initTemplate), 
+      initAddOn: isCompletedHistoryOrder || isBrandNewOrder ? initAddOn : (state.customerAddOn || initAddOn),
       initAddOnDropdown,
-      initInfo: isCompletedHistoryOrder ? '' : (state.customerInfo || ''),
-      initLink: isCompletedHistoryOrder ? '' : (state.googleSheetLink || state.orderLink || ''),
+      initInfo: isCompletedHistoryOrder || isBrandNewOrder ? '' : (state.customerInfo || ''),
+      initLink: isCompletedHistoryOrder || isBrandNewOrder ? '' : (state.googleSheetLink || state.orderLink || ''),
       initOrderId,
-      initPrice: isCompletedHistoryOrder || state.price === undefined ? '' : String(state.price),
+      initPrice: isCompletedHistoryOrder || isBrandNewOrder || state.price === undefined ? '' : String(state.price),
     };
   }, [state, history, appLanguage]);
 
@@ -201,6 +203,7 @@ export function CustomerInfoView() {
   
   // Form session recovery state
   const [showResumeBanner, setShowResumeBanner] = useState(false);
+  const [hasSubmittedAttempt, setHasSubmittedAttempt] = useState(false);
   const isInitializingRef = useRef(true);
   const isSubmittedRef = useRef(false);
 
@@ -218,6 +221,7 @@ export function CustomerInfoView() {
     setDueTimestamp(0);
     setOrderId('');
     setPrice('');
+    setHasSubmittedAttempt(false);
     
     resetOrderForm();
   };
@@ -260,28 +264,33 @@ export function CustomerInfoView() {
       setPrice(initVals.initPrice);
       setSpreadsheetId(state.spreadsheetId);
 
-      // Check if there is unsaved progress to restore
-      const data = safeGetLocalStorageJSON<Record<string, any> | null>('customer_form_progress', null);
-      if (data) {
-        const hasUnsavedData = (data.name && data.name.trim()) || 
-                               (data.phone && data.phone.trim()) || 
-                               (data.info && data.info.trim()) || 
-                               (data.link && data.link.trim());
-        
-        if (hasUnsavedData) {
-          const isDifferent = data.name !== initVals.initName ||
-                              data.phone !== initVals.initPhone ||
-                              data.info !== initVals.initInfo ||
-                              data.link !== initVals.initLink ||
-                              data.order !== initVals.initOrder ||
-                              data.template !== initVals.initTemplate ||
-                              data.bahasa !== initVals.initBahasa ||
-                              data.addOn !== initVals.initAddOn ||
-                              data.jenis !== initVals.initJenis ||
-                              data.due !== initVals.initDue;
+      if (!state.historyId && !state.isEditMode) {
+        safeRemoveLocalStorage('customer_form_progress');
+        setShowResumeBanner(false);
+      } else {
+        // Check if there is unsaved progress to restore
+        const data = safeGetLocalStorageJSON<Record<string, any> | null>('customer_form_progress', null);
+        if (data) {
+          const hasUnsavedData = (data.name && data.name.trim()) || 
+                                 (data.phone && data.phone.trim()) || 
+                                 (data.info && data.info.trim()) || 
+                                 (data.link && data.link.trim());
           
-          if (isDifferent) {
-            setShowResumeBanner(true);
+          if (hasUnsavedData) {
+            const isDifferent = data.name !== initVals.initName ||
+                                data.phone !== initVals.initPhone ||
+                                data.info !== initVals.initInfo ||
+                                data.link !== initVals.initLink ||
+                                data.order !== initVals.initOrder ||
+                                data.template !== initVals.initTemplate ||
+                                data.bahasa !== initVals.initBahasa ||
+                                data.addOn !== initVals.initAddOn ||
+                                data.jenis !== initVals.initJenis ||
+                                data.due !== initVals.initDue;
+            
+            if (isDifferent) {
+              setShowResumeBanner(true);
+            }
           }
         }
       }
@@ -391,8 +400,9 @@ export function CustomerInfoView() {
   }, [name, phone, info, link, order, template, bahasa, addOn, jenis, due, dueTimestamp, orderId, price, isActive, showResumeBanner]);
 
   const handleSaveInfo = async () => {
+    setHasSubmittedAttempt(true);
     if (!name.trim() || !phone.trim()) {
-      setErrorMsg(appLanguage === 'ms' ? 'Sila isi semua ruangan.' : 'Please fill all fields.');
+      setErrorMsg(appLanguage === 'ms' ? 'Sila isi ruangan Nama Pelanggan dan No. Telefon.' : 'Please fill Customer Name and Phone Number fields.');
       return;
     }
     
@@ -879,7 +889,12 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
             }}
             onBlur={() => setName(name.trim().replace(/\w\S*/g, (txt) => txt.charAt(0).toUpperCase() + txt.substring(1).toLowerCase()))}
             placeholder={appLanguage === 'ms' ? 'Cth: Ali bin Abu' : 'E.g. John Doe'}
-            className="w-full h-[46px] bg-surface rounded-xl px-4 font-bold text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all placeholder:text-gray-300 text-sm" 
+             className={cn(
+               "w-full h-[46px] bg-surface rounded-xl px-4 font-bold text-text border outline-none transition-all placeholder:text-gray-300 text-sm",
+               hasSubmittedAttempt && !name.trim()
+                 ? "border-rose-500 bg-rose-50/50 dark:bg-rose-950/20 ring-2 ring-rose-500/20"
+                 : "border-gray-100/50 focus:border-primary/50 focus:ring-2 ring-primary/10"
+             )}
           />
         </div>
 
@@ -896,7 +911,12 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
             autoCapitalize="none"
             autoCorrect="off"
             spellCheck={false}
-            className="w-full h-[46px] bg-surface rounded-xl px-4 font-bold text-text border border-gray-100/50 outline-none focus:border-primary/50 focus:ring-2 ring-primary/10 transition-all placeholder:text-gray-300 text-sm" 
+             className={cn(
+               "w-full h-[46px] bg-surface rounded-xl px-4 font-bold text-text border outline-none transition-all placeholder:text-gray-300 text-sm",
+               hasSubmittedAttempt && !phone.trim()
+                 ? "border-rose-500 bg-rose-50/50 dark:bg-rose-950/20 ring-2 ring-rose-500/20"
+                 : "border-gray-100/50 focus:border-primary/50 focus:ring-2 ring-primary/10"
+             )}
           />
         </div>
 

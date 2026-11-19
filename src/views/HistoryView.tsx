@@ -164,6 +164,11 @@ export function HistoryView() {
   const setDeliveryFilter = setHistoryDeliveryFilter;
   const pendingTimeFilter = historyPendingTimeFilter;
   const setPendingTimeFilter = setHistoryPendingTimeFilter;
+
+  useEffect(() => {
+    setHistoryDeliveryFilter('pending');
+    setHistoryPendingTimeFilter('today');
+  }, []);
   const [activeTab, setActiveTab] = useState<'local' | 'remote' | 'drafts' | 'trash'>('local');
   const [searchQuery, setSearchQuery] = useState('');
   const [remoteResults, setRemoteResults] = useState<any[]>([]);

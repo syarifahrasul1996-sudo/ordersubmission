@@ -949,7 +949,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const [isOnline, setIsOnline] = useState<boolean>(() => typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [historyDeliveryFilter, setHistoryDeliveryFilter] = useState<'all' | 'delivered' | 'pending'>('pending');
-  const [historyPendingTimeFilter, setHistoryPendingTimeFilter] = useState<'all' | 'today' | 'tomorrow' | '2days' | '3days'>('all');
+  const [historyPendingTimeFilter, setHistoryPendingTimeFilter] = useState<'all' | 'today' | 'tomorrow' | '2days' | '3days'>('today');
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [queueSize, setQueueSize] = useState<number>(() => {
     try {
@@ -1316,7 +1316,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       resumeLangs: Array.isArray(s.resumeLangs) ? s.resumeLangs : INITIAL_STATE.resumeLangs,
       timestamp: item.timestamp,
       historyId: item.id,
-      isEditMode: true
+      isEditMode: Boolean(s.isEditMode || s.mainType === 'Edit Resume' || s.mainType === 'Edit PDF')
     });
     // Go to the appropriate form view based on state
     if (s.mainType === 'Resume' || s.mainType === 'Curriculum Vitae') {
@@ -1351,7 +1351,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       resumeLangs: Array.isArray(s.resumeLangs) ? s.resumeLangs : INITIAL_STATE.resumeLangs,
       timestamp: item.timestamp,
       historyId: item.id,
-      isEditMode: true
+      isEditMode: Boolean(s.isEditMode || s.mainType === 'Edit Resume' || s.mainType === 'Edit PDF')
     });
     setViewStack(['home', 'history', 'customer-info']);
   };
@@ -1363,6 +1363,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   };
 
   const pushView = (view: ViewType, updates?: Partial<AppState>) => {
+    if (view === 'history') {
+      setHistoryDeliveryFilter('pending');
+      setHistoryPendingTimeFilter('today');
+    }
     if (updates) {
       setState(prev => ({ ...prev, ...updates }));
     }
@@ -1370,6 +1374,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   };
 
   const changeTab = (tab: ViewType) => {
+    if (tab === 'history') {
+      setHistoryDeliveryFilter('pending');
+      setHistoryPendingTimeFilter('today');
+    }
     if (tab === 'home') {
       setViewStack(['home']);
     } else {
