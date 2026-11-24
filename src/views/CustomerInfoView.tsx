@@ -155,23 +155,23 @@ export function CustomerInfoView() {
     const isBrandNewOrder = !state.historyId && !state.isEditMode;
 
     return { 
-      initName: isCompletedHistoryOrder || isBrandNewOrder ? '' : (state.customerName || (state as any).name || ''),
-      initPhone: isCompletedHistoryOrder || isBrandNewOrder ? '' : (state.customerPhone || (state as any).phone || ''),
-      initOrder: isCompletedHistoryOrder || isBrandNewOrder ? initOrder : (state.customerOrder ? String(state.customerOrder) : initOrder), 
-      initBahasa: isCompletedHistoryOrder || isBrandNewOrder ? initBahasa : (state.customerBahasa ? String(state.customerBahasa) : initBahasa), 
+      initName: isBrandNewOrder ? '' : (state.customerName || (state as any).name || ''),
+      initPhone: isBrandNewOrder ? '' : (state.customerPhone || (state as any).phone || ''),
+      initOrder: isBrandNewOrder ? initOrder : (state.customerOrder ? String(state.customerOrder) : initOrder), 
+      initBahasa: isBrandNewOrder ? initBahasa : (state.customerBahasa ? String(state.customerBahasa) : initBahasa), 
       initType: state.mainType || 'Resume',
       initSubType: state.subType || '',
       initUrgency: state.urgency || 'normal',
-      initJenis: isCompletedHistoryOrder || isBrandNewOrder ? initJenis : (state.customerJenis ? String(state.customerJenis) : initJenis), 
-      initDue: isCompletedHistoryOrder ? `${formattedDate} at ${formattedTime}` : initDue, 
+      initJenis: isBrandNewOrder ? initJenis : (state.customerJenis ? String(state.customerJenis) : initJenis), 
+      initDue: isBrandNewOrder ? initDue : (state.customerDue ? String(state.customerDue) : initDue), 
       initDueTimestamp: state.dueTimestamp || dl.getTime(),
-      initTemplate: isCompletedHistoryOrder || isBrandNewOrder ? initTemplate : (state.customerTemplate || initTemplate), 
-      initAddOn: isCompletedHistoryOrder || isBrandNewOrder ? initAddOn : (state.customerAddOn || initAddOn),
+      initTemplate: isBrandNewOrder ? initTemplate : (state.customerTemplate || initTemplate), 
+      initAddOn: isBrandNewOrder ? initAddOn : (state.customerAddOn || initAddOn),
       initAddOnDropdown,
-      initInfo: isCompletedHistoryOrder || isBrandNewOrder ? '' : (state.customerInfo || ''),
-      initLink: isCompletedHistoryOrder || isBrandNewOrder ? '' : (state.googleSheetLink || state.orderLink || ''),
-      initOrderId,
-      initPrice: isCompletedHistoryOrder || isBrandNewOrder || state.price === undefined ? '' : String(state.price),
+      initInfo: isBrandNewOrder ? '' : (state.customerInfo || ''),
+      initLink: isBrandNewOrder ? '' : (state.googleSheetLink || state.orderLink || ''),
+      initOrderId: state.orderId || generateOrderId(),
+      initPrice: isBrandNewOrder || state.price === undefined ? '' : String(state.price),
     };
   }, [state, history, appLanguage]);
 
