@@ -242,64 +242,77 @@ export function CustomerInfoView() {
 
   // Re-compute when navigating here or state changes
   useEffect(() => {
-    if (isActive) {
-      isInitializingRef.current = true;
+    if (!isActive) {
       isSubmittedRef.current = false;
       setSaved(false);
-      setIsSaving(false);
-      setErrorMsg('');
-      const initVals = computeInitialValues();
-      setName(initVals.initName);
-      setPhone(initVals.initPhone);
-      setInfo(initVals.initInfo);
-      setLink(initVals.initLink);
-      setOrder(initVals.initOrder);
-      setTemplate(initVals.initTemplate);
-      setBahasa(initVals.initBahasa);
-      setAddOn(initVals.initAddOn);
-      setJenis(initVals.initJenis);
-      setDue(initVals.initDue);
-      setDueTimestamp(initVals.initDueTimestamp);
-      setOrderId(initVals.initOrderId);
-      setPrice(initVals.initPrice);
-      setSpreadsheetId(state.spreadsheetId);
+      setShowResumeBanner(false);
+      return;
+    }
 
-      if (!state.historyId && !state.isEditMode) {
-        safeRemoveLocalStorage('customer_form_progress');
-        setShowResumeBanner(false);
-      } else {
-        // Check if there is unsaved progress to restore
-        const data = safeGetLocalStorageJSON<Record<string, any> | null>('customer_form_progress', null);
-        if (data) {
-          const hasUnsavedData = (data.name && data.name.trim()) || 
-                                 (data.phone && data.phone.trim()) || 
-                                 (data.info && data.info.trim()) || 
-                                 (data.link && data.link.trim());
+    // Do not re-initialize while showing the post-submit confirmation screen
+    if (isSubmittedRef.current) {
+      return;
+    }
+
+    isInitializingRef.current = true;
+    setSaved(false);
+    setIsSaving(false);
+    setErrorMsg('');
+    setHasSubmittedAttempt(false);
+    setShowResumeBanner(false);
+
+    const initVals = computeInitialValues();
+    setName(initVals.initName);
+    setPhone(initVals.initPhone);
+    setInfo(initVals.initInfo);
+    setLink(initVals.initLink);
+    setOrder(initVals.initOrder);
+    setTemplate(initVals.initTemplate);
+    setBahasa(initVals.initBahasa);
+    setAddOn(initVals.initAddOn);
+    setJenis(initVals.initJenis);
+    setDue(initVals.initDue);
+    setDueTimestamp(initVals.initDueTimestamp);
+    setOrderId(initVals.initOrderId);
+    setPrice(initVals.initPrice);
+    setSpreadsheetId(state.spreadsheetId);
+
+    if (!state.historyId && !state.isEditMode) {
+      safeRemoveLocalStorage('customer_form_progress');
+    } else {
+      // Only restore unsaved progress if it belongs to the exact same order session
+      const data = safeGetLocalStorageJSON<Record<string, any> | null>('customer_form_progress', null);
+      if (data && (data.historyId || '') === (state.historyId || '')) {
+        const hasUnsavedData = (data.name && data.name.trim()) || 
+                               (data.phone && data.phone.trim()) || 
+                               (data.info && data.info.trim()) || 
+                               (data.link && data.link.trim());
+        
+        if (hasUnsavedData) {
+          const isDifferent = data.name !== initVals.initName ||
+                              data.phone !== initVals.initPhone ||
+                              data.info !== initVals.initInfo ||
+                              data.link !== initVals.initLink ||
+                              data.order !== initVals.initOrder ||
+                              data.template !== initVals.initTemplate ||
+                              data.bahasa !== initVals.initBahasa ||
+                              data.addOn !== initVals.initAddOn ||
+                              data.jenis !== initVals.initJenis ||
+                              data.due !== initVals.initDue;
           
-          if (hasUnsavedData) {
-            const isDifferent = data.name !== initVals.initName ||
-                                data.phone !== initVals.initPhone ||
-                                data.info !== initVals.initInfo ||
-                                data.link !== initVals.initLink ||
-                                data.order !== initVals.initOrder ||
-                                data.template !== initVals.initTemplate ||
-                                data.bahasa !== initVals.initBahasa ||
-                                data.addOn !== initVals.initAddOn ||
-                                data.jenis !== initVals.initJenis ||
-                                data.due !== initVals.initDue;
-            
-            if (isDifferent) {
-              setShowResumeBanner(true);
-            }
+          if (isDifferent) {
+            setShowResumeBanner(true);
           }
         }
+      } else if (data) {
+        safeRemoveLocalStorage('customer_form_progress');
       }
-
-      const timer = setTimeout(() => {
-        isInitializingRef.current = false;
-      }, 500);
-      return () => clearTimeout(timer);
     }
+
+    const timer = setTimeout(() => {
+      isInitializingRef.current = false;
+    }, 500);
+    return () => clearTimeout(timer);
   }, [isActive, state.historyId, state.timestamp]); // fetch when mounted or when switching orders
 
   const handleResumeProgress = () => {
@@ -365,19 +378,21 @@ export function CustomerInfoView() {
 
   // Debounced Auto-Save
   useEffect(() => {
-    if (isActive && !isSubmittedRef.current) {
+    const hasTypedContent = Boolean(name.trim() || phone.trim() || info.trim() || link.trim() || price.trim());
+    if (isActive && !isInitializingRef.current && !isSubmittedRef.current && !saved && !showResumeBanner && hasTypedContent) {
       const timer = setTimeout(() => {
         syncStateAndSave(true);
       }, 5000); 
       return () => clearTimeout(timer);
     }
-  }, [name, phone, order, template, bahasa, addOn, jenis, due, info, link, orderId, isActive]);
+  }, [name, phone, order, template, bahasa, addOn, jenis, due, info, link, orderId, price, isActive, saved, showResumeBanner]);
 
   // Save form progress to localStorage with a debounce
   useEffect(() => {
-    if (isActive && !showResumeBanner && !isInitializingRef.current && !isSubmittedRef.current) {
+    if (isActive && !showResumeBanner && !isInitializingRef.current && !isSubmittedRef.current && !saved) {
       const timer = setTimeout(() => {
         const data = {
+          historyId: state.historyId || '',
           name,
           phone,
           info,
@@ -397,7 +412,7 @@ export function CustomerInfoView() {
       }, 1000); // 1s debounce to align updates nicely
       return () => clearTimeout(timer);
     }
-  }, [name, phone, info, link, order, template, bahasa, addOn, jenis, due, dueTimestamp, orderId, price, isActive, showResumeBanner]);
+  }, [name, phone, info, link, order, template, bahasa, addOn, jenis, due, dueTimestamp, orderId, price, isActive, showResumeBanner, saved, state.historyId]);
 
   const handleSaveInfo = async () => {
     setHasSubmittedAttempt(true);
@@ -585,7 +600,6 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
       )
         .then((resp) => {
           if (resp && resp.status === 'success') {
-            resetOrderForm();
             const returnedId = resp.orderId || finalOrderId;
             if (returnedId && returnedId !== finalOrderId) {
               setHistory(prev => {
@@ -615,7 +629,6 @@ if (!finalOrderId || finalOrderId.trim() === "" || finalOrderId.indexOf("SYNC-")
               });
             }
           } else if (resp && resp.status === 'sent_unverified') {
-            resetOrderForm();
             updateSpecificHistoryItem(finalOrderId, {
               syncStatus: 'sent_unverified',
               syncLastAttempt: Date.now(),

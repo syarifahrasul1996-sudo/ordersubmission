@@ -18,7 +18,6 @@ export function DesktopSidebar() {
   const { 
     viewStack, 
     changeTab,
-    pushView,
     appLanguage,
     startNewOrder
   } = useAppContext();
@@ -68,7 +67,7 @@ export function DesktopSidebar() {
               key={item.id}
               onClick={() => {
                 if (item.id === 'customer-info') {
-                  pushView('customer-info');
+                  startNewOrder('customer-info', {});
                 } else {
                   changeTab(item.id as any);
                 }

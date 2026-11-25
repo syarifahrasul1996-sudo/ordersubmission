@@ -17,7 +17,7 @@ interface NewOrderModalProps {
 }
 
 export function NewOrderModal({ isOpen, onClose }: NewOrderModalProps) {
-  const { startNewOrder, pushView, appLanguage } = useAppContext();
+  const { startNewOrder, appLanguage } = useAppContext();
 
   // Close modal on Escape key press
   useEffect(() => {
@@ -86,7 +86,7 @@ export function NewOrderModal({ isOpen, onClose }: NewOrderModalProps) {
       iconColor: 'bg-teal-500/10 text-teal-600 dark:text-teal-400',
       onClick: () => {
         onClose();
-        pushView('customer-info');
+        startNewOrder('customer-info', {});
       }
     }
   ];

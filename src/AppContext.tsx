@@ -1357,8 +1357,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
   };
 
   const startNewOrder = (view: ViewType, updates: Partial<AppState>) => {
-    resetOrderForm();
-    setState({ ...INITIAL_STATE, historyId: '', timestamp: Date.now(), ...updates });
+    try {
+      localStorage.removeItem('customer_form_progress');
+    } catch (e) {
+      // ignore
+    }
+    setState(prev => ({
+      ...INITIAL_STATE,
+      language: prev.language,
+      spreadsheetId: prev.spreadsheetId || INITIAL_STATE.spreadsheetId,
+      dashboardFilterMonth: prev.dashboardFilterMonth || INITIAL_STATE.dashboardFilterMonth,
+      dashboardFilterYear: prev.dashboardFilterYear || INITIAL_STATE.dashboardFilterYear,
+      historyId: '',
+      timestamp: Date.now(),
+      ...updates,
+    }));
     setViewStack(['home', view]);
   };
 
@@ -1403,25 +1416,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
       // ignore
     }
     setState(prev => ({
-      ...prev,
-      customerName: '',
-      customerPhone: '',
-      customerInfo: '',
-      orderLink: '',
-      googleSheetLink: '',
-      customerOrder: '',
-      customerTemplate: '',
-      customerBahasa: '',
-      customerAddOn: '',
-      customerJenis: '',
-      customerDue: '',
-      dueTimestamp: 0,
-      name: '',
-      phone: '',
-      orderId: '',
+      ...INITIAL_STATE,
+      language: prev.language,
+      spreadsheetId: prev.spreadsheetId || INITIAL_STATE.spreadsheetId,
+      dashboardFilterMonth: prev.dashboardFilterMonth || INITIAL_STATE.dashboardFilterMonth,
+      dashboardFilterYear: prev.dashboardFilterYear || INITIAL_STATE.dashboardFilterYear,
       historyId: '',
-      price: undefined,
-      isEditMode: false
+      timestamp: Date.now(),
     }));
   };
 
